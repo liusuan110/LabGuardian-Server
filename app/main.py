@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.api.v1 import classroom, pipeline, websocket
+from app.api.v1 import classroom, pipeline, websocket, aoi
 
 
 @asynccontextmanager
@@ -44,6 +44,7 @@ app.add_middleware(
 # 路由
 app.include_router(classroom.router, prefix=settings.API_V1_PREFIX)
 app.include_router(pipeline.router, prefix=settings.API_V1_PREFIX)
+app.include_router(aoi.router, prefix=settings.API_V1_PREFIX)
 app.include_router(websocket.router)
 
 

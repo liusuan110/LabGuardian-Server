@@ -43,11 +43,21 @@ class Detection:
 class ComponentDetector:
     """YOLO 检测器"""
 
-    def __init__(self, model_path: Optional[str] = None, device: str = "cpu"):
+    def __init__(
+        self,
+        model_path: Optional[str] = None,
+        obb_model_path: Optional[str] = None,
+        device: str = "cpu",
+    ):
         self.model = None
         self.model_path = model_path
+        self.obb_model_path = obb_model_path  # 引脚检测 OBB 模型，可后续 load_obb() 调用
         self.device = device
         self._is_obb = False
+
+        # 有路径就自动加载
+        if model_path:
+            self.load(model_path)
 
     def load(self, model_path: Optional[str] = None) -> bool:
         """加载 YOLO 模型"""

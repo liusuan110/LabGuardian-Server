@@ -20,8 +20,37 @@ from app.pipeline.vision.wire_analyzer import WireAnalyzer
 
 logger = logging.getLogger(__name__)
 
-# 支持的元件类型
-ACTIVE_CLASSES = {"Resistor", "Wire", "LED", "resistor", "wire", "led"}
+# ── 类名标准化映射: YOLO 输出 → Pipeline 标准类名 ──
+# 确保不同模型训练出的类名统一
+CLASS_NAME_MAP = {
+    "resistor": "Resistor",
+    "Resistor": "Resistor",
+    "capacitor": "Capacitor",
+    "Capacitor": "Capacitor",
+    "wire": "Wire",
+    "Wire": "Wire",
+    "led": "LED",
+    "LED": "LED",
+    "Led": "LED",
+    "diode": "Diode",
+    "Diode": "Diode",
+    "IC": "IC",
+    "ic": "IC",
+    "potentiometer": "Potentiometer",
+    "Potentiometer": "Potentiometer",
+}
+
+# 作为元件参与拓扑构建的类别 (标准化后的名称)
+COMPONENT_CLASSES = {
+    "Resistor", "Capacitor", "Wire", "LED",
+    "Diode", "IC", "Potentiometer",
+}
+
+# 作为辅助信息的类别 (不参与拓扑，用于定位引脚)
+AUXILIARY_CLASSES = {"pinned", "Pinned"}
+
+# 过滤掉的背景类 (Breadboard, Line_area 等)
+IGNORED_CLASSES = {"Breadboard", "Line_area", "breadboard", "line_area"}
 
 IOU_MERGE_THRESHOLD = 0.3
 
@@ -30,6 +59,7 @@ def run_detect(
     images_b64: List[str],
     detector: ComponentDetector,
     conf: float = 0.25,
+    iou: float = 0.5,
     imgsz: int = 1280,
     roi_rect: tuple | None = None,
 ) -> Dict[str, Any]:
@@ -57,10 +87,10 @@ def run_detect(
         if roi_rect is not None:
             rx1, ry1, rx2, ry2 = roi_rect
             cropped = img[ry1:ry2, rx1:rx2]
-            dets = detector.detect(cropped, conf=conf, imgsz=imgsz)
+            dets = detector.detect(cropped, conf=conf, iou=iou, imgsz=imgsz)
             detector.offset_detections(dets, rx1, ry1)
         else:
-            dets = detector.detect(img, conf=conf, imgsz=imgsz)
+            dets = detector.detect(img, conf=conf, iou=iou, imgsz=imgsz)
 
         # Wire 端点精炼
         for det in dets:
@@ -73,7 +103,10 @@ def run_detect(
                 except Exception:
                     pass
 
-        dets = [d for d in dets if d.class_name in ACTIVE_CLASSES]
+        # 类名标准化 + 分类
+        for det in dets:
+            det.class_name = CLASS_NAME_MAP.get(det.class_name, det.class_name)
+        dets = [d for d in dets if d.class_name not in IGNORED_CLASSES]
         all_det_lists.append(dets)
 
     # 多图融合
@@ -82,10 +115,15 @@ def run_detect(
     else:
         merged = _fuse_detections(all_det_lists)
 
+    # 将 pinned 与元件检测分离
+    component_dets = [d for d in merged if d.class_name in COMPONENT_CLASSES]
+    pinned_dets = [d for d in merged if d.class_name.lower() == "pinned"]
+
     duration_ms = (time.time() - t0) * 1000
 
     return {
-        "detections": [_detection_to_dict(d) for d in merged],
+        "detections": [_detection_to_dict(d) for d in component_dets],
+        "pinned_hints": [_pinned_to_dict(d) for d in pinned_dets],
         "primary_image_shape": images[0].shape[:2],
         "duration_ms": duration_ms,
     }
@@ -157,4 +195,16 @@ def _detection_to_dict(det: Detection) -> dict:
         "pin2_pixel": list(det.pin2_pixel) if det.pin2_pixel else None,
         "is_obb": det.is_obb,
         "wire_color": det.wire_color,
+    }
+
+
+def _pinned_to_dict(det: Detection) -> dict:
+    """将 pinned 检测转为辅助字典 (记录被占用孔洞的中心坐标)"""
+    x1, y1, x2, y2 = det.bbox
+    cx = (x1 + x2) / 2.0
+    cy = (y1 + y2) / 2.0
+    return {
+        "center": [cx, cy],
+        "bbox": list(det.bbox),
+        "confidence": det.confidence,
     }

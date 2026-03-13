@@ -1,0 +1,24 @@
+* LabGuardian — 面包板电路网表
+* Circuit: UA741 反相放大器
+* Generated: 2026-03-13 13:53
+
+.subckt INVERTING_AMP VIN VOUT VCC VEE GND
+
+R1  VIN    N001   10K   ; row=7 col=a
+Rf  N001   VOUT   100K  ; row=10 col=e (feedback)
+R3  N002   GND    10K   ; row=3 col=e
+
+XU1 N001 GND VCC VEE VOUT UA741
+* Pin2(−)=N001  Pin3(+)=GND  Pin7=VCC  Pin4=VEE  Pin6=VOUT
+
+.ends INVERTING_AMP
+
+* === 外部连接 ===
+VCC  VCC  0  +12V
+VEE  VEE  0  -12V
+VIN  VIN  0  AC 1V
+
+X1  VIN VOUT VCC VEE 0  INVERTING_AMP
+
+.ac dec 100 1 1MEG
+.end

@@ -29,8 +29,7 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     # 任务路由
     task_routes={
-        "app.worker.tasks.run_pipeline": {"queue": "pipeline"},
-        "app.worker.tasks.run_detect": {"queue": "pipeline"},
+        "pipeline.run": {"queue": "pipeline"},
     },
 )
 

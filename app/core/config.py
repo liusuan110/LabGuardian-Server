@@ -19,14 +19,14 @@ MODELS_DIR = PROJECT_ROOT / "models"
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(PROJECT_ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
     # ---- Server ----
     SERVER_HOST: str = "0.0.0.0"
-    SERVER_PORT: int = 8080
+    SERVER_PORT: int = 8000
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
 
@@ -40,6 +40,7 @@ class Settings(BaseSettings):
 
     # ---- YOLO ----
     YOLO_MODEL_PATH: str = str(MODELS_DIR / "yolov8n.pt")
+    YOLO_OBB_MODEL_PATH: Optional[str] = None   # 引脚检测 OBB 模型，训练完成后填写
     YOLO_CONF_THRESHOLD: float = 0.25
     YOLO_IOU_THRESHOLD: float = 0.5
     YOLO_IMGSZ: int = 960
@@ -53,9 +54,19 @@ class Settings(BaseSettings):
     # ---- Pipeline ----
     PIPELINE_HIGH_RES_IMGSZ: int = 1280
     PIN_CANDIDATE_K: int = 5
+    REFERENCE_CIRCUIT_PATH: Optional[str] = None
 
     # ---- 课堂 ----
     STATION_ONLINE_TIMEOUT: float = 10.0
+
+    # ---- AOI (PCB 缺陷检测) ----
+    AOI_MODEL_DIR: str = "models/aoi"
+    AOI_DATASET_ROOT: str = "datasets/pcb_aoi"
+    AOI_BACKBONE: str = "wide_resnet50_2"
+    AOI_CORESET_RATIO: float = 0.1
+    AOI_NUM_NEIGHBORS: int = 9
+    AOI_IMAGE_SIZE: int = 256
+    AOI_SCORE_THRESHOLD: float = 0.5
 
     # ---- LLM (可选) ----
     LLM_API_KEY: Optional[str] = None

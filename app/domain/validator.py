@@ -67,6 +67,8 @@ class CircuitValidator:
                 type=c.type,
                 pin1_loc=c.pin1_loc,
                 pin2_loc=c.pin2_loc,
+                extra_pins=list(c.extra_pins or []),
+                pin_roles=list(c.pin_roles or []),
                 polarity=c.polarity,
                 confidence=c.confidence,
                 orientation_deg=c.orientation_deg,
@@ -95,6 +97,8 @@ class CircuitValidator:
                     "type": c.type,
                     "pin1_loc": list(c.pin1_loc) if c.pin1_loc else None,
                     "pin2_loc": list(c.pin2_loc) if c.pin2_loc else None,
+                    "extra_pins": [list(p) for p in (c.extra_pins or [])],
+                    "pin_roles": list(c.pin_roles or []),
                     "polarity": c.polarity.value,
                 }
                 for c in self.ref_components
@@ -111,6 +115,7 @@ class CircuitValidator:
         for item in payload.get("components", []):
             pin1 = tuple(item["pin1_loc"]) if item.get("pin1_loc") else None
             pin2 = tuple(item["pin2_loc"]) if item.get("pin2_loc") else None
+            extra_pins = [tuple(p) for p in item.get("extra_pins", []) if p]
             if pin1 is None:
                 continue
             pol_str = item.get("polarity", "none")
@@ -124,6 +129,8 @@ class CircuitValidator:
                     type=item.get("type", "UNKNOWN"),
                     pin1_loc=pin1,
                     pin2_loc=pin2,
+                    extra_pins=extra_pins,
+                    pin_roles=list(item.get("pin_roles", [])),
                     polarity=polarity,
                 )
             )
@@ -444,16 +451,16 @@ class CircuitValidator:
                 n1 = analyzer._get_node_name(comp.pin1_loc)
                 n2 = analyzer._get_node_name(comp.pin2_loc)
                 has_resistor = False
-                for node in (n1, n2):
-                    if node not in g:
-                        continue
-                    for neighbor in g.neighbors(node):
-                        edge_data = g.get_edge_data(node, neighbor)
-                        if edge_data and norm_component_type(edge_data.get("type", "")) == "Resistor":
+                # Union-Find 感知: 通过 Wire 连接的 Resistor 也算相邻
+                led_nets = {analyzer._uf.find(n1), analyzer._uf.find(n2)}
+                for other in analyzer.components:
+                    if norm_component_type(other.type) == "Resistor":
+                        r_nets = {analyzer._uf.find(analyzer._get_node_name(other.pin1_loc))}
+                        if other.pin2_loc:
+                            r_nets.add(analyzer._uf.find(analyzer._get_node_name(other.pin2_loc)))
+                        if led_nets & r_nets:
                             has_resistor = True
                             break
-                    if has_resistor:
-                        break
                 if not has_resistor:
                     issues.append(
                         f"{comp.name}: LED所在网络中未检测到限流电阻, "
@@ -466,7 +473,9 @@ class CircuitValidator:
             if comp.pin2_loc:
                 n1 = analyzer._get_node_name(comp.pin1_loc)
                 n2 = analyzer._get_node_name(comp.pin2_loc)
-                if n1 == n2 and ctype not in ("Wire",):
+                # Union-Find 感知: 检查 Wire 合并后的等电位短路
+                same_net = (n1 == n2) or analyzer._uf.connected(n1, n2)
+                if same_net and ctype not in ("Wire",):
                     issues.append(
                         f"{comp.name}: {ctype}两引脚在同一导通组({n1}), "
                         f"元件被短路或未正确跨行插入"

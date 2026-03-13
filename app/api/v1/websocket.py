@@ -6,12 +6,12 @@ WebSocket 端点
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.deps import get_classroom
-from app.services.classroom_state import ClassroomState
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +26,21 @@ async def ws_station(websocket: WebSocket, station_id: str):
     classroom.register_websocket(station_id, websocket)
     logger.info(f"[WS] 工位 {station_id} 已连接")
 
+    async def keepalive():
+        """每 5 秒更新 last_seen, 保持工位 online 状态"""
+        while True:
+            await asyncio.sleep(5)
+            classroom.touch_station(station_id)
+
+    keepalive_task = asyncio.create_task(keepalive())
     try:
         while True:
             data = await websocket.receive_text()
             if data == "ping":
+                classroom.touch_station(station_id)
                 await websocket.send_text("pong")
     except WebSocketDisconnect:
         logger.info(f"[WS] 工位 {station_id} 已断开")
     finally:
+        keepalive_task.cancel()
         classroom.unregister_websocket(station_id)

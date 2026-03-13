@@ -41,10 +41,13 @@ class WireAnalyzer:
         """
         x1, y1, x2, y2 = bbox
         h, w = image.shape[:2]
-        x1, y1 = max(0, x1), max(0, y1)
-        x2, y2 = min(w, x2), min(h, y2)
 
-        crop = image[y1:y2, x1:x2]
+        # 扩展 bbox 边界, 避免导线端点贴近边缘被截断
+        pad = max(10, int(0.1 * max(x2 - x1, y2 - y1)))
+        x1_pad, y1_pad = max(0, x1 - pad), max(0, y1 - pad)
+        x2_pad, y2_pad = min(w, x2 + pad), min(h, y2 + pad)
+
+        crop = image[y1_pad:y2_pad, x1_pad:x2_pad]
         if crop.size == 0:
             return None, ""
 
@@ -54,9 +57,9 @@ class WireAnalyzer:
         # 骨架端点
         endpoints = self._skeleton_endpoints(crop)
         if endpoints is not None:
-            # 转回全图坐标
+            # 转回全图坐标 (注意使用 pad 后的偏移)
             (ex1, ey1), (ex2, ey2) = endpoints
-            endpoints = ((ex1 + x1, ey1 + y1), (ex2 + x1, ey2 + y1))
+            endpoints = ((ex1 + x1_pad, ey1 + y1_pad), (ex2 + x1_pad, ey2 + y1_pad))
 
         return endpoints, color
 
@@ -72,10 +75,17 @@ class WireAnalyzer:
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-        # 过滤背景 (白色面包板)
+        # 过滤背景 (白色/浅灰色面包板)
         hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-        white_mask = cv2.inRange(hsv, (0, 0, 180), (180, 40, 255))
+        white_mask = cv2.inRange(hsv, (0, 0, 160), (180, 60, 255))
         binary = cv2.bitwise_and(binary, cv2.bitwise_not(white_mask))
+
+        # 形态学开运算去除小噪点
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+
+        if cv2.countNonZero(binary) < 10:
+            return None
 
         skeleton = skeletonize(binary > 0).astype(np.uint8)
 

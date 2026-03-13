@@ -61,7 +61,7 @@ class StationHeartbeat(BaseModel):
 
     # ---- 系统状态 ----
     fps: float = 0.0
-    detector_ok: bool = True
+    detector_ok: str = "ok"
     llm_backend: str = ""
     ocr_backend: str = ""
 

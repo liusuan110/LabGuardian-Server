@@ -1,0 +1,113 @@
+{
+  "meta": {
+    "created_at": "2026-03-07T17:56:55",
+    "format": "labguardian_ref_v3"
+  },
+  "components": [
+    {
+      "name": "LED1",
+      "type": "LED",
+      "pin1_loc": [
+        "19",
+        "e"
+      ],
+      "pin2_loc": [
+        "19",
+        "h"
+      ],
+      "polarity": "unknown"
+    },
+    {
+      "name": "W1",
+      "type": "Wire",
+      "pin1_loc": [
+        "19",
+        "j"
+      ],
+      "pin2_loc": [
+        "32",
+        "rail_bot-"
+      ],
+      "polarity": "none"
+    },
+    {
+      "name": "R1",
+      "type": "Resistor",
+      "pin1_loc": [
+        "15",
+        "d"
+      ],
+      "pin2_loc": [
+        "19",
+        "d"
+      ],
+      "polarity": "none"
+    },
+    {
+      "name": "W2",
+      "type": "Wire",
+      "pin1_loc": [
+        "15",
+        "a"
+      ],
+      "pin2_loc": [
+        "19",
+        "rail_top+"
+      ],
+      "polarity": "none"
+    }
+  ],
+  "topology": {
+    "directed": false,
+    "multigraph": false,
+    "graph": {},
+    "nodes": [
+      {
+        "kind": "net",
+        "id": "N0"
+      },
+      {
+        "kind": "net",
+        "power": "GND",
+        "id": "N1"
+      },
+      {
+        "kind": "net",
+        "power": "VCC",
+        "id": "N2"
+      },
+      {
+        "kind": "comp",
+        "ctype": "LED",
+        "polarity": "unknown",
+        "pins": 2,
+        "id": "C0"
+      },
+      {
+        "kind": "comp",
+        "ctype": "Resistor",
+        "polarity": "none",
+        "pins": 2,
+        "id": "C1"
+      }
+    ],
+    "links": [
+      {
+        "source": "N0",
+        "target": "C0"
+      },
+      {
+        "source": "N0",
+        "target": "C1"
+      },
+      {
+        "source": "N1",
+        "target": "C0"
+      },
+      {
+        "source": "N2",
+        "target": "C1"
+      }
+    ]
+  }
+}

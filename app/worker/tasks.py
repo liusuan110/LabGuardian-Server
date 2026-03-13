@@ -27,7 +27,11 @@ logger = logging.getLogger(__name__)
 def run_pipeline_task(
     self,
     images_b64: List[str],
-    reference_path: str | None = None,
+    reference_path: Dict[str, Any] | str | None = None,
+    rail_assignments: Dict[str, str] | None = None,
+    conf: float | None = None,
+    iou: float | None = None,
+    imgsz: int | None = None,
 ) -> Dict[str, Any]:
     """Celery 异步执行完整 4 阶段流水线
 
@@ -39,13 +43,19 @@ def run_pipeline_task(
     def _progress_cb(stage: str, progress: float) -> None:
         self.update_state(
             state="PROGRESS",
-            meta={"stage": stage, "progress": progress},
+            meta={"current_stage": stage, "stage": stage, "progress": progress},
         )
+
+    ref_path = reference_path if isinstance(reference_path, str) else None
 
     try:
         result = run_pipeline(
             images_b64=images_b64,
-            reference_path=reference_path,
+            reference_path=ref_path,
+            rail_assignments=rail_assignments,
+            conf=conf,
+            iou=iou,
+            imgsz=imgsz,
             progress_cb=_progress_cb,
         )
         return result

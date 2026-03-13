@@ -174,18 +174,26 @@ class ClassroomState:
     # ---- WebSocket 管理 ----
 
     def register_websocket(self, station_id: str, ws: WebSocketConnection):
+        now = time.time()
         with self._lock:
             if station_id in self._stations:
                 self._stations[station_id].websocket = ws
+                self._stations[station_id].last_seen = now
             else:
                 self._stations[station_id] = StationState(
-                    first_seen=time.time(), websocket=ws
+                    first_seen=now, last_seen=now, websocket=ws
                 )
 
     def unregister_websocket(self, station_id: str):
         with self._lock:
             if station_id in self._stations:
                 self._stations[station_id].websocket = None
+
+    def touch_station(self, station_id: str):
+        """更新 last_seen 保活 (WebSocket ping 时调用)"""
+        with self._lock:
+            if station_id in self._stations:
+                self._stations[station_id].last_seen = time.time()
 
     def get_websocket(self, station_id: str) -> Optional[WebSocketConnection]:
         with self._lock:

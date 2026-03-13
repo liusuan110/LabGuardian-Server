@@ -37,8 +37,13 @@ class PipelineRequest(BaseModel):
         description="1-3 张面包板俯拍图 (base64 JPEG)",
     )
     conf: float = 0.25
+    iou: float = 0.5
     imgsz: int = 1280
     reference_circuit: Optional[Dict[str, Any]] = None
+    rail_assignments: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="面包板电源轨道指定, 如 {\"top_plus\": \"VCC\", \"top_minus\": \"GND\", \"bot_plus\": \"VCC\", \"bot_minus\": \"GND\"}",
+    )
 
 
 class StageResult(BaseModel):
