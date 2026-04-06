@@ -88,6 +88,18 @@ class BroadcastMessage(BaseModel):
     timestamp: float = Field(default_factory=time.time)
 
 
+class GuidanceAuditRecord(BaseModel):
+    """指导审计记录"""
+
+    audit_id: str
+    target_type: str
+    target_id: str
+    delivery_status: str
+    delivery_reason: str = ""
+    payload: dict = Field(default_factory=dict)
+    created_at: float = Field(default_factory=time.time)
+
+
 class StationDetail(BaseModel):
     """单工位详情 (扩展字段, 用于教师端)"""
 

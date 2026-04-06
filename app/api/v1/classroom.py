@@ -6,25 +6,19 @@
 
 from __future__ import annotations
 
-import threading
-from typing import Dict
-
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from app.core.deps import get_classroom
+from app.core.deps import get_classroom, get_guidance_service
 from app.schemas.classroom import (
     BroadcastMessage,
     GuidanceMessage,
     StationHeartbeat,
 )
 from app.services.classroom_state import ClassroomState
+from app.services.guidance_service import GuidanceService
 
 router = APIRouter(prefix="/classroom", tags=["classroom"])
-
-# 最新帧缓存
-_frame_lock = threading.Lock()
-_frame_cache: Dict[str, str] = {}
 
 
 # ---- 学生端上报 ----
@@ -34,15 +28,14 @@ _frame_cache: Dict[str, str] = {}
 async def receive_heartbeat(
     heartbeat: StationHeartbeat,
     classroom: ClassroomState = Depends(get_classroom),
+    guidance_service: GuidanceService = Depends(get_guidance_service),
 ):
     """接收学生工位心跳 (每 2 秒)"""
     data = heartbeat.model_dump()
     new_alerts = classroom.update_station(data)
 
     thumb = data.get("thumbnail_b64", "")
-    if thumb:
-        with _frame_lock:
-            _frame_cache[heartbeat.station_id] = thumb
+    guidance_service.cache_thumbnail(heartbeat.station_id, thumb)
 
     return {"status": "ok", "new_alerts": len(new_alerts)}
 
@@ -87,10 +80,12 @@ async def get_station(
 
 
 @router.get("/station/{station_id}/thumbnail")
-async def get_thumbnail(station_id: str):
+async def get_thumbnail(
+    station_id: str,
+    guidance_service: GuidanceService = Depends(get_guidance_service),
+):
     """获取工位最新缩略图 (base64)"""
-    with _frame_lock:
-        thumb = _frame_cache.get(station_id, "")
+    thumb = guidance_service.get_thumbnail(station_id)
     if thumb:
         return {"thumbnail_b64": thumb}
     return JSONResponse(status_code=404, content={"error": "no thumbnail"})
@@ -104,38 +99,30 @@ async def send_guidance(
     station_id: str,
     msg: GuidanceMessage,
     classroom: ClassroomState = Depends(get_classroom),
+    guidance_service: GuidanceService = Depends(get_guidance_service),
 ):
     """教师 → 单个学生发送指导消息"""
-    guidance_data = msg.model_dump()
-    classroom.add_guidance_record(station_id, guidance_data)
-
-    ws = classroom.get_websocket(station_id)
-    if ws:
-        try:
-            await ws.send_json(guidance_data)
-            return {"status": "delivered"}
-        except Exception:
-            return {"status": "queued", "reason": "ws_send_failed"}
-
-    return {"status": "queued", "reason": "ws_not_connected"}
+    return await guidance_service.send_guidance(classroom, station_id, msg.model_dump())
 
 
 @router.post("/broadcast")
 async def broadcast(
     msg: BroadcastMessage,
     classroom: ClassroomState = Depends(get_classroom),
+    guidance_service: GuidanceService = Depends(get_guidance_service),
 ):
     """教师 → 全班广播"""
-    data = msg.model_dump()
-    websockets = classroom.get_all_websockets()
-    sent = 0
-    for ws in websockets:
-        try:
-            await ws.send_json(data)
-            sent += 1
-        except Exception:
-            pass
-    return {"status": "ok", "sent": sent, "total": len(websockets)}
+    return await guidance_service.broadcast(classroom, msg.model_dump())
+
+
+@router.get("/guidance/audit")
+async def get_guidance_audit(
+    station_id: str | None = None,
+    limit: int = 100,
+    guidance_service: GuidanceService = Depends(get_guidance_service),
+):
+    """查询指导审计记录."""
+    return guidance_service.list_audit_records(station_id=station_id, limit=limit)
 
 
 # ---- 参考电路 ----

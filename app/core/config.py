@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     SERVER_PORT: int = 8000
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
+    CODE_VERSION: str = "0.1.0"
+    MODEL_VERSION: str = "dev"
+    KB_VERSION: str = "none"
+    RULE_VERSION: str = "dev"
 
     # ---- CORS ----
     CORS_ORIGINS: list[str] = ["*"]

@@ -66,6 +66,18 @@ app/
 │       └── stabilizer.py
 └── worker/
     └── tasks.py             # Celery 任务定义
+
+scripts/
+└── manual/
+    └── tools/              # 仍保留的联调/素材/辅助工具
+
+tests/
+└── manual/
+    ├── smoke/              # 冒烟与排障脚本
+    └── research/           # AOI / WinCLIP 等研究验证
+
+docs/
+└── backend-architecture.md # 当前边界与 RAG/agent 落点图
 ```
 
 ## 快速开始
@@ -78,11 +90,18 @@ pip install -e ".[dev]"
 docker compose up -d redis
 
 # 3. 启动 Celery Worker
-celery -A app.worker.tasks worker --loglevel=info
+celery -A app.core.celery_app:celery_app worker -Q pipeline -c 1 --loglevel=info
 
 # 4. 启动 FastAPI
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+## 仓库约定
+
+- 运行缓存、演示输出和实验产物不再提交到仓库根目录。
+- 离线脚本统一放在 `scripts/manual/tools/`。
+- `tests/manual/` 仅保留 `smoke/` 与 `research/` 两类手工验证。
+- 后端职责边界与 RAG/agent 规划见 `docs/backend-architecture.md`。
 
 ## 迁移对照表
 
