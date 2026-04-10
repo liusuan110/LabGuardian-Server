@@ -1,0 +1,58 @@
+[
+  {
+    "component_id": "R1",
+    "component_type": "Resistor",
+    "class_name": "Resistor",
+    "package_type": "axial_2pin",
+    "symmetry_group": [["pin1", "pin2"]],
+    "confidence": 1.0,
+    "pins": [
+      {
+        "pin_id": 1,
+        "pin_name": "pin1",
+        "logic_loc": ["12", "b"],
+        "hole_id": "B12",
+        "electrical_node_id": "ROW_12_L",
+        "confidence": 1.0,
+        "is_ambiguous": false
+      },
+      {
+        "pin_id": 2,
+        "pin_name": "pin2",
+        "logic_loc": ["12", "f"],
+        "hole_id": "F12",
+        "electrical_node_id": "ROW_12_R",
+        "confidence": 1.0,
+        "is_ambiguous": false
+      }
+    ]
+  },
+  {
+    "component_id": "R2",
+    "component_type": "Resistor",
+    "class_name": "Resistor",
+    "package_type": "axial_2pin",
+    "symmetry_group": [["pin1", "pin2"]],
+    "confidence": 1.0,
+    "pins": [
+      {
+        "pin_id": 1,
+        "pin_name": "pin1",
+        "logic_loc": ["20", "b"],
+        "hole_id": "B20",
+        "electrical_node_id": "ROW_20_L",
+        "confidence": 1.0,
+        "is_ambiguous": false
+      },
+      {
+        "pin_id": 2,
+        "pin_name": "pin2",
+        "logic_loc": ["20", "f"],
+        "hole_id": "F20",
+        "electrical_node_id": "ROW_20_R",
+        "confidence": 1.0,
+        "is_ambiguous": false
+      }
+    ]
+  }
+]

@@ -15,11 +15,22 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
+from app.domain.board_schema import BoardSchema
 from app.pipeline.vision.calibrator import BreadboardCalibrator
 from app.pipeline.vision.pin_utils import select_best_pin_pair
 from app.pipeline.vision.pin_hole_detector import compensate_occluded_pins
 
 logger = logging.getLogger(__name__)
+
+_TYPE_PREFIX = {
+    "resistor": "R",
+    "capacitor": "C",
+    "wire": "W",
+    "led": "LED",
+    "diode": "D",
+    "ic": "IC",
+    "potentiometer": "POT",
+}
 
 
 def run_mapping(
@@ -53,6 +64,9 @@ def run_mapping(
         compensate_occluded_pins(primary_image, detections, calibrator)
 
     mapped: List[dict] = []
+    board_schema = BoardSchema.default_breadboard()
+    component_counters: Dict[str, int] = {}
+    view_ids = _view_ids_from_images(images_b64)
 
     # ── 用 pinned_hints 精确化引脚像素坐标 ──
     pin_centers = []
@@ -95,15 +109,254 @@ def run_mapping(
 
         comp["pin1_logic"] = list(pin1_logic) if pin1_logic else None
         comp["pin2_logic"] = list(pin2_logic) if pin2_logic else None
+        comp["pin1_logic_candidates"] = [list(item) for item in p1_candidates]
+        comp["pin2_logic_candidates"] = [list(item) for item in p2_candidates]
         mapped.append(comp)
 
-    # 后处理: Wire 双轨修正 → 行合并/LED桥接 → Wire端点吸附
+    # 后处理仍然允许修正旧链路字段, 但新的结构化 `pins[]`
+    # 必须在所有修正完成之后再统一生成, 否则 hole_id/node_id 会失配。
     _fix_wire_dual_rail(mapped, calibrator)
     _refine_row_connectivity(mapped)
     _snap_wire_to_components(mapped)
+    _attach_structured_pins(
+        mapped,
+        board_schema=board_schema,
+        counters=component_counters,
+        view_ids=view_ids,
+    )
 
     duration_ms = (time.time() - t0) * 1000
     return {"components": mapped, "duration_ms": duration_ms}
+
+
+def _attach_structured_pins(
+    mapped: List[dict],
+    board_schema: BoardSchema,
+    counters: Dict[str, int],
+    view_ids: List[str],
+):
+    """把迁移期的 `pin1_logic/pin2_logic` 提升成新链路的 `components[].pins[]`。
+
+    这里的目标不是一次性变成最终视觉格式, 而是先把后端真正依赖的主语义
+    稳定下来:
+
+    - component_id
+    - pin_name
+    - hole_id
+    - electrical_node_id
+    - observations / candidate_hole_ids / ambiguity
+    """
+    for comp in mapped:
+        class_name = str(comp.get("class_name") or "UNKNOWN")
+        component_id = comp.get("component_id") or _next_component_id(class_name, counters)
+        comp["component_id"] = component_id
+        comp["component_type"] = class_name
+        comp["package_type"] = _default_package_type(class_name)
+        comp["part_subtype"] = comp.get("part_subtype") or ""
+        comp["symmetry_group"] = _default_symmetry_group(class_name)
+
+        pins: List[Dict[str, Any]] = []
+        pin_schema_id = "fixed_pins"
+        if class_name == "IC":
+            pin_schema_id = "dip8_anchor_pair"
+
+        for pin_idx in [1, 2]:
+            logic_loc = comp.get(f"pin{pin_idx}_logic")
+            if not logic_loc:
+                continue
+            logic_tuple = (str(logic_loc[0]), str(logic_loc[1]))
+            hole_id = board_schema.logic_loc_to_hole_id(logic_tuple)
+            electrical_node_id = board_schema.resolve_hole_to_node(hole_id)
+            pin_name = _default_pin_name(class_name, pin_idx)
+            pin_pixel = comp.get(f"pin{pin_idx}_pixel")
+            pin_candidates = _candidate_hole_ids(comp, pin_idx, board_schema)
+            observations = _build_pin_observations(
+                pin_pixel=pin_pixel,
+                logic_loc=logic_loc,
+                view_ids=view_ids,
+                confidence=float(comp.get("confidence", 1.0)),
+            )
+            candidate_node_ids = _candidate_node_ids(pin_candidates, board_schema)
+            ambiguity_reasons = _pin_ambiguity_reasons(pin_candidates, observations)
+            pins.append(
+                {
+                    "pin_id": pin_idx,
+                    "pin_name": pin_name,
+                    "logic_loc": [logic_tuple[0], logic_tuple[1]],
+                    "hole_id": hole_id,
+                    "electrical_node_id": electrical_node_id,
+                    "confidence": float(comp.get("confidence", 1.0)),
+                    "observations": observations,
+                    "candidate_hole_ids": pin_candidates,
+                    "candidate_node_ids": candidate_node_ids,
+                    "candidate_count": len(pin_candidates),
+                    "primary_visibility": max((obs["visibility"] for obs in observations), default=0),
+                    "visible_view_ids": [obs["view_id"] for obs in observations if obs["visibility"] > 0],
+                    "observation_count": len(observations),
+                    "is_ambiguous": bool(ambiguity_reasons),
+                    "ambiguity_reasons": ambiguity_reasons,
+                    "is_anchor_pin": class_name == "IC",
+                }
+            )
+
+        comp["pin_schema_id"] = pin_schema_id
+        comp["pins"] = pins
+
+
+def _next_component_id(class_name: str, counters: Dict[str, int]) -> str:
+    key = class_name.lower()
+    prefix = _TYPE_PREFIX.get(key, key[:3].upper() or "CMP")
+    counters[key] = counters.get(key, 0) + 1
+    return f"{prefix}{counters[key]}"
+
+
+def _default_package_type(class_name: str) -> str:
+    key = class_name.lower()
+    if key == "resistor":
+        return "axial_2pin"
+    if key == "wire":
+        return "jumper_wire_2pin"
+    if key == "led":
+        return "led_2pin"
+    if key == "diode":
+        return "diode_2pin"
+    if key == "capacitor":
+        return "capacitor_2pin"
+    if key == "potentiometer":
+        return "potentiometer_3pin"
+    if key == "ic":
+        return "dip8"
+    return "generic"
+
+
+def _default_symmetry_group(class_name: str) -> List[List[str]]:
+    key = class_name.lower()
+    if key in ("resistor", "wire", "capacitor"):
+        return [["pin1", "pin2"]]
+    return []
+
+
+def _default_pin_name(class_name: str, pin_idx: int) -> str:
+    key = class_name.lower()
+    if key == "ic":
+        return f"anchor_pin{pin_idx}"
+    return f"pin{pin_idx}"
+
+
+def _pin_visibility(
+    pin_pixel: Optional[Tuple[float, float] | List[float]],
+    logic_loc: Optional[List[str]],
+) -> int:
+    if logic_loc and pin_pixel:
+        return 2
+    if logic_loc:
+        return 1
+    return 0
+
+
+def _candidate_hole_ids(comp: dict, pin_idx: int, board_schema: BoardSchema) -> List[str]:
+    """暴露当前 pin 的 Top-K 孔位候选, 并确保最终选中孔位排在首位。
+
+    当前阶段的候选来自校准器给出的逻辑坐标候选, 仍然是轻量版本。
+    后续如果视觉侧输出真实 pin heatmap / hole distribution, 可以直接在
+    这里替换而不影响下游 netlist / validator 结构。
+    """
+    ordered: List[str] = []
+    logic_loc = comp.get(f"pin{pin_idx}_logic")
+    if logic_loc:
+        logic_tuple = (str(logic_loc[0]), str(logic_loc[1]))
+        ordered.append(board_schema.logic_loc_to_hole_id(logic_tuple))
+
+    for item in comp.get(f"pin{pin_idx}_logic_candidates", []):
+        if not item:
+            continue
+        logic_tuple = (str(item[0]), str(item[1]))
+        ordered.append(board_schema.logic_loc_to_hole_id(logic_tuple))
+
+    deduped: List[str] = []
+    seen = set()
+    for hole_id in ordered:
+        normalized = board_schema.normalize_hole_id(hole_id)
+        if normalized not in seen:
+            seen.add(normalized)
+            deduped.append(normalized)
+    return deduped
+
+
+def _candidate_node_ids(candidate_holes: List[str], board_schema: BoardSchema) -> List[str]:
+    ordered: List[str] = []
+    seen = set()
+    for hole_id in candidate_holes:
+        node_id = board_schema.resolve_hole_to_node(hole_id)
+        if node_id not in seen:
+            seen.add(node_id)
+            ordered.append(node_id)
+    return ordered
+
+
+def _view_ids_from_images(images_b64: List[str] | None) -> List[str]:
+    if not images_b64:
+        return ["top"]
+    defaults = ["top", "left_front", "right_front"]
+    view_ids = defaults[: len(images_b64)]
+    if len(images_b64) > len(defaults):
+        for idx in range(len(defaults), len(images_b64)):
+            view_ids.append(f"aux_view_{idx - len(defaults) + 1}")
+    return view_ids
+
+
+def _build_pin_observations(
+    pin_pixel: Optional[Tuple[float, float] | List[float]],
+    logic_loc: Optional[List[str]],
+    view_ids: List[str],
+    confidence: float,
+) -> List[Dict[str, Any]]:
+    """构造多视图 pin 观测。
+
+    当前实现里:
+    - top 视图尽量保留真实 keypoint
+    - 侧视图先保留 visibility 占位, 便于后续视觉模型直接补全
+    """
+    observations: List[Dict[str, Any]] = []
+    top_visibility = _pin_visibility(pin_pixel, logic_loc)
+    for view_id in view_ids:
+        if view_id == "top":
+            observations.append(
+                {
+                    "view_id": view_id,
+                    "keypoint": [float(pin_pixel[0]), float(pin_pixel[1])] if pin_pixel else None,
+                    "visibility": top_visibility,
+                    "confidence": confidence,
+                }
+            )
+            continue
+
+        observations.append(
+            {
+                "view_id": view_id,
+                "keypoint": None,
+                "visibility": 1 if logic_loc else 0,
+                "confidence": confidence * 0.8 if logic_loc else 0.0,
+            }
+        )
+    return observations
+
+
+def _pin_ambiguity_reasons(
+    candidate_hole_ids: List[str],
+    observations: List[Dict[str, Any]],
+) -> List[str]:
+    """把“为什么这个 pin 不够确定”显式编码出来, 供 validator / agent 复用。"""
+    reasons: List[str] = []
+    if len(candidate_hole_ids) > 1:
+        reasons.append("multiple_candidate_holes")
+    top_obs = next((obs for obs in observations if obs["view_id"] == "top"), None)
+    if top_obs and int(top_obs.get("visibility", 0)) < 2:
+        reasons.append("top_view_not_fully_visible")
+    visible_views = [obs for obs in observations if int(obs.get("visibility", 0)) > 0]
+    if len(visible_views) <= 1 and len(observations) > 1:
+        reasons.append("limited_multi_view_support")
+    return reasons
 
 
 def _decode_primary_image(image_b64: str) -> Optional[np.ndarray]:

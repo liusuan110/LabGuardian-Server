@@ -1,7 +1,7 @@
 {
   "meta": {
-    "created_at": "2026-03-07T17:56:55",
-    "format": "labguardian_ref_v3"
+    "created_at": "2026-04-10T17:06:09",
+    "format": "labguardian_ref_v4"
   },
   "components": [
     {
@@ -15,6 +15,8 @@
         "19",
         "h"
       ],
+      "extra_pins": [],
+      "pin_roles": [],
       "polarity": "unknown"
     },
     {
@@ -28,6 +30,8 @@
         "32",
         "rail_bot-"
       ],
+      "extra_pins": [],
+      "pin_roles": [],
       "polarity": "none"
     },
     {
@@ -41,6 +45,8 @@
         "19",
         "d"
       ],
+      "extra_pins": [],
+      "pin_roles": [],
       "polarity": "none"
     },
     {
@@ -54,9 +60,217 @@
         "19",
         "rail_top+"
       ],
+      "extra_pins": [],
+      "pin_roles": [],
       "polarity": "none"
     }
   ],
+  "netlist_v2": {
+    "scene_id": "reference_scene",
+    "board_schema_id": "breadboard_legacy_v1",
+    "components": [
+      {
+        "component_id": "LED1",
+        "component_type": "LED",
+        "package_type": "legacy",
+        "part_subtype": "",
+        "polarity": "unknown",
+        "orientation": 0.0,
+        "symmetry_group": [],
+        "pins": [
+          {
+            "pin_id": 1,
+            "pin_name": "pin1",
+            "hole_id": "E19",
+            "electrical_node_id": "ROW_19_L",
+            "electrical_net_id": "NET_000",
+            "observations": [],
+            "confidence": 1.0,
+            "is_ambiguous": false
+          },
+          {
+            "pin_id": 2,
+            "pin_name": "pin2",
+            "hole_id": "H19",
+            "electrical_node_id": "ROW_19_R",
+            "electrical_net_id": "NET_002",
+            "observations": [],
+            "confidence": 1.0,
+            "is_ambiguous": false
+          }
+        ],
+        "confidence": 1.0,
+        "metadata": {
+          "source": "legacy_component"
+        }
+      },
+      {
+        "component_id": "W1",
+        "component_type": "Wire",
+        "package_type": "legacy",
+        "part_subtype": "",
+        "polarity": "none",
+        "orientation": 0.0,
+        "symmetry_group": [],
+        "pins": [
+          {
+            "pin_id": 1,
+            "pin_name": "pin1",
+            "hole_id": "J19",
+            "electrical_node_id": "ROW_19_R",
+            "electrical_net_id": "NET_002",
+            "observations": [],
+            "confidence": 1.0,
+            "is_ambiguous": false
+          },
+          {
+            "pin_id": 2,
+            "pin_name": "pin2",
+            "hole_id": "RAIL_BOT_MINUS_32",
+            "electrical_node_id": "RAIL_BOT_MINUS",
+            "electrical_net_id": null,
+            "observations": [],
+            "confidence": 1.0,
+            "is_ambiguous": false
+          }
+        ],
+        "confidence": 1.0,
+        "metadata": {
+          "source": "legacy_component"
+        }
+      },
+      {
+        "component_id": "R1",
+        "component_type": "Resistor",
+        "package_type": "legacy",
+        "part_subtype": "",
+        "polarity": "none",
+        "orientation": 0.0,
+        "symmetry_group": [],
+        "pins": [
+          {
+            "pin_id": 1,
+            "pin_name": "pin1",
+            "hole_id": "D15",
+            "electrical_node_id": "ROW_15_L",
+            "electrical_net_id": "NET_001",
+            "observations": [],
+            "confidence": 1.0,
+            "is_ambiguous": false
+          },
+          {
+            "pin_id": 2,
+            "pin_name": "pin2",
+            "hole_id": "D19",
+            "electrical_node_id": "ROW_19_L",
+            "electrical_net_id": "NET_000",
+            "observations": [],
+            "confidence": 1.0,
+            "is_ambiguous": false
+          }
+        ],
+        "confidence": 1.0,
+        "metadata": {
+          "source": "legacy_component"
+        }
+      },
+      {
+        "component_id": "W2",
+        "component_type": "Wire",
+        "package_type": "legacy",
+        "part_subtype": "",
+        "polarity": "none",
+        "orientation": 0.0,
+        "symmetry_group": [],
+        "pins": [
+          {
+            "pin_id": 1,
+            "pin_name": "pin1",
+            "hole_id": "A15",
+            "electrical_node_id": "ROW_15_L",
+            "electrical_net_id": "NET_001",
+            "observations": [],
+            "confidence": 1.0,
+            "is_ambiguous": false
+          },
+          {
+            "pin_id": 2,
+            "pin_name": "pin2",
+            "hole_id": "RAIL_TOP_PLUS_19",
+            "electrical_node_id": "RAIL_TOP_PLUS",
+            "electrical_net_id": null,
+            "observations": [],
+            "confidence": 1.0,
+            "is_ambiguous": false
+          }
+        ],
+        "confidence": 1.0,
+        "metadata": {
+          "source": "legacy_component"
+        }
+      }
+    ],
+    "nets": [
+      {
+        "electrical_net_id": "NET_000",
+        "member_node_ids": [
+          "ROW_19_L"
+        ],
+        "member_hole_ids": [
+          "D19",
+          "E19"
+        ],
+        "power_role": "",
+        "labels": []
+      },
+      {
+        "electrical_net_id": "NET_001",
+        "member_node_ids": [
+          "PWR_PLUS",
+          "ROW_15_L"
+        ],
+        "member_hole_ids": [
+          "A15",
+          "D15"
+        ],
+        "power_role": "VCC",
+        "labels": []
+      },
+      {
+        "electrical_net_id": "NET_002",
+        "member_node_ids": [
+          "PWR_MINUS",
+          "ROW_19_R"
+        ],
+        "member_hole_ids": [
+          "H19",
+          "J19"
+        ],
+        "power_role": "GND",
+        "labels": []
+      }
+    ],
+    "node_index": {
+      "ROW_19_L": [
+        "E19",
+        "D19"
+      ],
+      "ROW_19_R": [
+        "H19",
+        "J19"
+      ],
+      "RAIL_BOT_MINUS": [
+        "RAIL_BOT_MINUS_32"
+      ],
+      "ROW_15_L": [
+        "D15",
+        "A15"
+      ],
+      "RAIL_TOP_PLUS": [
+        "RAIL_TOP_PLUS_19"
+      ]
+    }
+  },
   "topology": {
     "directed": false,
     "multigraph": false,

@@ -1,0 +1,10 @@
+[
+  {
+    "component_id": "R1",
+    "class_name": "Resistor",
+    "confidence": 1.0,
+    "bbox": [100, 100, 180, 120],
+    "pin1_logic": ["12", "b"],
+    "pin2_logic": ["12", "f"]
+  }
+]

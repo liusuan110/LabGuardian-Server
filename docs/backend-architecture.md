@@ -1,5 +1,15 @@
 # Backend Architecture
 
+这份文档用于回答“当前后端应该怎么理解分层和边界”，重点是帮助团队在继续迭代时避免把迁移中的职责再次混回去。
+
+## Current Snapshot
+
+当前已经形成 3 条清晰主线：
+
+- API / Service / Domain / Pipeline 分层已经基本建立
+- 旧 `pin1_logic/pin2_logic` 链路仍保留，但已经通过 `topology_input.py` 收口兼容
+- 新 `netlist_v2 + validator_report_v2` 链路已经可以作为后续 guidance / RAG / agent 的正式基础
+
 ## Current Responsibility Boundaries
 
 ### `app/api`
@@ -83,7 +93,7 @@
 - `pipeline` 只输出事实，不负责教学话术
 - `pipeline` 输出必须可序列化、可版本化、可回放
 
-## Recommended Next-Step Layout
+## Recommended Layout
 
 ```text
 app/
@@ -148,6 +158,29 @@ flowchart TD
   C --> G["Outputs<br/>guidance / citations / audit / classroom state"]
 ```
 
+## Netlist Migration Landing
+
+当前建议团队默认使用下面这条语义链理解服务器端电路结果：
+
+```text
+component_id + pin_name + hole_id
+-> electrical_node_id
+-> electrical_net_id
+-> netlist_v2
+-> validator_report_v2
+```
+
+对应落点：
+
+- `app/pipeline/stages/s2_mapping.py`
+  - 视觉结果到 `components[].pins[]`
+- `app/pipeline/topology_input.py`
+  - 旧/新结构归一化
+- `app/domain/circuit.py`
+  - `board_schema` 驱动建图与 `netlist_v2`
+- `app/domain/validator.py`
+  - compare / diagnose / error code / evidence refs
+
 ## Formal Agent Landing Design
 
 ### `angnt` input
@@ -197,3 +230,17 @@ flowchart TD
 3. `domain` 不 import FastAPI、Celery、Redis。
 4. `pipeline` 不直接生成教师话术或 citation。
 5. `agent` 只消费结构化证据，不绕开 validator/risk 直接“猜答案”。
+
+## Collaboration Notes
+
+为了降低多人并行修改时的冲突，建议默认这样分工：
+
+- 视觉 / S1 / S2 团队
+  - 重点维护 `app/pipeline/stages/s2_mapping.py`
+  - 输出必须优先对齐 `components[].pins[]`
+- 拓扑 / 网表团队
+  - 重点维护 `app/pipeline/topology_input.py`、`app/domain/circuit.py`
+  - 避免把 board 规则写回视觉阶段
+- 检错 / 指导 / agent 团队
+  - 重点维护 `app/domain/validator.py`、`app/services/*`
+  - 新解释逻辑优先基于 `validator_report_v2`

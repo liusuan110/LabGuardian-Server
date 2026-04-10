@@ -15,6 +15,9 @@ from typing import Dict, List, Optional, Tuple
 
 import networkx as nx
 
+from app.domain.board_schema import BoardSchema
+from app.domain.netlist_models import ComponentInstance, ElectricalNet, NetlistV2, PinAssignment
+
 logger = logging.getLogger(__name__)
 
 
@@ -179,15 +182,21 @@ class CircuitAnalyzer:
     面包板规则: 同行 a-e 导通 (Left), f-j 导通 (Right)。
     """
 
-    def __init__(self, rail_track_rows: Optional[Dict[str, tuple]] = None):
+    def __init__(
+        self,
+        rail_track_rows: Optional[Dict[str, tuple]] = None,
+        board_schema: BoardSchema | None = None,
+    ):
         # 二分图: 左集 U = 元件节点, 右集 V = 网络节点 (等电位点)
         # 参考: circuit_recognizer + NetworkX 二分图建模
         self.graph = nx.Graph()
         self._uf = UnionFind()  # 并查集: Wire 增量合并等电位网络
         self.components: List[CircuitComponent] = []
+        self.component_instances: List[ComponentInstance] = []
         self.power_nets: Dict[str, str] = {}
         self._name_counters: Dict[str, int] = {}
         self._rail_track_rows = rail_track_rows or {}
+        self.board_schema = board_schema or BoardSchema.default_breadboard()
         self._row_to_rail: Dict[int, str] = {}
         for track_id, rows in self._rail_track_rows.items():
             for r in rows:
@@ -198,6 +207,7 @@ class CircuitAnalyzer:
         self.graph.clear()
         self._uf.clear()
         self.components = []
+        self.component_instances = []
         self.power_nets = {}
         self._name_counters = {}
 
@@ -261,8 +271,68 @@ class CircuitAnalyzer:
         if ctype == "Wire" and len(net_names) >= 2:
             self._uf.union(net_names[0], net_names[1])
 
+    def add_component_instance(self, comp: ComponentInstance):
+        """接收新一代组件中心化输入，并兼容注入旧图模型。"""
+        component_id = comp.component_id or self._auto_name(comp.component_type)
+        normalized_pins: List[PinAssignment] = []
+        for pin in comp.pins:
+            hole_id = self.board_schema.normalize_hole_id(pin.hole_id)
+            normalized_pins.append(
+                PinAssignment(
+                    pin_id=pin.pin_id,
+                    pin_name=pin.pin_name,
+                    hole_id=hole_id,
+                    electrical_node_id=pin.electrical_node_id or self.board_schema.resolve_hole_to_node(hole_id),
+                    electrical_net_id=pin.electrical_net_id,
+                    observations=list(pin.observations or []),
+                    confidence=pin.confidence,
+                    is_ambiguous=pin.is_ambiguous,
+                    metadata=dict(pin.metadata or {}),
+                )
+            )
+
+        instance = ComponentInstance(
+            component_id=component_id,
+            component_type=comp.component_type,
+            package_type=comp.package_type,
+            part_subtype=comp.part_subtype,
+            polarity=comp.polarity,
+            orientation=comp.orientation,
+            symmetry_group=[list(group) for group in comp.symmetry_group],
+            pins=normalized_pins,
+            confidence=comp.confidence,
+            metadata=dict(comp.metadata or {}),
+        )
+        self.component_instances.append(instance)
+
+        pin_locs = [
+            self.board_schema.hole_id_to_logic_loc(pin.hole_id)
+            for pin in normalized_pins
+        ]
+        pin_locs = [loc for loc in pin_locs if loc is not None]
+        if not pin_locs:
+            return
+
+        legacy = CircuitComponent(
+            name=component_id,
+            type=comp.component_type,
+            pin1_loc=pin_locs[0],
+            pin2_loc=pin_locs[1] if len(pin_locs) > 1 else None,
+            extra_pins=pin_locs[2:],
+            pin_roles=[pin.pin_name for pin in normalized_pins],
+            polarity=self._polarity_from_value(comp.polarity),
+            confidence=comp.confidence,
+            orientation_deg=comp.orientation,
+        )
+        self.add_component(legacy)
+
     def _get_node_name(self, loc: Tuple[str, str]) -> str:
         """面包板导通规则映射"""
+        hole_id = self.board_schema.logic_loc_to_hole_id(loc)
+        node_name = self.board_schema.resolve_hole_to_node(hole_id)
+        if not node_name.startswith(("PWR_", "RAIL_")):
+            return node_name
+
         row, col = loc
         if col in ("+", "plus", "P"):
             return "PWR_PLUS"
@@ -299,6 +369,17 @@ class CircuitAnalyzer:
     @staticmethod
     def _norm_type(t: str) -> str:
         return norm_component_type(t)
+
+    @staticmethod
+    def _polarity_from_value(value: str | Polarity | None) -> Polarity:
+        if isinstance(value, Polarity):
+            return value
+        if value is None:
+            return Polarity.NONE
+        try:
+            return Polarity(str(value))
+        except ValueError:
+            return Polarity.NONE
 
     def build_topology_graph(self) -> nx.Graph:
         """构建布局无关的拓扑图 — Union-Find 合并 Wire 等电位网络
@@ -512,10 +593,15 @@ class CircuitAnalyzer:
 
     def _identify_power_nets(self):
         for track_id, label in self.rail_assignments.items():
+            power_type = self._parse_rail_label(label)
+            if not power_type:
+                continue
+            schema_nodes = self.board_schema.resolve_track_assignment_nodes(track_id)
+            for node_id in schema_nodes:
+                if node_id in self.graph:
+                    self.power_nets[node_id] = power_type
             if track_id in self.graph:
-                power_type = self._parse_rail_label(label)
-                if power_type:
-                    self.power_nets[track_id] = power_type
+                self.power_nets[track_id] = power_type
         if "PWR_PLUS" in self.graph:
             self.power_nets["PWR_PLUS"] = "VCC"
         if "PWR_MINUS" in self.graph:
@@ -592,6 +678,94 @@ class CircuitAnalyzer:
 
         return {"nets": nets, "components": comp_list, "power": power}
 
+    def export_netlist_v2(self, scene_id: str = "runtime_scene") -> Dict:
+        """导出保留 hole_id / pin_name / electrical_net 的新网表格式。"""
+        self._identify_power_nets()
+        all_nets = {n for n, d in self.graph.nodes(data=True) if d.get("kind") == "net"}
+        uf_groups: Dict[str, set] = {}
+        for net_name in all_nets:
+            root = self._uf.find(net_name)
+            uf_groups.setdefault(root, set()).add(net_name)
+
+        node_to_net_id: Dict[str, str] = {}
+        nets: List[ElectricalNet] = []
+        member_holes_by_net: Dict[str, set] = {}
+        member_nodes_by_net: Dict[str, set] = {}
+
+        instances = self.component_instances or self._legacy_instances()
+        for idx, (root, members) in enumerate(uf_groups.items()):
+            net_id = f"NET_{idx:03d}"
+            for member in members:
+                node_to_net_id[member] = net_id
+            member_holes_by_net[net_id] = set()
+            member_nodes_by_net[net_id] = set(members)
+
+        exported_components: List[ComponentInstance] = []
+        node_index: Dict[str, List[str]] = {}
+        for comp in instances:
+            exported_pins: List[PinAssignment] = []
+            for pin in comp.pins:
+                node_id = pin.electrical_node_id or self.board_schema.resolve_hole_to_node(pin.hole_id)
+                net_id = node_to_net_id.get(self._uf.find(node_id))
+                if net_id:
+                    member_holes_by_net.setdefault(net_id, set()).add(pin.hole_id)
+                    member_nodes_by_net.setdefault(net_id, set()).add(node_id)
+                node_index.setdefault(node_id, [])
+                if pin.hole_id not in node_index[node_id]:
+                    node_index[node_id].append(pin.hole_id)
+                exported_pins.append(
+                    PinAssignment(
+                        pin_id=pin.pin_id,
+                        pin_name=pin.pin_name,
+                        hole_id=pin.hole_id,
+                        electrical_node_id=node_id,
+                        electrical_net_id=net_id,
+                        observations=list(pin.observations or []),
+                        confidence=pin.confidence,
+                        is_ambiguous=pin.is_ambiguous,
+                        metadata=dict(pin.metadata or {}),
+                    )
+                )
+            exported_components.append(
+                ComponentInstance(
+                    component_id=comp.component_id,
+                    component_type=comp.component_type,
+                    package_type=comp.package_type,
+                    part_subtype=comp.part_subtype,
+                    polarity=comp.polarity,
+                    orientation=comp.orientation,
+                    symmetry_group=[list(group) for group in comp.symmetry_group],
+                    pins=exported_pins,
+                    confidence=comp.confidence,
+                    metadata=dict(comp.metadata or {}),
+                )
+            )
+
+        for idx, (root, members) in enumerate(uf_groups.items()):
+            net_id = f"NET_{idx:03d}"
+            power_role = ""
+            for member in members:
+                if member in self.power_nets:
+                    power_role = self.power_nets[member]
+                    break
+            nets.append(
+                ElectricalNet(
+                    electrical_net_id=net_id,
+                    member_node_ids=sorted(member_nodes_by_net.get(net_id, set())),
+                    member_hole_ids=sorted(member_holes_by_net.get(net_id, set())),
+                    power_role=power_role,
+                )
+            )
+
+        netlist = NetlistV2(
+            scene_id=scene_id,
+            board_schema_id=self.board_schema.schema_id,
+            components=exported_components,
+            nets=nets,
+            node_index=node_index,
+        )
+        return netlist.to_dict()
+
     def export_spice_netlist(self) -> str:
         """导出 SPICE 格式网表 (参考 SINA: Circuit Schematic Image-to-Netlist Generator)
 
@@ -664,3 +838,34 @@ class CircuitAnalyzer:
     def component_count(self) -> int:
         """返回元件总数"""
         return len(self.components)
+
+    def _legacy_instances(self) -> List[ComponentInstance]:
+        """把旧组件模型临时映射成 v2 结构，保证迁移期可并行导出。"""
+        instances: List[ComponentInstance] = []
+        for comp in self.components:
+            pins: List[PinAssignment] = []
+            for idx, loc in enumerate(comp.all_pin_locs(), start=1):
+                hole_id = self.board_schema.logic_loc_to_hole_id(loc)
+                pin_name = comp.pin_roles[idx - 1] if idx - 1 < len(comp.pin_roles) else f"pin{idx}"
+                pins.append(
+                    PinAssignment(
+                        pin_id=idx,
+                        pin_name=pin_name,
+                        hole_id=hole_id,
+                        electrical_node_id=self.board_schema.resolve_hole_to_node(hole_id),
+                        confidence=comp.confidence,
+                    )
+                )
+            instances.append(
+                ComponentInstance(
+                    component_id=comp.name,
+                    component_type=comp.type,
+                    package_type="legacy",
+                    polarity=comp.polarity.value,
+                    orientation=comp.orientation_deg,
+                    pins=pins,
+                    confidence=comp.confidence,
+                    metadata={"source": "legacy_component"},
+                )
+            )
+        return instances

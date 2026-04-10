@@ -1,0 +1,30 @@
+[
+  {
+    "component_id": "LED1",
+    "component_type": "LED",
+    "class_name": "LED",
+    "package_type": "led_2pin",
+    "polarity": "unknown",
+    "confidence": 1.0,
+    "pins": [
+      {
+        "pin_id": 1,
+        "pin_name": "pin1",
+        "logic_loc": ["19", "e"],
+        "hole_id": "E19",
+        "electrical_node_id": "ROW_19_L",
+        "confidence": 1.0,
+        "is_ambiguous": false
+      },
+      {
+        "pin_id": 2,
+        "pin_name": "pin2",
+        "logic_loc": ["19", "h"],
+        "hole_id": "H19",
+        "electrical_node_id": "ROW_19_R",
+        "confidence": 1.0,
+        "is_ambiguous": false
+      }
+    ]
+  }
+]

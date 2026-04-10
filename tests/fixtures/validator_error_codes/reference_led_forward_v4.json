@@ -1,0 +1,67 @@
+{
+  "meta": {
+    "created_at": "2026-04-10T18:00:00",
+    "format": "labguardian_ref_v4"
+  },
+  "components": [],
+  "netlist_v2": {
+    "scene_id": "reference_led_forward",
+    "board_schema_id": "breadboard_legacy_v1",
+    "components": [
+      {
+        "component_id": "LED1",
+        "component_type": "LED",
+        "package_type": "led_2pin",
+        "part_subtype": "led_generic",
+        "polarity": "forward",
+        "orientation": 0.0,
+        "symmetry_group": [],
+        "pins": [
+          {
+            "pin_id": 1,
+            "pin_name": "pin1",
+            "hole_id": "E19",
+            "electrical_node_id": "ROW_19_L",
+            "electrical_net_id": "NET_000",
+            "confidence": 1.0,
+            "is_ambiguous": false
+          },
+          {
+            "pin_id": 2,
+            "pin_name": "pin2",
+            "hole_id": "H19",
+            "electrical_node_id": "ROW_19_R",
+            "electrical_net_id": "NET_001",
+            "confidence": 1.0,
+            "is_ambiguous": false
+          }
+        ],
+        "confidence": 1.0,
+        "metadata": {
+          "source": "fixture"
+        }
+      }
+    ],
+    "nets": [
+      {
+        "electrical_net_id": "NET_000",
+        "member_node_ids": ["ROW_19_L"],
+        "member_hole_ids": ["E19"],
+        "power_role": "",
+        "labels": []
+      },
+      {
+        "electrical_net_id": "NET_001",
+        "member_node_ids": ["ROW_19_R"],
+        "member_hole_ids": ["H19"],
+        "power_role": "",
+        "labels": []
+      }
+    ],
+    "node_index": {
+      "ROW_19_L": ["E19"],
+      "ROW_19_R": ["H19"]
+    }
+  },
+  "topology": null
+}

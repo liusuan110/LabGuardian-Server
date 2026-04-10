@@ -11,9 +11,10 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from app.domain.circuit import CircuitAnalyzer, CircuitComponent, Polarity
-from app.domain.ic_models import build_dip8_component
+from app.domain.board_schema import BoardSchema
+from app.domain.circuit import CircuitAnalyzer
 from app.domain.polarity import PolarityResolver
+from app.pipeline.topology_input import build_analyzer_from_components
 
 logger = logging.getLogger(__name__)
 
@@ -43,55 +44,20 @@ def run_topology(
     """
     t0 = time.time()
 
-    analyzer = CircuitAnalyzer()
+    board_schema = BoardSchema.default_breadboard()
 
+    analyzer, normalized_components = build_analyzer_from_components(
+        components,
+        board_schema=board_schema,
+        polarity_resolver=polarity_resolver,
+    )
     if rail_assignments:
         for track_id, label in rail_assignments.items():
             analyzer.set_rail_assignment(track_id, label)
 
-    for comp in components:
-        class_name = comp["class_name"]
-        pin1 = tuple(comp["pin1_logic"]) if comp.get("pin1_logic") else None
-        pin2 = tuple(comp["pin2_logic"]) if comp.get("pin2_logic") else None
-
-        if pin1 is None or pin2 is None:
-            logger.debug("跳过缺失引脚的元件: %s", class_name)
-            continue
-
-        polarity = Polarity.NONE
-        if class_name.lower() in ("led", "diode"):
-            if polarity_resolver:
-                bbox = tuple(comp["bbox"])
-                positive_first = polarity_resolver.infer(bbox)
-                if positive_first is True:
-                    polarity = Polarity.FORWARD
-                elif positive_first is False:
-                    polarity = Polarity.REVERSE
-                else:
-                    polarity = Polarity.UNKNOWN
-            else:
-                polarity = Polarity.UNKNOWN
-
-        if class_name == "IC":
-            circuit_comp = build_dip8_component(
-                class_name=class_name,
-                pin1=pin1,
-                pin2=pin2,
-                confidence=comp.get("confidence", 1.0),
-            )
-        else:
-            circuit_comp = CircuitComponent(
-                name="",
-                type=class_name,
-                pin1_loc=pin1,
-                pin2_loc=pin2,
-                polarity=polarity,
-                confidence=comp.get("confidence", 1.0),
-            )
-        analyzer.add_component(circuit_comp)
-
     circuit_description = analyzer.describe()
     netlist = analyzer.export_netlist()
+    netlist_v2 = analyzer.export_netlist_v2()
     topology_graph = analyzer.to_node_link_data()
     component_count = analyzer.component_count()
 
@@ -100,6 +66,25 @@ def run_topology(
     return {
         "circuit_description": circuit_description,
         "netlist": netlist,
+        "netlist_v2": netlist_v2,
+        "normalized_components": [
+            {
+                "component_id": comp.component_id,
+                "component_type": comp.component_type,
+                "package_type": comp.package_type,
+                "polarity": comp.polarity,
+                "pins": [
+                    {
+                        "pin_id": pin.pin_id,
+                        "pin_name": pin.pin_name,
+                        "hole_id": pin.hole_id,
+                        "electrical_node_id": pin.electrical_node_id,
+                    }
+                    for pin in comp.pins
+                ],
+            }
+            for comp in normalized_components
+        ],
         "topology_graph": topology_graph,
         "component_count": component_count,
         "duration_ms": duration_ms,

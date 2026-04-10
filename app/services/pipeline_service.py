@@ -60,6 +60,7 @@ class PipelineService:
             progress=s4.get("progress", 0.0),
             similarity=s4.get("similarity", 0.0),
             diagnostics=s4.get("diagnostics", []),
+            comparison_report=s4.get("comparison_report", {}),
             risk_level=s4.get("risk_level", "safe"),
             risk_reasons=s4.get("risk_reasons", []),
         )
@@ -86,6 +87,7 @@ class PipelineService:
                 "progress": result.progress,
                 "similarity": result.similarity,
                 "diagnostics": result.diagnostics,
+                "comparison_report": result.comparison_report,
                 "risk_level": result.risk_level,
                 "risk_reasons": result.risk_reasons,
                 "circuit_snapshot": s3.get("circuit_description", ""),

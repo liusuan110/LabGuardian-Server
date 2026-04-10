@@ -71,6 +71,7 @@ class PipelineResult(BaseModel):
     progress: float = 0.0
     similarity: float = 0.0
     diagnostics: List[str] = Field(default_factory=list)
+    comparison_report: Dict[str, Any] = Field(default_factory=dict)
     risk_level: str = "safe"
     risk_reasons: List[str] = Field(default_factory=list)
     report: str = ""
