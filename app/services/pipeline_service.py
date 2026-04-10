@@ -56,7 +56,7 @@ class PipelineService:
             stages=stages,
             total_duration_ms=raw.get("total_duration_ms", 0),
             component_count=s3.get("component_count", 0),
-            net_count=len(s3.get("netlist", {}).get("nets", [])),
+            net_count=len(s3.get("netlist_v2", {}).get("nets", [])),
             progress=s4.get("progress", 0.0),
             similarity=s4.get("similarity", 0.0),
             diagnostics=s4.get("diagnostics", []),

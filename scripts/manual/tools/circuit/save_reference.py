@@ -62,7 +62,6 @@ def main() -> int:
 
     print(f"Reference saved to {output_path}")
     print(f"Normalized components: {len(normalized_components)}")
-    print(f"Legacy components: {len(analyzer.components)}")
     print(f"V2 nets: {len(analyzer.export_netlist_v2()['nets'])}")
 
     validator2 = CircuitValidator()

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
@@ -72,42 +71,6 @@ class PinRole(Enum):
     WIPER = "wiper"
     TERMINAL_A = "terminal_a"
     TERMINAL_B = "terminal_b"
-
-
-@dataclass
-class CircuitComponent:
-    """电路元件"""
-
-    name: str
-    type: str
-    pin1_loc: Tuple[str, str]
-    pin2_loc: Optional[Tuple[str, str]] = None
-    extra_pins: List[Tuple[str, str]] = field(default_factory=list)
-    pin_roles: List[str] = field(default_factory=list)
-    polarity: Polarity = Polarity.NONE
-    confidence: float = 1.0
-    orientation_deg: float = 0.0
-
-    def __repr__(self):
-        pol = f" [{self.polarity.value}]" if self.polarity != Polarity.NONE else ""
-        return f"{self.name}(pins={len(self.all_pin_locs())}{pol})"
-
-    @property
-    def is_polarized(self) -> bool:
-        return self.polarity not in (Polarity.NONE,)
-
-    @property
-    def has_known_polarity(self) -> bool:
-        return self.polarity in (Polarity.FORWARD, Polarity.REVERSE)
-
-    def all_pin_locs(self) -> List[Tuple[str, str]]:
-        pins: List[Tuple[str, str]] = []
-        if self.pin1_loc is not None:
-            pins.append(self.pin1_loc)
-        if self.pin2_loc is not None:
-            pins.append(self.pin2_loc)
-        pins.extend(self.extra_pins or [])
-        return pins
 
 
 POLARIZED_TYPES = {"LED", "Diode"}
@@ -191,7 +154,6 @@ class CircuitAnalyzer:
         # 参考: circuit_recognizer + NetworkX 二分图建模
         self.graph = nx.Graph()
         self._uf = UnionFind()  # 并查集: Wire 增量合并等电位网络
-        self.components: List[CircuitComponent] = []
         self.component_instances: List[ComponentInstance] = []
         self.power_nets: Dict[str, str] = {}
         self._name_counters: Dict[str, int] = {}
@@ -206,7 +168,6 @@ class CircuitAnalyzer:
     def reset(self):
         self.graph.clear()
         self._uf.clear()
-        self.components = []
         self.component_instances = []
         self.power_nets = {}
         self._name_counters = {}
@@ -222,57 +183,8 @@ class CircuitAnalyzer:
         self._name_counters[norm] = self._name_counters.get(norm, 0) + 1
         return f"{prefix}{self._name_counters[norm]}"
 
-    def add_component(self, comp: CircuitComponent):
-        """添加元件到二分图 (U=元件, V=网络) + 并查集登记
-
-        二分图结构:
-          元件节点 (bipartite=0) ←边→ 网络节点 (bipartite=1)
-        Wire 元件额外触发 Union-Find 合并两端网络。
-        参考: mahmut-aksakalli/circuit_recognizer 的 Node-Endpoint 建模
-        """
-        if comp.name == comp.type or comp.name in ("UNKNOWN", ""):
-            comp.name = self._auto_name(comp.type)
-        self.components.append(comp)
-
-        ctype = self._norm_type(comp.type)
-        pin_locs = comp.all_pin_locs()
-        if not pin_locs:
-            return
-
-        net_names: List[str] = []
-        for loc in pin_locs:
-            net_name = self._get_node_name(loc)
-            net_names.append(net_name)
-            if not self.graph.has_node(net_name):
-                self.graph.add_node(net_name, bipartite=1, kind="net")
-            self._uf.find(net_name)
-
-        # 元件节点 (U 集)
-        self.graph.add_node(comp.name, bipartite=0, kind="comp",
-                            ctype=ctype, polarity=comp.polarity.value,
-                            confidence=comp.confidence)
-
-        # 边: 元件 ↔ 网络 (携带引脚信息)
-        for i, net_name in enumerate(net_names):
-            role = "generic"
-            if i < len(comp.pin_roles):
-                role = str(comp.pin_roles[i])
-            self.graph.add_edge(
-                comp.name,
-                net_name,
-                pin=f"pin{i + 1}",
-                role=role,
-                pin_role=role,
-                component=comp.name,
-                type=comp.type,
-            )
-
-        # Wire → 并查集合并两端网络 (面包板先验: 导线 = 等电位连接)
-        if ctype == "Wire" and len(net_names) >= 2:
-            self._uf.union(net_names[0], net_names[1])
-
     def add_component_instance(self, comp: ComponentInstance):
-        """接收新一代组件中心化输入，并兼容注入旧图模型。"""
+        """接收组件中心化输入，并直接注册到图和并查集中。"""
         component_id = comp.component_id or self._auto_name(comp.component_type)
         normalized_pins: List[PinAssignment] = []
         for pin in comp.pins:
@@ -304,27 +216,54 @@ class CircuitAnalyzer:
             metadata=dict(comp.metadata or {}),
         )
         self.component_instances.append(instance)
+        self._register_instance_in_graph(instance)
 
-        pin_locs = [
-            self.board_schema.hole_id_to_logic_loc(pin.hole_id)
-            for pin in normalized_pins
-        ]
-        pin_locs = [loc for loc in pin_locs if loc is not None]
-        if not pin_locs:
+    def _register_instance_in_graph(self, comp: ComponentInstance):
+        """把 ComponentInstance 直接挂到二分图和并查集中。"""
+        ctype = self._norm_type(comp.component_type)
+        pin_nodes = self._instance_pin_nodes(comp)
+        if not pin_nodes:
             return
 
-        legacy = CircuitComponent(
-            name=component_id,
-            type=comp.component_type,
-            pin1_loc=pin_locs[0],
-            pin2_loc=pin_locs[1] if len(pin_locs) > 1 else None,
-            extra_pins=pin_locs[2:],
-            pin_roles=[pin.pin_name for pin in normalized_pins],
-            polarity=self._polarity_from_value(comp.polarity),
+        net_names: List[str] = []
+        for _pin, node_id in pin_nodes:
+            net_names.append(node_id)
+            if not self.graph.has_node(node_id):
+                self.graph.add_node(node_id, bipartite=1, kind="net")
+            self._uf.find(node_id)
+
+        self.graph.add_node(
+            comp.component_id,
+            bipartite=0,
+            kind="comp",
+            ctype=ctype,
+            polarity=str(comp.polarity or "none"),
             confidence=comp.confidence,
-            orientation_deg=comp.orientation,
         )
-        self.add_component(legacy)
+
+        for idx, (pin, node_id) in enumerate(pin_nodes, start=1):
+            role = pin.pin_name or "generic"
+            self.graph.add_edge(
+                comp.component_id,
+                node_id,
+                pin=f"pin{idx}",
+                role=role,
+                pin_role=role,
+                component=comp.component_id,
+                type=comp.component_type,
+                hole_id=pin.hole_id,
+            )
+
+        if ctype == "Wire" and len(net_names) >= 2:
+            self._uf.union(net_names[0], net_names[1])
+
+    def _instance_pin_nodes(self, comp: ComponentInstance) -> List[Tuple[PinAssignment, str]]:
+        """返回组件每个 pin 对应的 electrical node。"""
+        pin_nodes: List[Tuple[PinAssignment, str]] = []
+        for pin in comp.pins:
+            node_id = pin.electrical_node_id or self.board_schema.resolve_hole_to_node(pin.hole_id)
+            pin_nodes.append((pin, node_id))
+        return pin_nodes
 
     def _get_node_name(self, loc: Tuple[str, str]) -> str:
         """面包板导通规则映射"""
@@ -370,17 +309,6 @@ class CircuitAnalyzer:
     def _norm_type(t: str) -> str:
         return norm_component_type(t)
 
-    @staticmethod
-    def _polarity_from_value(value: str | Polarity | None) -> Polarity:
-        if isinstance(value, Polarity):
-            return value
-        if value is None:
-            return Polarity.NONE
-        try:
-            return Polarity(str(value))
-        except ValueError:
-            return Polarity.NONE
-
     def build_topology_graph(self) -> nx.Graph:
         """构建布局无关的拓扑图 — Union-Find 合并 Wire 等电位网络
 
@@ -411,53 +339,47 @@ class CircuitAnalyzer:
                     break
             topo.add_node(net_id, **attrs)
 
-        # 添加非 Wire 元件节点
-        comp_idx = 0
-        for comp in self.components:
-            ctype = self._norm_type(comp.type)
+        # 添加非 Wire 元件节点。这里优先走 component_instances，
+        # 避免新链路再次回退到 pin1/pin2 语义。
+        for comp in self.component_instances:
+            ctype = self._norm_type(comp.component_type)
             if ctype == "Wire":
                 continue
 
-            try:
-                net_ids: List[str] = []
-                for loc in comp.all_pin_locs():
-                    n_name = self._get_node_name(loc)
-                    net_id = node_to_net.get(self._uf.find(n_name))
-                    if net_id is not None:
-                        net_ids.append(net_id)
-            except Exception:
-                net_ids = []
+            pin_nodes = self._instance_pin_nodes(comp)
+            net_ids: List[str] = []
+            net_roles: Dict[str, str] = {}
+            for pin, node_id in pin_nodes:
+                net_id = node_to_net.get(self._uf.find(node_id))
+                if net_id is None:
+                    continue
+                net_ids.append(net_id)
+                if net_id not in net_roles:
+                    net_roles[net_id] = pin.pin_name or "generic"
 
             if not net_ids:
                 continue
 
-            cid = f"C{comp_idx}"
-            comp_idx += 1
             node_attrs = {
                 "kind": "comp",
                 "ctype": ctype,
-                "polarity": comp.polarity.value,
+                "polarity": str(comp.polarity or "none"),
             }
 
             unique_nets = list(dict.fromkeys(net_ids))
-            net_roles: Dict[str, str] = {}
-            for i, net_id in enumerate(net_ids):
-                if net_id not in net_roles:
-                    role = comp.pin_roles[i] if i < len(comp.pin_roles) else "generic"
-                    net_roles[net_id] = role
             node_attrs["pins"] = len(net_ids)
             if len(unique_nets) == 1 and len(net_ids) > 1:
                 node_attrs["same_net"] = True
-            topo.add_node(cid, **node_attrs)
+            topo.add_node(comp.component_id, **node_attrs)
             for net_id in unique_nets:
                 role = net_roles.get(net_id, "generic")
-                topo.add_edge(cid, net_id, role=role, pin_role=role)
+                topo.add_edge(comp.component_id, net_id, role=role, pin_role=role)
 
         return topo
 
     def get_circuit_description(self) -> str:
         """生成结构化电路网表描述 (基于 Union-Find 等电位网络)"""
-        if not self.components:
+        if not self.component_instances:
             return "当前未检测到电路元件。"
 
         self._identify_power_nets()
@@ -476,43 +398,28 @@ class CircuitAnalyzer:
             for n in group:
                 node_to_net[n] = net_id
 
-        type_counts = Counter(self._norm_type(c.type) for c in self.components)
-        total = len(self.components)
+        type_counts = Counter(self._norm_type(c.component_type) for c in self.component_instances)
+        total = len(self.component_instances)
         counts_str = ", ".join(f"{t}×{c}" for t, c in sorted(type_counts.items()))
         desc = f"电路概况: 共 {total} 个元件 ({counts_str}), {len(connected_groups)} 个电气网络\n\n"
 
         desc += "元件连接:\n"
-        for comp in self.components:
-            ctype = self._norm_type(comp.type)
-            pins = comp.all_pin_locs()
-            pin_nets: List[Tuple[Tuple[str, str], str]] = []
-            for loc in pins:
-                net_name = self._get_node_name(loc)
-                pin_nets.append((loc, node_to_net.get(self._uf.find(net_name), "?")))
+        for comp in self.component_instances:
+            ctype = self._norm_type(comp.component_type)
+            pin_texts: List[str] = []
+            for pin, node_id in self._instance_pin_nodes(comp):
+                net_id = node_to_net.get(self._uf.find(node_id), "?")
+                pin_texts.append(f"{pin.pin_name}={pin.hole_id}({net_id})")
 
             role_info = ""
-            if comp.polarity == Polarity.FORWARD:
-                role_info = " [pin1/pin2]"
-            elif comp.polarity == Polarity.REVERSE:
-                role_info = " [pin1/pin2 反向]"
-            elif comp.polarity == Polarity.UNKNOWN:
+            if str(comp.polarity) == "forward":
+                role_info = " [forward]"
+            elif str(comp.polarity) == "reverse":
+                role_info = " [reverse]"
+            elif str(comp.polarity) == "unknown":
                 role_info = " [极性未知]"
 
-            if len(pin_nets) <= 2:
-                if len(pin_nets) == 2:
-                    p1, n1 = pin_nets[0]
-                    p2, n2 = pin_nets[1]
-                    desc += (
-                        f"  {comp.name} ({ctype}{role_info}): "
-                        f"Row{p1[0]}{p1[1]}({n1}) — "
-                        f"Row{p2[0]}{p2[1]}({n2})\n"
-                    )
-                else:
-                    p1, n1 = pin_nets[0]
-                    desc += f"  {comp.name} ({ctype}{role_info}): Row{p1[0]}{p1[1]}({n1})\n"
-            else:
-                pins_text = ", ".join([f"Pin{i+1}=Row{loc[0]}{loc[1]}({net})" for i, (loc, net) in enumerate(pin_nets)])
-                desc += f"  {comp.name} ({ctype}{role_info}): {pins_text}\n"
+            desc += f"  {comp.component_id} ({ctype}{role_info}): {', '.join(pin_texts)}\n"
 
         desc += "\n电气网络:\n"
         for idx, group in enumerate(connected_groups):
@@ -522,12 +429,12 @@ class CircuitAnalyzer:
             # 通过 Union-Find 判断元件是否在此网络上
             group_roots = {self._uf.find(n) for n in group}
             comps_on_net = []
-            for comp in self.components:
+            for comp in self.component_instances:
                 comp_roots = set()
-                for loc in comp.all_pin_locs():
-                    comp_roots.add(self._uf.find(self._get_node_name(loc)))
+                for _, node_id in self._instance_pin_nodes(comp):
+                    comp_roots.add(self._uf.find(node_id))
                 if comp_roots & group_roots:
-                    comps_on_net.append(comp.name)
+                    comps_on_net.append(comp.component_id)
 
             power_tag = ""
             for n in nodes:
@@ -558,33 +465,29 @@ class CircuitAnalyzer:
         has_led = False
         has_resistor_near_led = False
 
-        for comp in self.components:
-            ctype = self._norm_type(comp.type)
+        for comp in self.component_instances:
+            ctype = self._norm_type(comp.component_type)
             if ctype == "LED":
                 has_led = True
-                led_nets = set()
-                for loc in comp.all_pin_locs():
-                    led_nets.add(self._uf.find(self._get_node_name(loc)))
-                for other in self.components:
-                    if self._norm_type(other.type) == "Resistor":
+                led_nets = {self._uf.find(node_id) for _, node_id in self._instance_pin_nodes(comp)}
+                for other in self.component_instances:
+                    if self._norm_type(other.component_type) == "Resistor":
                         r_nets = set()
-                        for loc in other.all_pin_locs():
-                            r_nets.add(self._uf.find(self._get_node_name(loc)))
+                        for _, node_id in self._instance_pin_nodes(other):
+                            r_nets.add(self._uf.find(node_id))
                         # UF 感知: 即使 LED 和 Resistor 不在同一行,
                         # 只要通过 Wire 连接到同一网络也算 "相邻"
                         if led_nets & r_nets:
                             has_resistor_near_led = True
                             break
 
-            if ctype in POLARIZED_TYPES and comp.polarity == Polarity.UNKNOWN:
-                issues.append(f"{comp.name} ({ctype}) 极性未确定, 请检查安装方向")
-            pins = comp.all_pin_locs()
-            if len(pins) >= 2:
-                n1 = self._get_node_name(pins[0])
-                n2 = self._get_node_name(pins[1])
-                # UF 感知: 不仅检查同位置, 还检查 Wire 合并后的等电位
-                if self._uf.find(n1) == self._uf.find(n2) and ctype != "Wire":
-                    issues.append(f"{comp.name} ({ctype}) 两引脚在同一导通组, 可能短路或未跨行")
+            if ctype in POLARIZED_TYPES and str(comp.polarity) == "unknown":
+                issues.append(f"{comp.component_id} ({ctype}) 极性未确定, 请检查安装方向")
+            pin_nodes = self._instance_pin_nodes(comp)
+            if len(pin_nodes) >= 2:
+                roots = {self._uf.find(node_id) for _, node_id in pin_nodes}
+                if len(roots) == 1 and ctype != "Wire":
+                    issues.append(f"{comp.component_id} ({ctype}) 两引脚在同一导通组, 可能短路或未跨行")
 
         if has_led and not has_resistor_near_led:
             issues.append("LED 未检测到相邻限流电阻, 可能缺少限流保护")
@@ -634,50 +537,6 @@ class CircuitAnalyzer:
         roots = {self._uf.find(n) for n in all_nets}
         return len(roots)
 
-    def export_netlist(self) -> Dict:
-        """导出结构化网表 (Union-Find 合并等电位网络)"""
-        self._identify_power_nets()
-        all_nets = {n for n, d in self.graph.nodes(data=True) if d.get("kind") == "net"}
-        uf_groups: Dict[str, set] = {}
-        for net_name in all_nets:
-            root = self._uf.find(net_name)
-            uf_groups.setdefault(root, set()).add(net_name)
-
-        node_to_net_id: Dict[str, str] = {}
-        nets: Dict[str, list] = {}
-        for i, (root, members) in enumerate(uf_groups.items()):
-            net_id = f"N{i}"
-            nets[net_id] = sorted(list(members))
-            for m in members:
-                node_to_net_id[m] = net_id
-
-        comp_list = []
-        for comp in self.components:
-            entry = {
-                "name": comp.name,
-                "type": self._norm_type(comp.type),
-                "polarity": comp.polarity.value,
-                "confidence": comp.confidence,
-                "pins": [],
-            }
-            for i, loc in enumerate(comp.all_pin_locs()):
-                role = comp.pin_roles[i] if i < len(comp.pin_roles) else "generic"
-                n2 = self._get_node_name(loc)
-                entry["pins"].append({
-                    "loc": loc,
-                    "role": role,
-                    "net": node_to_net_id.get(self._uf.find(n2), "floating"),
-                })
-            comp_list.append(entry)
-
-        power = {}
-        for node, ptype in self.power_nets.items():
-            net_id = node_to_net_id.get(self._uf.find(node), None)
-            if net_id:
-                power[net_id] = ptype
-
-        return {"nets": nets, "components": comp_list, "power": power}
-
     def export_netlist_v2(self, scene_id: str = "runtime_scene") -> Dict:
         """导出保留 hole_id / pin_name / electrical_net 的新网表格式。"""
         self._identify_power_nets()
@@ -692,7 +551,7 @@ class CircuitAnalyzer:
         member_holes_by_net: Dict[str, set] = {}
         member_nodes_by_net: Dict[str, set] = {}
 
-        instances = self.component_instances or self._legacy_instances()
+        instances = self.component_instances
         for idx, (root, members) in enumerate(uf_groups.items()):
             net_id = f"NET_{idx:03d}"
             for member in members:
@@ -794,33 +653,32 @@ class CircuitAnalyzer:
                 net_idx += 1
 
         lines = ["* LabGuardian Auto-Generated SPICE Netlist"]
-        lines.append(f"* Components: {len(self.components)}")
+        lines.append(f"* Components: {len(self.component_instances)}")
         lines.append(f"* Nets: {len(uf_groups)}")
         lines.append("")
 
-        for comp in self.components:
-            ctype = self._norm_type(comp.type)
+        for comp in self.component_instances:
+            ctype = self._norm_type(comp.component_type)
             if ctype == "Wire":
                 continue
             pin_nets = []
-            for loc in comp.all_pin_locs():
-                n1 = self._get_node_name(loc)
-                pin_nets.append(root_to_id.get(self._uf.find(n1), "?"))
+            for _, node_id in self._instance_pin_nodes(comp):
+                pin_nets.append(root_to_id.get(self._uf.find(node_id), "?"))
             if len(pin_nets) >= 2:
                 net1_id, net2_id = pin_nets[0], pin_nets[1]
                 if ctype == "Resistor":
-                    lines.append(f"{comp.name} {net1_id} {net2_id} 1k")
+                    lines.append(f"{comp.component_id} {net1_id} {net2_id} 1k")
                 elif ctype == "Capacitor":
-                    lines.append(f"{comp.name} {net1_id} {net2_id} 100n")
+                    lines.append(f"{comp.component_id} {net1_id} {net2_id} 100n")
                 elif ctype == "LED":
-                    lines.append(f"D_{comp.name} {net1_id} {net2_id} LED")
+                    lines.append(f"D_{comp.component_id} {net1_id} {net2_id} LED")
                 elif len(pin_nets) > 2:
-                    lines.append(f"{comp.name} {' '.join(pin_nets)}")
+                    lines.append(f"{comp.component_id} {' '.join(pin_nets)}")
                 else:
-                    lines.append(f"{comp.name} {net1_id} {net2_id}")
+                    lines.append(f"{comp.component_id} {net1_id} {net2_id}")
             else:
                 net1_id = pin_nets[0] if pin_nets else "?"
-                lines.append(f"* {comp.name} (single-pin): {net1_id}")
+                lines.append(f"* {comp.component_id} (single-pin): {net1_id}")
 
         lines.append("")
         lines.append(".end")
@@ -837,35 +695,4 @@ class CircuitAnalyzer:
 
     def component_count(self) -> int:
         """返回元件总数"""
-        return len(self.components)
-
-    def _legacy_instances(self) -> List[ComponentInstance]:
-        """把旧组件模型临时映射成 v2 结构，保证迁移期可并行导出。"""
-        instances: List[ComponentInstance] = []
-        for comp in self.components:
-            pins: List[PinAssignment] = []
-            for idx, loc in enumerate(comp.all_pin_locs(), start=1):
-                hole_id = self.board_schema.logic_loc_to_hole_id(loc)
-                pin_name = comp.pin_roles[idx - 1] if idx - 1 < len(comp.pin_roles) else f"pin{idx}"
-                pins.append(
-                    PinAssignment(
-                        pin_id=idx,
-                        pin_name=pin_name,
-                        hole_id=hole_id,
-                        electrical_node_id=self.board_schema.resolve_hole_to_node(hole_id),
-                        confidence=comp.confidence,
-                    )
-                )
-            instances.append(
-                ComponentInstance(
-                    component_id=comp.name,
-                    component_type=comp.type,
-                    package_type="legacy",
-                    polarity=comp.polarity.value,
-                    orientation=comp.orientation_deg,
-                    pins=pins,
-                    confidence=comp.confidence,
-                    metadata={"source": "legacy_component"},
-                )
-            )
-        return instances
+        return len(self.component_instances)

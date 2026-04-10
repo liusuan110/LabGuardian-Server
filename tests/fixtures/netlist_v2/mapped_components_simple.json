@@ -1,10 +1,61 @@
 [
   {
     "component_id": "R1",
+    "component_type": "Resistor",
     "class_name": "Resistor",
+    "package_type": "axial_2pin",
+    "symmetry_group": [["pin1", "pin2"]],
     "confidence": 1.0,
     "bbox": [100, 100, 180, 120],
-    "pin1_logic": ["12", "b"],
-    "pin2_logic": ["12", "f"]
+    "pins": [
+      {
+        "pin_id": 1,
+        "pin_name": "pin1",
+        "logic_loc": ["12", "b"],
+        "hole_id": "B12",
+        "electrical_node_id": "ROW_12_L",
+        "confidence": 1.0,
+        "observations": [
+          {
+            "view_id": "top",
+            "keypoint": [110.0, 110.0],
+            "visibility": 2,
+            "confidence": 1.0
+          }
+        ],
+        "candidate_hole_ids": ["B12"],
+        "candidate_node_ids": ["ROW_12_L"],
+        "candidate_count": 1,
+        "primary_visibility": 2,
+        "visible_view_ids": ["top"],
+        "observation_count": 1,
+        "ambiguity_reasons": [],
+        "is_ambiguous": false
+      },
+      {
+        "pin_id": 2,
+        "pin_name": "pin2",
+        "logic_loc": ["12", "f"],
+        "hole_id": "F12",
+        "electrical_node_id": "ROW_12_R",
+        "confidence": 1.0,
+        "observations": [
+          {
+            "view_id": "top",
+            "keypoint": [170.0, 110.0],
+            "visibility": 2,
+            "confidence": 1.0
+          }
+        ],
+        "candidate_hole_ids": ["F12"],
+        "candidate_node_ids": ["ROW_12_R"],
+        "candidate_count": 1,
+        "primary_visibility": 2,
+        "visible_view_ids": ["top"],
+        "observation_count": 1,
+        "ambiguity_reasons": [],
+        "is_ambiguous": false
+      }
+    ]
   }
 ]

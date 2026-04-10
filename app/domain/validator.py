@@ -19,7 +19,6 @@ from networkx.readwrite import json_graph
 from .board_schema import BoardSchema
 from .circuit import (
     CircuitAnalyzer,
-    CircuitComponent,
     Polarity,
     POLARIZED_TYPES,
     norm_component_type,
@@ -59,33 +58,18 @@ class CircuitValidator:
 
     def __init__(self):
         self.ref_graph: Optional[nx.Graph] = None
-        self.ref_components: List[CircuitComponent] = []
         self.ref_component_instances: List[ComponentInstance] = []
         self.ref_netlist_v2: Optional[Dict] = None
         self.ref_topology: Optional[nx.Graph] = None
 
     @property
     def has_reference(self) -> bool:
-        return bool(self.ref_components or self.ref_component_instances)
+        return bool(self.ref_component_instances)
 
     def set_reference(self, analyzer: CircuitAnalyzer):
         """将当前电路设为 Golden Reference"""
         self.ref_graph = analyzer.graph.copy()
-        self.ref_components = [
-            CircuitComponent(
-                name=c.name,
-                type=c.type,
-                pin1_loc=c.pin1_loc,
-                pin2_loc=c.pin2_loc,
-                extra_pins=list(c.extra_pins or []),
-                pin_roles=list(c.pin_roles or []),
-                polarity=c.polarity,
-                confidence=c.confidence,
-                orientation_deg=c.orientation_deg,
-            )
-            for c in analyzer.components
-        ]
-        self.ref_component_instances = analyzer.component_instances or analyzer._legacy_instances()
+        self.ref_component_instances = list(analyzer.component_instances)
         self.ref_netlist_v2 = analyzer.export_netlist_v2(scene_id="reference_scene")
         try:
             self.ref_topology = analyzer.build_topology_graph()
@@ -95,17 +79,6 @@ class CircuitValidator:
     def save_reference(self, file_path: str):
         if not self.has_reference:
             raise ValueError("No reference circuit set.")
-        if self.ref_netlist_v2 is None and self.ref_components:
-            tmp = CircuitAnalyzer(board_schema=BoardSchema.default_breadboard())
-            for comp in self.ref_components:
-                tmp.add_component(comp)
-            self.ref_component_instances = list(tmp.component_instances or tmp._legacy_instances())
-            self.ref_netlist_v2 = tmp.export_netlist_v2(scene_id="reference_scene")
-            if self.ref_topology is None:
-                try:
-                    self.ref_topology = tmp.build_topology_graph()
-                except Exception:
-                    self.ref_topology = None
         topo_payload = None
         if self.ref_topology is not None:
             topo_payload = json_graph.node_link_data(self.ref_topology)
@@ -114,18 +87,7 @@ class CircuitValidator:
                 "created_at": datetime.now().isoformat(timespec="seconds"),
                 "format": "labguardian_ref_v4",
             },
-            "components": [
-                {
-                    "name": c.name,
-                    "type": c.type,
-                    "pin1_loc": list(c.pin1_loc) if c.pin1_loc else None,
-                    "pin2_loc": list(c.pin2_loc) if c.pin2_loc else None,
-                    "extra_pins": [list(p) for p in (c.extra_pins or [])],
-                    "pin_roles": list(c.pin_roles or []),
-                    "polarity": c.polarity.value,
-                }
-                for c in self.ref_components
-            ],
+            "components": [],
             "netlist_v2": self.ref_netlist_v2,
             "topology": topo_payload,
         }
@@ -136,53 +98,9 @@ class CircuitValidator:
         with open(file_path, "r", encoding="utf-8") as f:
             payload = json.load(f)
         self.ref_netlist_v2 = payload.get("netlist_v2")
-        if self.ref_netlist_v2:
-            self._load_reference_v2(payload)
-            return
+        if not self.ref_netlist_v2:
+            raise ValueError("Reference file must contain netlist_v2 in labguardian_ref_v4 format.")
 
-        self.ref_component_instances = []
-        comps = []
-        for item in payload.get("components", []):
-            pin1 = tuple(item["pin1_loc"]) if item.get("pin1_loc") else None
-            pin2 = tuple(item["pin2_loc"]) if item.get("pin2_loc") else None
-            extra_pins = [tuple(p) for p in item.get("extra_pins", []) if p]
-            if pin1 is None:
-                continue
-            pol_str = item.get("polarity", "none")
-            try:
-                polarity = Polarity(pol_str)
-            except ValueError:
-                polarity = Polarity.NONE
-            comps.append(
-                CircuitComponent(
-                    name=item.get("name", "UNKNOWN"),
-                    type=item.get("type", "UNKNOWN"),
-                    pin1_loc=pin1,
-                    pin2_loc=pin2,
-                    extra_pins=extra_pins,
-                    pin_roles=list(item.get("pin_roles", [])),
-                    polarity=polarity,
-                )
-            )
-        self.ref_components = comps
-        tmp = CircuitAnalyzer()
-        for c in self.ref_components:
-            tmp.add_component(c)
-        self.ref_graph = tmp.graph.copy()
-        topo_data = payload.get("topology")
-        if topo_data:
-            try:
-                self.ref_topology = json_graph.node_link_graph(topo_data)
-            except Exception:
-                self.ref_topology = None
-        else:
-            try:
-                self.ref_topology = tmp.build_topology_graph()
-            except Exception:
-                self.ref_topology = None
-
-    def _load_reference_v2(self, payload: Dict):
-        self.ref_components = []
         self.ref_component_instances = []
         netlist_v2 = payload.get("netlist_v2") or {}
         board_schema_id = netlist_v2.get("board_schema_id", "breadboard_legacy_v1")
@@ -196,8 +114,7 @@ class CircuitValidator:
             tmp.add_component_instance(instance)
 
         self.ref_graph = tmp.graph.copy()
-        self.ref_components = list(tmp.components)
-        self.ref_component_instances = list(tmp.component_instances or tmp._legacy_instances())
+        self.ref_component_instances = list(tmp.component_instances)
         topo_data = payload.get("topology")
         if topo_data:
             try:
@@ -259,12 +176,8 @@ class CircuitValidator:
             return result
 
         # L0: 元件数量统计
-        if self.ref_component_instances and curr_analyzer.component_instances:
-            ref_counts = Counter(c.component_type for c in self.ref_component_instances)
-            curr_counts = Counter(c.component_type for c in curr_analyzer.component_instances)
-        else:
-            ref_counts = Counter(c.type for c in self.ref_components)
-            curr_counts = Counter(c.type for c in curr_analyzer.components)
+        ref_counts = Counter(c.component_type for c in self.ref_component_instances)
+        curr_counts = Counter(c.component_type for c in curr_analyzer.component_instances)
         for t in sorted(set(ref_counts.keys()) | set(curr_counts.keys())):
             r_c, c_c = ref_counts[t], curr_counts[t]
             if c_c < r_c:
@@ -295,29 +208,28 @@ class CircuitValidator:
         v2_exact = None
         v2_hole_only = False
         has_v2_polarity = False
-        if self.ref_component_instances and curr_analyzer.component_instances:
-            v2_cmp = self._compare_component_instances(curr_analyzer.component_instances)
-            result["matched_components"] = v2_cmp["matched_components"]
-            result["matched_component_pairs"] = v2_cmp["matched_component_pairs"]
-            result["pin_mismatches"].extend(v2_cmp["pin_mismatches"])
-            result["hole_mismatches"].extend(v2_cmp["hole_mismatches"])
-            result["node_mismatches"].extend(v2_cmp["node_mismatches"])
-            result["component_mismatches"].extend(v2_cmp["component_mismatches"])
-            for item in v2_cmp["component_diagnostics"]:
-                _append_diagnostic(result, item)
-            for item in v2_cmp["node_diagnostics"]:
-                _append_diagnostic(result, item)
-            for item in v2_cmp["hole_diagnostics"]:
-                _append_diagnostic(result, item)
-            for item in v2_cmp["polarity_diagnostics"]:
-                _append_diagnostic(result, item)
-            if result.get("progress", 0.0) < v2_cmp["progress"]:
-                result["progress"] = v2_cmp["progress"]
-            if result.get("similarity", 0.0) < v2_cmp["similarity"]:
-                result["similarity"] = v2_cmp["similarity"]
-            v2_exact = v2_cmp["is_exact_match"]
-            v2_hole_only = v2_cmp["is_hole_placement_only_mismatch"]
-            has_v2_polarity = bool(v2_cmp["polarity_diagnostics"])
+        v2_cmp = self._compare_component_instances(curr_analyzer.component_instances)
+        result["matched_components"] = v2_cmp["matched_components"]
+        result["matched_component_pairs"] = v2_cmp["matched_component_pairs"]
+        result["pin_mismatches"].extend(v2_cmp["pin_mismatches"])
+        result["hole_mismatches"].extend(v2_cmp["hole_mismatches"])
+        result["node_mismatches"].extend(v2_cmp["node_mismatches"])
+        result["component_mismatches"].extend(v2_cmp["component_mismatches"])
+        for item in v2_cmp["component_diagnostics"]:
+            _append_diagnostic(result, item)
+        for item in v2_cmp["node_diagnostics"]:
+            _append_diagnostic(result, item)
+        for item in v2_cmp["hole_diagnostics"]:
+            _append_diagnostic(result, item)
+        for item in v2_cmp["polarity_diagnostics"]:
+            _append_diagnostic(result, item)
+        if result.get("progress", 0.0) < v2_cmp["progress"]:
+            result["progress"] = v2_cmp["progress"]
+        if result.get("similarity", 0.0) < v2_cmp["similarity"]:
+            result["similarity"] = v2_cmp["similarity"]
+        v2_exact = v2_cmp["is_exact_match"]
+        v2_hole_only = v2_cmp["is_hole_placement_only_mismatch"]
+        has_v2_polarity = bool(v2_cmp["polarity_diagnostics"])
 
         # L1-L3
         polarity_checked = has_v2_polarity
@@ -359,7 +271,7 @@ class CircuitValidator:
                             result["similarity"] = 1.0
                             result["progress"] = 1.0
                             if not result["matched_components"]:
-                                result["matched_components"] = [c.name for c in self.ref_components]
+                                result["matched_components"] = [c.component_id for c in self.ref_component_instances]
                             _finalize_report(result)
                             return result
 
@@ -715,44 +627,23 @@ class CircuitValidator:
 
     def _heuristic_position_match(self, result: Dict, curr_analyzer: CircuitAnalyzer):
         matched = set()
-        if self.ref_component_instances and curr_analyzer.component_instances:
-            ref_instances = self.ref_component_instances
-            curr_instances = curr_analyzer.component_instances
-            for ref_c in ref_instances:
-                best_idx, min_dist = None, 999
-                ref_row = _first_pin_row(ref_c)
-                if ref_row is None:
-                    continue
-                for idx, curr_c in enumerate(curr_instances):
-                    if idx in matched or curr_c.component_type != ref_c.component_type:
-                        continue
-                    curr_row = _first_pin_row(curr_c)
-                    if curr_row is None:
-                        continue
-                    dist = abs(curr_row - ref_row)
-                    if dist < min_dist:
-                        min_dist = dist
-                        best_idx = idx
-                if best_idx is not None:
-                    matched.add(best_idx)
-            return
-
-        for ref_c in self.ref_components:
+        ref_instances = self.ref_component_instances
+        curr_instances = curr_analyzer.component_instances
+        for ref_c in ref_instances:
             best_idx, min_dist = None, 999
-            try:
-                ref_row = int(ref_c.pin1_loc[0])
-            except (ValueError, TypeError):
+            ref_row = _first_pin_row(ref_c)
+            if ref_row is None:
                 continue
-            for idx, curr_c in enumerate(curr_analyzer.components):
-                if idx in matched or curr_c.type != ref_c.type:
+            for idx, curr_c in enumerate(curr_instances):
+                if idx in matched or curr_c.component_type != ref_c.component_type:
                     continue
-                try:
-                    dist = abs(int(curr_c.pin1_loc[0]) - ref_row)
-                    if dist < min_dist:
-                        min_dist = dist
-                        best_idx = idx
-                except (ValueError, TypeError):
+                curr_row = _first_pin_row(curr_c)
+                if curr_row is None:
                     continue
+                dist = abs(curr_row - ref_row)
+                if dist < min_dist:
+                    min_dist = dist
+                    best_idx = idx
             if best_idx is not None:
                 matched.add(best_idx)
 
@@ -764,20 +655,28 @@ class CircuitValidator:
         issues: List[Dict] = []
         g = analyzer.graph
 
-        for comp in analyzer.components:
-            ctype = norm_component_type(comp.type)
+        for comp in analyzer.component_instances:
+            ctype = norm_component_type(comp.component_type)
+            pin_nodes = [
+                (
+                    pin,
+                    pin.electrical_node_id or analyzer.board_schema.resolve_hole_to_node(pin.hole_id),
+                )
+                for pin in comp.pins
+            ]
 
-            if ctype == "LED" and comp.pin2_loc:
-                n1 = analyzer._get_node_name(comp.pin1_loc)
-                n2 = analyzer._get_node_name(comp.pin2_loc)
+            if ctype == "LED" and len(pin_nodes) >= 2:
+                n1 = pin_nodes[0][1]
+                n2 = pin_nodes[1][1]
                 has_resistor = False
                 # Union-Find 感知: 通过 Wire 连接的 Resistor 也算相邻
                 led_nets = {analyzer._uf.find(n1), analyzer._uf.find(n2)}
-                for other in analyzer.components:
-                    if norm_component_type(other.type) == "Resistor":
-                        r_nets = {analyzer._uf.find(analyzer._get_node_name(other.pin1_loc))}
-                        if other.pin2_loc:
-                            r_nets.add(analyzer._uf.find(analyzer._get_node_name(other.pin2_loc)))
+                for other in analyzer.component_instances:
+                    if norm_component_type(other.component_type) == "Resistor":
+                        r_nets = set()
+                        for other_pin in other.pins:
+                            other_node = other_pin.electrical_node_id or analyzer.board_schema.resolve_hole_to_node(other_pin.hole_id)
+                            r_nets.add(analyzer._uf.find(other_node))
                         if led_nets & r_nets:
                             has_resistor = True
                             break
@@ -787,34 +686,34 @@ class CircuitValidator:
                             category="component_errors",
                             error_code="LED_SERIES_RESISTOR_MISSING",
                             message=(
-                                f"{comp.name}: LED所在网络中未检测到限流电阻, "
+                                f"{comp.component_id}: LED所在网络中未检测到限流电阻, "
                                 f"建议在{n1}或{n2}串联220Ω-1kΩ电阻"
                             ),
                             severity="warning",
-                            component_id=comp.name,
+                            component_id=comp.component_id,
                             expected="series_resistor_present",
                             actual="series_resistor_missing",
                             context={"component_type": ctype, "net_a": n1, "net_b": n2},
                         )
                     )
 
-            if ctype in POLARIZED_TYPES and comp.polarity == Polarity.UNKNOWN:
+            if ctype in POLARIZED_TYPES and str(comp.polarity) == "unknown":
                 issues.append(
                     _make_diagnostic(
                         category="polarity_errors",
                         error_code="POLARITY_UNKNOWN",
-                        message=f"{comp.name}: {ctype}极性未确定, 请目视检查安装方向",
+                        message=f"{comp.component_id}: {ctype}极性未确定, 请目视检查安装方向",
                         severity="warning",
-                        component_id=comp.name,
+                        component_id=comp.component_id,
                         expected="known_polarity",
                         actual="unknown",
                         context={"component_type": ctype},
                     )
                 )
 
-            if comp.pin2_loc:
-                n1 = analyzer._get_node_name(comp.pin1_loc)
-                n2 = analyzer._get_node_name(comp.pin2_loc)
+            if len(pin_nodes) >= 2:
+                n1 = pin_nodes[0][1]
+                n2 = pin_nodes[1][1]
                 # Union-Find 感知: 检查 Wire 合并后的等电位短路
                 same_net = (n1 == n2) or analyzer._uf.connected(n1, n2)
                 if same_net and ctype not in ("Wire",):
@@ -823,35 +722,33 @@ class CircuitValidator:
                             category="node_errors",
                             error_code="COMPONENT_SHORTED_SAME_NET",
                             message=(
-                                f"{comp.name}: {ctype}两引脚在同一导通组({n1}), "
+                                f"{comp.component_id}: {ctype}两引脚在同一导通组({n1}), "
                                 f"元件被短路或未正确跨行插入"
                             ),
                             severity="error",
-                            component_id=comp.name,
+                            component_id=comp.component_id,
                             expected="different_conductive_groups",
                             actual=n1,
                             context={"component_type": ctype, "net_a": n1, "net_b": n2},
                         )
                     )
 
-        for comp in analyzer.components:
-            ctype = norm_component_type(comp.type)
+        for comp in analyzer.component_instances:
+            ctype = norm_component_type(comp.component_type)
             if ctype == "Wire":
                 continue
-            nodes_of_comp = set()
-            nodes_of_comp.add(analyzer._get_node_name(comp.pin1_loc))
-            if comp.pin2_loc:
-                nodes_of_comp.add(analyzer._get_node_name(comp.pin2_loc))
-            for node in nodes_of_comp:
+            for pin in comp.pins:
+                node = pin.electrical_node_id or analyzer.board_schema.resolve_hole_to_node(pin.hole_id)
                 if node in g and g.degree(node) == 1:
                     issues.append(
                         _make_diagnostic(
                             category="topology_errors",
                             error_code="FLOATING_PIN",
-                            message=f"{comp.name}: 引脚{node}仅连接到该元件自身, 可能为悬空引脚",
+                            message=f"{comp.component_id}: 引脚{pin.pin_name}({pin.hole_id})仅连接到该元件自身, 可能为悬空引脚",
                             severity="warning",
-                            component_id=comp.name,
+                            component_id=comp.component_id,
                             actual=node,
+                            context={"pin_name": pin.pin_name, "hole_id": pin.hole_id},
                         )
                     )
                     break

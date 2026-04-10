@@ -164,6 +164,5 @@ def _rebuild_analyzer(components: List[dict]) -> CircuitAnalyzer:
     analyzer, _normalized_components = build_analyzer_from_components(
         components,
         board_schema=board_schema,
-        polarity_resolver=None,
     )
     return analyzer

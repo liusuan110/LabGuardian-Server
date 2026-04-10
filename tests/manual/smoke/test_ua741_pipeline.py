@@ -152,9 +152,9 @@ def run_full_pipeline(image_path: str, output_dir: str):
     print(f"  Mapped {len(components)} components:")
     for c in components:
         cn = c["class_name"]
-        p1 = c.get("pin1_logic", "?")
-        p2 = c.get("pin2_logic", "?")
-        print(f"    {cn:15s} pin1={p1}  pin2={p2}")
+        pins = c.get("pins", [])
+        hole_summary = [pin.get("hole_id", "?") for pin in pins]
+        print(f"    {cn:15s} holes={hole_summary}")
 
     # ===== IC 多引脚解析 (UA741 8-pin DIP) =====
     print("\n[IC Pin Analysis - UA741 DIP-8]")
@@ -253,9 +253,11 @@ def run_full_pipeline(image_path: str, output_dir: str):
         cn = c["class_name"]
         color = COLORS.get(cn, (255,255,255))
         cv2.rectangle(vis_final, (x1,y1), (x2,y2), color, 2)
-        p1 = c.get("pin1_logic", ["?","?"])
-        p2 = c.get("pin2_logic", ["?","?"])
-        label = f"{cn} ({p1[0]}{p1[1]}-{p2[0]}{p2[1]})"
+        pins = c.get("pins", [])
+        holes = [pin.get("hole_id", "?") for pin in pins[:2]]
+        if len(holes) < 2:
+            holes.extend(["?"] * (2 - len(holes)))
+        label = f"{cn} ({holes[0]}-{holes[1]})"
         cv2.putText(vis_final, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
 
     # 画 pinned holes
@@ -273,12 +275,11 @@ def run_full_pipeline(image_path: str, output_dir: str):
         "s1_pinned": len(pinned_hints),
         "s2_mapped_components": [{
             "class": c["class_name"],
-            "pin1_logic": c.get("pin1_logic"),
-            "pin2_logic": c.get("pin2_logic"),
+            "pins": c.get("pins", []),
             "confidence": round(c.get("confidence", 0), 3),
         } for c in components],
         "s3_circuit_description": s3["circuit_description"],
-        "s3_netlist": s3["netlist"],
+        "s3_netlist_v2": s3["netlist_v2"],
         "s4_risk_level": s4["risk_level"],
         "s4_diagnostics": s4.get("diagnostics", []),
     }

@@ -1,24 +1,19 @@
 """
 S2 -> S3 标准化输入适配层。
 
-第一阶段同时兼容:
-1. 旧的 `pin1_logic/pin2_logic`
-2. 新的 `components[].pins[]` 组件中心化结构
+当前仅接受结构化 `components[].pins[]` 作为正式输入。
+旧的 `pin1_logic/pin2_logic` 兼容入口已经移除，避免新链路继续被旧语义拖回去。
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import TYPE_CHECKING, Iterable, List
+from typing import List
 
 from app.domain.board_schema import BoardSchema
 from app.domain.circuit import CircuitAnalyzer
-from app.domain.circuit import Polarity
-from app.domain.ic_models import UA741_PIN_ROLES, build_dip8_component
+from app.domain.ic_models import UA741_PIN_ROLES, build_dip8_pin_locs
 from app.domain.netlist_models import ComponentInstance, PinAssignment, PinObservation
-
-if TYPE_CHECKING:
-    from app.domain.polarity import PolarityResolver
 
 
 _TYPE_PREFIX = {
@@ -35,12 +30,11 @@ _TYPE_PREFIX = {
 def normalize_components_for_topology(
     components: List[dict],
     board_schema: BoardSchema,
-    polarity_resolver: "PolarityResolver | None" = None,
 ) -> List[ComponentInstance]:
     counters: defaultdict[str, int] = defaultdict(int)
     normalized: List[ComponentInstance] = []
     for comp in components:
-        instance = _normalize_component(comp, counters, board_schema, polarity_resolver)
+        instance = _normalize_component(comp, counters, board_schema)
         if instance is not None:
             normalized.append(instance)
     return normalized
@@ -49,18 +43,17 @@ def normalize_components_for_topology(
 def build_analyzer_from_components(
     components: List[dict],
     board_schema: BoardSchema | None = None,
-    polarity_resolver: "PolarityResolver | None" = None,
 ) -> tuple[CircuitAnalyzer, List[ComponentInstance]]:
-    """统一的 S2/结构化组件 -> CircuitAnalyzer 构建入口。
+    """统一的结构化组件 -> CircuitAnalyzer 构建入口。
 
-    团队后续如果需要兼容旧 `pin1_logic/pin2_logic` 或引入新的视觉 pin 结构,
-    都优先改这里, 不要把兼容逻辑散到 S3 / S4 / validator 里。
+    注意:
+    - 这里只接受已经完成 `components[].pins[]` 组装的输入
+    - 如果上游仍然只提供 `pin1_logic/pin2_logic`，应先在 S2 完成结构化转换
     """
     schema = board_schema or BoardSchema.default_breadboard()
     normalized_components = normalize_components_for_topology(
         components,
         board_schema=schema,
-        polarity_resolver=polarity_resolver,
     )
     analyzer = CircuitAnalyzer(board_schema=schema)
     for comp in normalized_components:
@@ -72,11 +65,14 @@ def _normalize_component(
     comp: dict,
     counters: defaultdict[str, int],
     board_schema: BoardSchema,
-    polarity_resolver: "PolarityResolver | None",
 ) -> ComponentInstance | None:
-    if comp.get("pins"):
-        return _from_structured_component(comp, counters, board_schema)
-    return _from_legacy_component(comp, counters, board_schema, polarity_resolver)
+    if not comp.get("pins"):
+        component_id = comp.get("component_id") or comp.get("class_name") or comp.get("component_type") or "UNKNOWN"
+        raise ValueError(
+            f"Component {component_id} missing structured pins[]. "
+            "S2 output must provide component-centered pin assignments before topology build."
+        )
+    return _from_structured_component(comp, counters, board_schema)
 
 
 def _from_structured_component(
@@ -162,15 +158,13 @@ def _from_structured_ic_anchor_pair(
     if len(logic_locs) < 2:
         return None
 
-    dip8 = build_dip8_component(
-        class_name="IC",
+    dip8_pin_locs = build_dip8_pin_locs(
         pin1=(str(logic_locs[0][0]), str(logic_locs[0][1])),
         pin2=(str(logic_locs[1][0]), str(logic_locs[1][1])),
-        confidence=float(comp.get("confidence", 1.0)),
     )
 
     pins: List[PinAssignment] = []
-    for idx, loc in enumerate(dip8.all_pin_locs(), start=1):
+    for idx, loc in enumerate(dip8_pin_locs, start=1):
         hole_id = board_schema.logic_loc_to_hole_id(loc)
         pins.append(
             PinAssignment(
@@ -197,135 +191,6 @@ def _from_structured_ic_anchor_pair(
             "pin_schema_id": comp.get("pin_schema_id"),
         },
     )
-
-
-def _from_legacy_component(
-    comp: dict,
-    counters: defaultdict[str, int],
-    board_schema: BoardSchema,
-    polarity_resolver: "PolarityResolver | None",
-) -> ComponentInstance | None:
-    class_name = str(comp.get("class_name") or comp.get("component_type") or "UNKNOWN")
-    component_id = comp.get("component_id") or _next_component_id(class_name, counters)
-    confidence = float(comp.get("confidence", 1.0))
-    polarity = _infer_legacy_polarity(comp, polarity_resolver)
-    package_type = _default_package_type(class_name)
-
-    pins: List[PinAssignment] = []
-    if class_name == "IC":
-        pin1 = tuple(comp["pin1_logic"]) if comp.get("pin1_logic") else None
-        pin2 = tuple(comp["pin2_logic"]) if comp.get("pin2_logic") else None
-        if pin1 is None or pin2 is None:
-            return None
-        dip8 = build_dip8_component(
-            class_name=class_name,
-            pin1=pin1,
-            pin2=pin2,
-            confidence=confidence,
-        )
-        for idx, loc in enumerate(dip8.all_pin_locs(), start=1):
-            hole_id = board_schema.logic_loc_to_hole_id(loc)
-            pin_name = UA741_PIN_ROLES[idx - 1] if idx - 1 < len(UA741_PIN_ROLES) else f"pin{idx}"
-            pins.append(
-            PinAssignment(
-                pin_id=idx,
-                pin_name=pin_name,
-                hole_id=hole_id,
-                electrical_node_id=board_schema.resolve_hole_to_node(hole_id),
-                confidence=confidence,
-                metadata={"source": "legacy_s2"},
-            )
-        )
-    else:
-        legacy_pins = _legacy_pin_payloads(comp, class_name, polarity, board_schema, confidence)
-        pins.extend(legacy_pins)
-
-    if not pins:
-        return None
-
-    return ComponentInstance(
-        component_id=str(component_id),
-        component_type=class_name,
-        package_type=package_type,
-        part_subtype=str(comp.get("part_subtype") or ""),
-        polarity=polarity.value,
-        orientation=float(comp.get("orientation_deg", 0.0)),
-        symmetry_group=_default_symmetry_group(class_name),
-        pins=pins,
-        confidence=confidence,
-        metadata={
-            "source": "legacy_s2",
-            "bbox": comp.get("bbox"),
-            "legacy_pin1_logic": comp.get("pin1_logic"),
-            "legacy_pin2_logic": comp.get("pin2_logic"),
-        },
-    )
-
-
-def _legacy_pin_payloads(
-    comp: dict,
-    class_name: str,
-    polarity: Polarity,
-    board_schema: BoardSchema,
-    confidence: float,
-) -> Iterable[PinAssignment]:
-    pin1 = tuple(comp["pin1_logic"]) if comp.get("pin1_logic") else None
-    pin2 = tuple(comp["pin2_logic"]) if comp.get("pin2_logic") else None
-    pins: List[PinAssignment] = []
-
-    if pin1 is not None:
-        pin_name_1, pin_name_2 = _default_pin_names(class_name, polarity)
-        pins.append(
-            PinAssignment(
-                pin_id=1,
-                pin_name=pin_name_1,
-                hole_id=board_schema.logic_loc_to_hole_id(pin1),
-                electrical_node_id=board_schema.resolve_hole_to_node(board_schema.logic_loc_to_hole_id(pin1)),
-                confidence=confidence,
-            )
-        )
-    if pin2 is not None:
-        pin_name_1, pin_name_2 = _default_pin_names(class_name, polarity)
-        pins.append(
-            PinAssignment(
-                pin_id=2,
-                pin_name=pin_name_2,
-                hole_id=board_schema.logic_loc_to_hole_id(pin2),
-                electrical_node_id=board_schema.resolve_hole_to_node(board_schema.logic_loc_to_hole_id(pin2)),
-                confidence=confidence,
-            )
-        )
-    return pins
-
-
-def _infer_legacy_polarity(
-    comp: dict,
-    polarity_resolver: "PolarityResolver | None",
-) -> Polarity:
-    class_name = str(comp.get("class_name", "")).lower()
-    if class_name not in ("led", "diode"):
-        return Polarity.NONE
-
-    if not polarity_resolver or not comp.get("bbox"):
-        return Polarity.UNKNOWN
-
-    positive_first = polarity_resolver.infer(tuple(comp["bbox"]))
-    if positive_first is True:
-        return Polarity.FORWARD
-    if positive_first is False:
-        return Polarity.REVERSE
-    return Polarity.UNKNOWN
-
-
-def _default_pin_names(class_name: str, polarity: Polarity) -> tuple[str, str]:
-    c = class_name.lower()
-    if c in ("led", "diode"):
-        if polarity == Polarity.FORWARD:
-            return ("anode", "cathode")
-        if polarity == Polarity.REVERSE:
-            return ("cathode", "anode")
-    return ("pin1", "pin2")
-
 
 def _default_package_type(component_type: str) -> str:
     c = component_type.lower()

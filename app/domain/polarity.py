@@ -11,10 +11,9 @@ from typing import Optional
 
 import numpy as np
 
+from .netlist_models import ComponentInstance
 from .circuit import (
-    CircuitComponent,
     Polarity,
-    PinRole,
     POLARIZED_TYPES,
     NON_POLAR_TYPES,
     norm_component_type,
@@ -35,49 +34,41 @@ class PolarityResolver:
 
     def enrich(
         self,
-        comp: CircuitComponent,
+        comp: ComponentInstance,
         obb_corners: Optional[np.ndarray] = None,
         orientation_deg: float = 0.0,
-    ) -> CircuitComponent:
+    ) -> ComponentInstance:
         """填充极性和引脚角色 (原地修改)"""
         self.stats["total"] += 1
-        norm_type = self._norm_type(comp.type)
-        comp.orientation_deg = orientation_deg
+        norm_type = self._norm_type(comp.component_type)
+        comp.orientation = orientation_deg
 
         if norm_type in NON_POLAR_TYPES or norm_type == "UNKNOWN":
-            comp.polarity = Polarity.NONE
+            comp.polarity = Polarity.NONE.value
             return comp
 
         if norm_type in POLARIZED_TYPES:
             self._resolve_diode_polarity(comp, obb_corners, orientation_deg)
         else:
-            comp.polarity = Polarity.NONE
+            comp.polarity = Polarity.NONE.value
 
         return comp
 
     def _resolve_diode_polarity(
         self,
-        comp: CircuitComponent,
+        comp: ComponentInstance,
         obb_corners: Optional[np.ndarray],
         orientation_deg: float,
     ):
-        if comp.pin1_loc is None or comp.pin2_loc is None:
-            comp.polarity = Polarity.UNKNOWN
-            self.stats["unknown"] += 1
-            return
-
-        try:
-            int(comp.pin1_loc[0])
-            int(comp.pin2_loc[0])
-        except (ValueError, TypeError):
-            comp.polarity = Polarity.UNKNOWN
+        if len(comp.pins) < 2:
+            comp.polarity = Polarity.UNKNOWN.value
             self.stats["unknown"] += 1
             return
 
         if obb_corners is not None and len(obb_corners) == 4:
-            comp.polarity = Polarity.FORWARD
+            comp.polarity = Polarity.FORWARD.value
         else:
-            comp.polarity = Polarity.FORWARD
+            comp.polarity = Polarity.FORWARD.value
 
         self.stats["resolved"] += 1
 

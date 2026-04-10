@@ -8,14 +8,20 @@
     "polarity": "unknown",
     "symmetry_group": [],
     "confidence": 1.0,
-    "bbox": [600, 340, 735, 395],
-    "pin1_logic": ["19", "e"],
-    "pin2_logic": ["18", "h"],
+    "bbox": [
+      600,
+      340,
+      735,
+      395
+    ],
     "pins": [
       {
         "pin_id": 1,
         "pin_name": "pin1",
-        "logic_loc": ["19", "e"],
+        "logic_loc": [
+          "19",
+          "e"
+        ],
         "hole_id": "E19",
         "electrical_node_id": "ROW_19_L",
         "confidence": 1.0,
@@ -23,23 +29,35 @@
         "observations": [
           {
             "view_id": "view_0",
-            "keypoint": [618, 366],
+            "keypoint": [
+              618,
+              366
+            ],
             "visibility": 2,
             "confidence": 0.95
           }
         ],
-        "candidate_hole_ids": ["E19"],
-        "candidate_node_ids": ["ROW_19_L"],
+        "candidate_hole_ids": [
+          "E19"
+        ],
+        "candidate_node_ids": [
+          "ROW_19_L"
+        ],
         "candidate_count": 1,
         "primary_visibility": 2,
-        "visible_view_ids": ["view_0"],
+        "visible_view_ids": [
+          "view_0"
+        ],
         "observation_count": 1,
         "ambiguity_reasons": []
       },
       {
         "pin_id": 2,
         "pin_name": "pin2",
-        "logic_loc": ["18", "h"],
+        "logic_loc": [
+          "18",
+          "h"
+        ],
         "hole_id": "H18",
         "electrical_node_id": "ROW_18_R",
         "confidence": 1.0,
@@ -47,16 +65,25 @@
         "observations": [
           {
             "view_id": "view_0",
-            "keypoint": [715, 372],
+            "keypoint": [
+              715,
+              372
+            ],
             "visibility": 2,
             "confidence": 0.95
           }
         ],
-        "candidate_hole_ids": ["H18"],
-        "candidate_node_ids": ["ROW_18_R"],
+        "candidate_hole_ids": [
+          "H18"
+        ],
+        "candidate_node_ids": [
+          "ROW_18_R"
+        ],
         "candidate_count": 1,
         "primary_visibility": 2,
-        "visible_view_ids": ["view_0"],
+        "visible_view_ids": [
+          "view_0"
+        ],
         "observation_count": 1,
         "ambiguity_reasons": []
       }
@@ -71,14 +98,20 @@
     "polarity": "none",
     "symmetry_group": [],
     "confidence": 1.0,
-    "bbox": [700, 360, 900, 460],
-    "pin1_logic": ["19", "j"],
-    "pin2_logic": ["32", "rail_bot-"],
+    "bbox": [
+      700,
+      360,
+      900,
+      460
+    ],
     "pins": [
       {
         "pin_id": 1,
         "pin_name": "pin1",
-        "logic_loc": ["19", "j"],
+        "logic_loc": [
+          "19",
+          "j"
+        ],
         "hole_id": "J19",
         "electrical_node_id": "ROW_19_R",
         "confidence": 1.0,
@@ -86,23 +119,35 @@
         "observations": [
           {
             "view_id": "view_0",
-            "keypoint": [735, 373],
+            "keypoint": [
+              735,
+              373
+            ],
             "visibility": 2,
             "confidence": 0.95
           }
         ],
-        "candidate_hole_ids": ["J19"],
-        "candidate_node_ids": ["ROW_19_R"],
+        "candidate_hole_ids": [
+          "J19"
+        ],
+        "candidate_node_ids": [
+          "ROW_19_R"
+        ],
         "candidate_count": 1,
         "primary_visibility": 2,
-        "visible_view_ids": ["view_0"],
+        "visible_view_ids": [
+          "view_0"
+        ],
         "observation_count": 1,
         "ambiguity_reasons": []
       },
       {
         "pin_id": 2,
         "pin_name": "pin2",
-        "logic_loc": ["32", "rail_bot-"],
+        "logic_loc": [
+          "32",
+          "rail_bot-"
+        ],
         "hole_id": "RAIL_BOT_MINUS_32",
         "electrical_node_id": "RAIL_BOT_MINUS",
         "confidence": 1.0,
@@ -110,16 +155,25 @@
         "observations": [
           {
             "view_id": "view_0",
-            "keypoint": [875, 445],
+            "keypoint": [
+              875,
+              445
+            ],
             "visibility": 2,
             "confidence": 0.95
           }
         ],
-        "candidate_hole_ids": ["RAIL_BOT_MINUS_32"],
-        "candidate_node_ids": ["RAIL_BOT_MINUS"],
+        "candidate_hole_ids": [
+          "RAIL_BOT_MINUS_32"
+        ],
+        "candidate_node_ids": [
+          "RAIL_BOT_MINUS"
+        ],
         "candidate_count": 1,
         "primary_visibility": 2,
-        "visible_view_ids": ["view_0"],
+        "visible_view_ids": [
+          "view_0"
+        ],
         "observation_count": 1,
         "ambiguity_reasons": []
       }
@@ -134,14 +188,20 @@
     "polarity": "none",
     "symmetry_group": [],
     "confidence": 1.0,
-    "bbox": [410, 360, 560, 410],
-    "pin1_logic": ["15", "c"],
-    "pin2_logic": ["19", "d"],
+    "bbox": [
+      410,
+      360,
+      560,
+      410
+    ],
     "pins": [
       {
         "pin_id": 1,
         "pin_name": "pin1",
-        "logic_loc": ["15", "c"],
+        "logic_loc": [
+          "15",
+          "c"
+        ],
         "hole_id": "C15",
         "electrical_node_id": "ROW_15_L",
         "confidence": 1.0,
@@ -149,23 +209,35 @@
         "observations": [
           {
             "view_id": "view_0",
-            "keypoint": [430, 388],
+            "keypoint": [
+              430,
+              388
+            ],
             "visibility": 2,
             "confidence": 0.95
           }
         ],
-        "candidate_hole_ids": ["C15"],
-        "candidate_node_ids": ["ROW_15_L"],
+        "candidate_hole_ids": [
+          "C15"
+        ],
+        "candidate_node_ids": [
+          "ROW_15_L"
+        ],
         "candidate_count": 1,
         "primary_visibility": 2,
-        "visible_view_ids": ["view_0"],
+        "visible_view_ids": [
+          "view_0"
+        ],
         "observation_count": 1,
         "ambiguity_reasons": []
       },
       {
         "pin_id": 2,
         "pin_name": "pin2",
-        "logic_loc": ["19", "d"],
+        "logic_loc": [
+          "19",
+          "d"
+        ],
         "hole_id": "D19",
         "electrical_node_id": "ROW_19_L",
         "confidence": 1.0,
@@ -173,16 +245,25 @@
         "observations": [
           {
             "view_id": "view_0",
-            "keypoint": [545, 386],
+            "keypoint": [
+              545,
+              386
+            ],
             "visibility": 2,
             "confidence": 0.95
           }
         ],
-        "candidate_hole_ids": ["D19"],
-        "candidate_node_ids": ["ROW_19_L"],
+        "candidate_hole_ids": [
+          "D19"
+        ],
+        "candidate_node_ids": [
+          "ROW_19_L"
+        ],
         "candidate_count": 1,
         "primary_visibility": 2,
-        "visible_view_ids": ["view_0"],
+        "visible_view_ids": [
+          "view_0"
+        ],
         "observation_count": 1,
         "ambiguity_reasons": []
       }
@@ -197,14 +278,20 @@
     "polarity": "none",
     "symmetry_group": [],
     "confidence": 1.0,
-    "bbox": [360, 300, 470, 390],
-    "pin1_logic": ["15", "a"],
-    "pin2_logic": ["19", "rail_top+"],
+    "bbox": [
+      360,
+      300,
+      470,
+      390
+    ],
     "pins": [
       {
         "pin_id": 1,
         "pin_name": "pin1",
-        "logic_loc": ["15", "a"],
+        "logic_loc": [
+          "15",
+          "a"
+        ],
         "hole_id": "A15",
         "electrical_node_id": "ROW_15_L",
         "confidence": 1.0,
@@ -212,23 +299,35 @@
         "observations": [
           {
             "view_id": "view_0",
-            "keypoint": [412, 365],
+            "keypoint": [
+              412,
+              365
+            ],
             "visibility": 2,
             "confidence": 0.95
           }
         ],
-        "candidate_hole_ids": ["A15"],
-        "candidate_node_ids": ["ROW_15_L"],
+        "candidate_hole_ids": [
+          "A15"
+        ],
+        "candidate_node_ids": [
+          "ROW_15_L"
+        ],
         "candidate_count": 1,
         "primary_visibility": 2,
-        "visible_view_ids": ["view_0"],
+        "visible_view_ids": [
+          "view_0"
+        ],
         "observation_count": 1,
         "ambiguity_reasons": []
       },
       {
         "pin_id": 2,
         "pin_name": "pin2",
-        "logic_loc": ["19", "rail_top+"],
+        "logic_loc": [
+          "19",
+          "rail_top+"
+        ],
         "hole_id": "RAIL_TOP_PLUS_19",
         "electrical_node_id": "RAIL_TOP_PLUS",
         "confidence": 1.0,
@@ -236,16 +335,25 @@
         "observations": [
           {
             "view_id": "view_0",
-            "keypoint": [452, 325],
+            "keypoint": [
+              452,
+              325
+            ],
             "visibility": 2,
             "confidence": 0.95
           }
         ],
-        "candidate_hole_ids": ["RAIL_TOP_PLUS_19"],
-        "candidate_node_ids": ["RAIL_TOP_PLUS"],
+        "candidate_hole_ids": [
+          "RAIL_TOP_PLUS_19"
+        ],
+        "candidate_node_ids": [
+          "RAIL_TOP_PLUS"
+        ],
         "candidate_count": 1,
         "primary_visibility": 2,
-        "visible_view_ids": ["view_0"],
+        "visible_view_ids": [
+          "view_0"
+        ],
         "observation_count": 1,
         "ambiguity_reasons": []
       }

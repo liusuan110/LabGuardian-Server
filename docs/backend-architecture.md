@@ -7,8 +7,10 @@
 当前已经形成 3 条清晰主线：
 
 - API / Service / Domain / Pipeline 分层已经基本建立
-- 旧 `pin1_logic/pin2_logic` 链路仍保留，但已经通过 `topology_input.py` 收口兼容
+- `topology_input.py` 已切换为只接受结构化 `components[].pins[]`
 - 新 `netlist_v2 + validator_report_v2` 链路已经可以作为后续 guidance / RAG / agent 的正式基础
+- `circuit.py` / `validator.py` 的主逻辑已切换到 `ComponentInstance`
+- `ic_models.py` / `polarity.py` 已切换到 `ComponentInstance` 语义
 
 ## Current Responsibility Boundaries
 
@@ -178,8 +180,14 @@ component_id + pin_name + hole_id
   - 旧/新结构归一化
 - `app/domain/circuit.py`
   - `board_schema` 驱动建图与 `netlist_v2`
+  - 拓扑图、文本描述、SPICE 导出优先围绕 `ComponentInstance`
 - `app/domain/validator.py`
   - compare / diagnose / error code / evidence refs
+  - 独立诊断优先消费 `ComponentInstance + pins[]`
+- `app/domain/ic_models.py`
+  - 只负责输出封装 pin 布局，不再返回旧内部组件对象
+- `app/domain/polarity.py`
+  - 只负责补充 `ComponentInstance` 极性信息
 
 ## Formal Agent Landing Design
 

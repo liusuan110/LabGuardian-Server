@@ -20,13 +20,10 @@ component_id + pin_name + hole_id
 -> validator_report_v2
 ```
 
-旧链路仍然保留，只用于兼容：
-
-```text
-pin1_logic / pin2_logic
--> legacy analyzer
--> legacy netlist
-```
+`topology_input.py` 已不再接受旧 `pin1_logic / pin2_logic` 直接建图。
+旧字段目前仍可能出现在 S2 输出中，用于调试和过渡观察，但不再参与正式拓扑构建主链。
+`circuit.py / validator.py / ic_models.py / polarity.py` 的内部主逻辑也已经切到
+`ComponentInstance + pins[]`，`CircuitComponent` 兼容层已退出主流程。
 
 ## 完成进度
 
@@ -49,8 +46,12 @@ pin1_logic / pin2_logic
 已完成：
 
 - S2 开始输出 `components[].pins[]`
-- `topology_input.py` 兼容旧/新结构
+- `topology_input.py` 已切换为只接受结构化 `components[].pins[]`
 - S3 / S4 使用统一 analyzer builder
+- `circuit.py` 的拓扑图生成、描述导出、SPICE 导出已优先围绕 `component_instances`
+- `validator.py` 的独立诊断已优先围绕 `component_instances`
+- `ic_models.py` 只输出结构化 DIP-8 引脚位置
+- `polarity.py` 只接收 `ComponentInstance`
 
 仍待继续：
 
@@ -110,7 +111,7 @@ pin1_logic / pin2_logic
 
 ## 当前最重要的协作原则
 
-### 不要再新增只服务旧结构的新逻辑
+### 不要再把旧字段重新接回主链
 
 新逻辑应该尽量直接落到：
 
@@ -123,6 +124,9 @@ pin1_logic / pin2_logic
 如果必须兼容旧字段，优先放到：
 
 - `app/pipeline/topology_input.py`
+
+当前仍允许存在的 legacy 代码，应该只作为 `domain` 内部实现细节存在，
+而不应该重新暴露回 S2 / S3 / S4 / reference / validator 主链。
 
 不要让兼容逻辑散落到：
 
