@@ -63,15 +63,6 @@ class Settings(BaseSettings):
     # ---- 课堂 ----
     STATION_ONLINE_TIMEOUT: float = 10.0
 
-    # ---- AOI (PCB 缺陷检测) ----
-    AOI_MODEL_DIR: str = "models/aoi"
-    AOI_DATASET_ROOT: str = "datasets/pcb_aoi"
-    AOI_BACKBONE: str = "wide_resnet50_2"
-    AOI_CORESET_RATIO: float = 0.1
-    AOI_NUM_NEIGHBORS: int = 9
-    AOI_IMAGE_SIZE: int = 256
-    AOI_SCORE_THRESHOLD: float = 0.5
-
     # ---- LLM (可选) ----
     LLM_API_KEY: Optional[str] = None
     LLM_BASE_URL: Optional[str] = None

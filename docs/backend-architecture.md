@@ -27,7 +27,6 @@
 - `app/api/v1/pipeline.py`: pipeline 提交、查询、同步运行
 - `app/api/v1/classroom.py`: heartbeat、课堂态势、指导推送
 - `app/api/v1/websocket.py`: 学生端 WS 长连接
-- `app/api/v1/aoi.py`: PCB AOI 训练与检测接口
 
 建议扩展:
 
@@ -88,7 +87,6 @@
 - `app/pipeline/orchestrator.py`: S1-S4 总调度
 - `app/pipeline/stages/`: detect / mapping / topology / validate
 - `app/pipeline/vision/`: YOLO、校准、导线、引脚等底层视觉能力
-- `app/pipeline/aoi/`: PCB AOI 模块
 
 建议约束:
 
@@ -101,7 +99,6 @@
 app/
 ├── api/
 │   └── v1/
-│       ├── aoi.py
 │       ├── angnt.py
 │       ├── classroom.py
 │       ├── pipeline.py
@@ -123,7 +120,6 @@ app/
 │   └── validator.py
 ├── pipeline/
 │   ├── orchestrator.py
-│   ├── aoi/
 │   ├── stages/
 │   └── vision/
 ├── services/

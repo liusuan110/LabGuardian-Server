@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.deps import get_version_service
-from app.api.v1 import aoi, angnt, classroom, pipeline, websocket
+from app.api.v1 import angnt, classroom, pipeline, websocket
 from app.schemas.version import VersionInfoResponse
 from app.services.version_service import VersionService
 
@@ -47,7 +47,6 @@ app.add_middleware(
 # 路由
 app.include_router(classroom.router, prefix=settings.API_V1_PREFIX)
 app.include_router(pipeline.router, prefix=settings.API_V1_PREFIX)
-app.include_router(aoi.router, prefix=settings.API_V1_PREFIX)
 app.include_router(angnt.router, prefix=settings.API_V1_PREFIX)
 app.include_router(websocket.router)
 

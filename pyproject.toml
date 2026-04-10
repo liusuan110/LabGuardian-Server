@@ -20,8 +20,6 @@ dependencies = [
     "numpy>=1.26.0",
     "networkx>=3.2",
     "scikit-image>=0.22.0",
-    # --- AOI (PCB 缺陷检测) ---
-    "anomalib>=2.0.0",
     # --- 数据库 (预留) ---
     "sqlalchemy>=2.0.0",
     "alembic>=1.13.0",
