@@ -14,6 +14,7 @@ class PipelineStage(str, Enum):
     """四阶段名称"""
 
     DETECT = "detect"
+    PIN_DETECT = "pin_detect"
     MAPPING = "mapping"
     TOPOLOGY = "topology"
     VALIDATE = "validate"
@@ -75,6 +76,53 @@ class PipelineResult(BaseModel):
     risk_level: str = "safe"
     risk_reasons: List[str] = Field(default_factory=list)
     report: str = ""
+
+    @classmethod
+    def from_pipeline_run(
+        cls,
+        *,
+        job_id: str,
+        station_id: str,
+        raw: Dict[str, Any],
+    ) -> "PipelineResult":
+        """将编排器原始输出标准化为统一的 PipelineResult.
+
+        兼容两种输入:
+        1. 编排器原始结果: {"stages": {...}, "total_duration_ms": ...}
+        2. 已序列化的 PipelineResult dict
+        """
+        if isinstance(raw.get("stages"), list) and "status" in raw:
+            payload = dict(raw)
+            payload.setdefault("job_id", job_id)
+            payload.setdefault("station_id", station_id)
+            return cls(**payload)
+
+        stages_raw = raw.get("stages", {})
+        stages = [
+            StageResult(
+                stage=PipelineStage(stage_name),
+                duration_ms=stage_data.get("duration_ms", 0),
+                data={k: v for k, v in stage_data.items() if k != "duration_ms"},
+            )
+            for stage_name, stage_data in stages_raw.items()
+        ]
+        s3 = stages_raw.get(PipelineStage.TOPOLOGY.value, {})
+        s4 = stages_raw.get(PipelineStage.VALIDATE.value, {})
+        return cls(
+            job_id=job_id,
+            station_id=station_id,
+            status=JobStatus.COMPLETED,
+            stages=stages,
+            total_duration_ms=raw.get("total_duration_ms", 0),
+            component_count=s3.get("component_count", 0),
+            net_count=len(s3.get("netlist_v2", {}).get("nets", [])),
+            progress=s4.get("progress", 0.0),
+            similarity=s4.get("similarity", 0.0),
+            diagnostics=s4.get("diagnostics", []),
+            comparison_report=s4.get("comparison_report", {}),
+            risk_level=s4.get("risk_level", "safe"),
+            risk_reasons=s4.get("risk_reasons", []),
+        )
 
 
 class JobStatusResponse(BaseModel):

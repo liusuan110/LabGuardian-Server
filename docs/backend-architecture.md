@@ -149,7 +149,7 @@ flowchart TD
   A["Client / Teacher UI"] --> B["API Layer<br/>pipeline.py / classroom.py / angnt.py"]
   B --> C["Services Layer<br/>pipeline_service / guidance_service / rag_service / agent_service"]
   C --> D["Domain Layer<br/>validator / risk / evidence / policy"]
-  C --> E["Pipeline Layer<br/>detect -> mapping -> topology -> validate"]
+  C --> E["Pipeline Layer<br/>detect -> pin detect -> mapping -> topology -> validate"]
   C --> F["Infra<br/>Redis / DB / Vector Store / Celery"]
   E --> D
   D --> C

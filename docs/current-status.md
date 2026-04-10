@@ -13,6 +13,8 @@
 目前建议默认以新链路为准：
 
 ```text
+component detect
+-> component ROI pin detect
 component_id + pin_name + hole_id
 -> electrical_node_id
 -> electrical_net_id
@@ -45,6 +47,7 @@ component_id + pin_name + hole_id
 
 已完成：
 
+- S1.5 `component ROI pin detect` 骨架已接入 orchestrator
 - S2 开始输出 `components[].pins[]`
 - `topology_input.py` 已切换为只接受结构化 `components[].pins[]`
 - S3 / S4 使用统一 analyzer builder
@@ -55,6 +58,7 @@ component_id + pin_name + hole_id
 
 仍待继续：
 
+- `pin_model.py` 还是 stub，占位承接旧 detection hint
 - S2 的 side-view observation 目前还是轻量占位
 - 真正的多视图 pin 证据还要继续接上游视觉输出
 

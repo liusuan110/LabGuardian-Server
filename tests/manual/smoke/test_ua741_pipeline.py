@@ -80,11 +80,9 @@ def run_full_pipeline(image_path: str, output_dir: str):
     )
 
     detections = s1["detections"]
-    pinned_hints = s1.get("pinned_hints", [])
     print(f"  Components: {len(detections)}")
     for d in detections:
         print(f"    {d['class_name']:15s} conf={d['confidence']:.2f}  bbox={d['bbox']}")
-    print(f"  Pinned holes: {len(pinned_hints)}")
 
     # ===== 可视化 S1 检测结果 =====
     vis_s1 = img.copy()
@@ -98,39 +96,24 @@ def run_full_pipeline(image_path: str, output_dir: str):
         ls = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)[0]
         cv2.rectangle(vis_s1, (x1, y1-ls[1]-8), (x1+ls[0], y1), color, -1)
         cv2.putText(vis_s1, label, (x1, y1-4), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255,255,255), 2)
-    for p in pinned_hints:
-        cx, cy = p["center"]
-        cv2.circle(vis_s1, (int(cx), int(cy)), 8, (255, 0, 255), 2)
-        cv2.circle(vis_s1, (int(cx), int(cy)), 2, (0, 0, 255), -1)
     cv2.imwrite(os.path.join(output_dir, "s1_detect.jpg"), vis_s1, [cv2.IMWRITE_JPEG_QUALITY, 95])
     print(f"  Saved: s1_detect.jpg")
 
-    # ===== IC pinned 缺失纠正分析 =====
-    print("\n[Pin Correction Analysis]")
-    ic_dets = [d for d in detections if d["class_name"] == "IC"]
-    resistor_dets = [d for d in detections if d["class_name"] == "Resistor"]
+    # ===== S1.5: component ROI pin detect =====
+    print("\n[S1.5] Component ROI Pin Detection...")
+    from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+    from app.pipeline.vision.pin_model import PinRoiDetector
 
-    # 分析哪些元件有 pinned hints 在附近，哪些没有
-    for det in detections:
-        cn = det["class_name"]
-        bbox = det["bbox"]
-        x1, y1, x2, y2 = bbox
-        expand = 40
-        nearby_pins = []
-        for p in pinned_hints:
-            px, py = p["center"]
-            if (x1 - expand <= px <= x2 + expand and
-                y1 - expand <= py <= y2 + expand):
-                nearby_pins.append(p)
-
-        has_p1 = det.get("pin1_pixel") is not None
-        has_p2 = det.get("pin2_pixel") is not None
-        pin_status = f"pin1={'Y' if has_p1 else 'N'} pin2={'Y' if has_p2 else 'N'}"
-        print(f"  {cn:15s} {pin_status}  nearby_pinned={len(nearby_pins)}", end="")
-
-        if len(nearby_pins) < 2 and cn == "Resistor":
-            print("  << MISSING PINNED - will use bbox inference >>", end="")
-        print()
+    s15 = run_pin_detect(
+        detections,
+        images_b64=[img_b64],
+        pin_detector=PinRoiDetector(),
+    )
+    detected_components = s15["components"]
+    print(f"  Pin-detected components: {len(detected_components)}")
+    for c in detected_components:
+        pin_names = [pin["pin_name"] for pin in c.get("pins", [])]
+        print(f"    {c['component_id']:8s} {c['component_type']:15s} schema={c['pin_schema_id']:18s} pins={pin_names}")
 
     # ===== S2: 坐标映射 =====
     print("\n[S2] Pixel -> Logic Mapping...")
@@ -142,11 +125,10 @@ def run_full_pipeline(image_path: str, output_dir: str):
     calibrator._build_synthetic_grid((h, w))
     print(f"  Calibrator: synthetic grid {calibrator.rows}x{calibrator.total_cols}")
     s2 = run_mapping(
-        detections,
+        detected_components,
         calibrator=calibrator,
         image_shape=s1["primary_image_shape"],
         images_b64=[img_b64],
-        pinned_hints=pinned_hints,
     )
     components = s2["components"]
     print(f"  Mapped {len(components)} components:")
@@ -170,42 +152,11 @@ def run_full_pipeline(image_path: str, output_dir: str):
         is_vertical = ic_h > ic_w
         print(f"  IC spans {'vertically' if is_vertical else 'horizontally'}")
 
-        # 找 IC 附近的所有 pinned holes，按位置排列出各引脚
-        ic_pins = []
-        for p in pinned_hints:
-            px, py = p["center"]
-            expand = 60
-            if (x1 - expand <= px <= x2 + expand and
-                y1 - expand <= py <= y2 + expand):
-                ic_pins.append((px, py, p["confidence"]))
-
-        print(f"  Found {len(ic_pins)} pinned holes near IC")
-
-        if ic_pins:
-            # DIP-8 方向判断:
-            # 垂直: 引脚 1-4 在左侧 (x < cx), 5-8 在右侧 (x > cx)
-            #        Pin 1-4: 从上到下排列, Pin 5-8: 从下到上排列
-            # 水平: 引脚 1-4 在上侧 (y < cy), 5-8 在下侧 (y > cy)
-            if is_vertical:
-                left_pins = sorted([p for p in ic_pins if p[0] < ic_cx], key=lambda p: p[1])
-                right_pins = sorted([p for p in ic_pins if p[0] >= ic_cx], key=lambda p: -p[1])
-            else:
-                left_pins = sorted([p for p in ic_pins if p[1] < ic_cy], key=lambda p: p[0])
-                right_pins = sorted([p for p in ic_pins if p[1] >= ic_cy], key=lambda p: -p[0])
-
-            print(f"  {'Left' if is_vertical else 'Top'} side pins ({len(left_pins)}): Pin 1→4")
-            for i, (px, py, cf) in enumerate(left_pins):
-                pin_num = i + 1
-                logic = calibrator.frame_pixel_to_logic(px, py)
-                func = UA741_PINOUT.get(pin_num, "?")
-                print(f"    Pin {pin_num} ({func:20s}): pixel=({px:.0f},{py:.0f}) -> logic={logic}")
-
-            print(f"  {'Right' if is_vertical else 'Bottom'} side pins ({len(right_pins)}): Pin 5→8")
-            for i, (px, py, cf) in enumerate(right_pins):
-                pin_num = i + 5
-                logic = calibrator.frame_pixel_to_logic(px, py)
-                func = UA741_PINOUT.get(pin_num, "?")
-                print(f"    Pin {pin_num} ({func:20s}): pixel=({px:.0f},{py:.0f}) -> logic={logic}")
+        pins = ic.get("pins", [])
+        print(f"  Structured pins from S1.5/S2: {len(pins)}")
+        for pin in pins:
+            func = UA741_PINOUT.get(pin["pin_id"], pin["pin_name"])
+            print(f"    Pin {pin['pin_id']} ({func:20s}) -> hole={pin.get('hole_id')} logic={pin.get('logic_loc')}")
 
     # ===== S3: 拓扑构建 =====
     print("\n[S3] Topology Construction...")
@@ -260,11 +211,6 @@ def run_full_pipeline(image_path: str, output_dir: str):
         label = f"{cn} ({holes[0]}-{holes[1]})"
         cv2.putText(vis_final, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
 
-    # 画 pinned holes
-    for p in pinned_hints:
-        cx, cy = int(p["center"][0]), int(p["center"][1])
-        cv2.circle(vis_final, (cx, cy), 6, (255, 0, 255), 2)
-
     cv2.imwrite(os.path.join(output_dir, "s2_mapped.jpg"), vis_final, [cv2.IMWRITE_JPEG_QUALITY, 95])
     print(f"\n  Saved: s2_mapped.jpg")
 
@@ -272,7 +218,7 @@ def run_full_pipeline(image_path: str, output_dir: str):
     result_json = {
         "image": os.path.basename(image_path),
         "s1_detections": len(detections),
-        "s1_pinned": len(pinned_hints),
+        "s1_pindet_components": len(detected_components),
         "s2_mapped_components": [{
             "class": c["class_name"],
             "pins": c.get("pins", []),

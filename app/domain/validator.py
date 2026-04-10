@@ -97,12 +97,36 @@ class CircuitValidator:
     def load_reference(self, file_path: str):
         with open(file_path, "r", encoding="utf-8") as f:
             payload = json.load(f)
-        self.ref_netlist_v2 = payload.get("netlist_v2")
+        self._load_reference_payload(payload)
+
+    def load_reference_payload(self, payload: Dict):
+        """从内联 dict 加载 reference.
+
+        支持两种输入:
+        1. 完整 `labguardian_ref_v4` payload, 包含 `netlist_v2`
+        2. 直接传 `netlist_v2` 对象
+        """
+        self._load_reference_payload(payload)
+
+    def _load_reference_payload(self, payload: Dict):
+        if not isinstance(payload, dict):
+            raise ValueError("Reference payload must be a dict.")
+
+        if "netlist_v2" in payload:
+            netlist_v2 = payload.get("netlist_v2")
+            topo_data = payload.get("topology")
+        elif "components" in payload and "nets" in payload:
+            netlist_v2 = payload
+            topo_data = None
+        else:
+            raise ValueError("Reference payload must contain netlist_v2 or be a netlist_v2 object.")
+
+        self.ref_netlist_v2 = netlist_v2
         if not self.ref_netlist_v2:
-            raise ValueError("Reference file must contain netlist_v2 in labguardian_ref_v4 format.")
+            raise ValueError("Reference payload must contain netlist_v2 in labguardian_ref_v4 format.")
 
         self.ref_component_instances = []
-        netlist_v2 = payload.get("netlist_v2") or {}
+        netlist_v2 = self.ref_netlist_v2 or {}
         board_schema_id = netlist_v2.get("board_schema_id", "breadboard_legacy_v1")
         board_schema = BoardSchema.default_breadboard()
         if board_schema.schema_id != board_schema_id:
@@ -115,7 +139,6 @@ class CircuitValidator:
 
         self.ref_graph = tmp.graph.copy()
         self.ref_component_instances = list(tmp.component_instances)
-        topo_data = payload.get("topology")
         if topo_data:
             try:
                 self.ref_topology = json_graph.node_link_graph(topo_data)

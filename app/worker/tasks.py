@@ -10,10 +10,9 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-from celery import current_task
-
 from app.core.celery_app import celery_app
 from app.pipeline.orchestrator import run_pipeline
+from app.schemas.pipeline import PipelineResult
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +25,9 @@ logger = logging.getLogger(__name__)
 )
 def run_pipeline_task(
     self,
+    station_id: str,
     images_b64: List[str],
-    reference_path: Dict[str, Any] | str | None = None,
+    reference_circuit: Dict[str, Any] | str | None = None,
     rail_assignments: Dict[str, str] | None = None,
     conf: float | None = None,
     iou: float | None = None,
@@ -46,19 +46,21 @@ def run_pipeline_task(
             meta={"current_stage": stage, "stage": stage, "progress": progress},
         )
 
-    ref_path = reference_path if isinstance(reference_path, str) else None
-
     try:
-        result = run_pipeline(
+        raw = run_pipeline(
             images_b64=images_b64,
-            reference_path=ref_path,
+            reference_circuit=reference_circuit,
             rail_assignments=rail_assignments,
             conf=conf,
             iou=iou,
             imgsz=imgsz,
             progress_cb=_progress_cb,
         )
-        return result
-    except Exception as exc:
+        return PipelineResult.from_pipeline_run(
+            job_id=self.request.id,
+            station_id=station_id,
+            raw=raw,
+        ).model_dump()
+    except Exception:
         logger.exception("Pipeline task failed")
         raise

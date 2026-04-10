@@ -21,14 +21,14 @@ logger = logging.getLogger(__name__)
 
 def run_validate(
     topology_graph: dict,
-    reference_path: str | None = None,
+    reference_circuit: Dict[str, Any] | str | None = None,
     components: List[dict] | None = None,
 ) -> Dict[str, Any]:
     """执行电路验证
 
     Args:
         topology_graph: S3 输出的 node_link_data
-        reference_path: 参考电路 JSON 路径（可选）
+        reference_circuit: 参考电路 JSON 路径或内联 reference payload（可选）
         components: S2 输出的映射元件列表 (用于重建 CircuitAnalyzer 进行比较)
 
     Returns:
@@ -50,9 +50,12 @@ def run_validate(
         "topology_edge_count": len(topology_graph.get("links", [])) if isinstance(topology_graph, dict) else 0,
     }
 
-    if reference_path:
+    if reference_circuit:
         try:
-            validator.load_reference(reference_path)
+            if isinstance(reference_circuit, dict):
+                validator.load_reference_payload(reference_circuit)
+            else:
+                validator.load_reference(reference_circuit)
         except Exception as e:
             logger.warning("加载参考电路失败: %s", e)
 

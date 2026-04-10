@@ -11,16 +11,17 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from app.core.config import settings
 from app.pipeline.stages.s1_detect import run_detect
+from app.pipeline.stages.s1b_pin_detect import run_pin_detect
 from app.pipeline.stages.s2_mapping import run_mapping
 from app.pipeline.stages.s3_topology import run_topology
 from app.pipeline.stages.s4_validate import run_validate
 from app.pipeline.vision.calibrator import BreadboardCalibrator
 from app.pipeline.vision.detector import ComponentDetector
+from app.pipeline.vision.pin_model import PinRoiDetector
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +33,9 @@ class PipelineContext:
     """流水线上下文 —— 携带跨阶段共享对象"""
 
     detector: ComponentDetector = field(default=None)  # type: ignore[assignment]
+    pin_detector: PinRoiDetector = field(default_factory=PinRoiDetector)
     calibrator: BreadboardCalibrator = field(default=None)  # type: ignore[assignment]
-    reference_path: Optional[str] = None
+    reference_circuit: Optional[Dict[str, Any] | str] = None
     conf: float = 0.25
     iou: float = 0.5
     imgsz: int = 1280
@@ -67,7 +69,7 @@ def get_shared_context() -> PipelineContext:
                     conf=settings.YOLO_CONF_THRESHOLD,
                     iou=settings.YOLO_IOU_THRESHOLD,
                     imgsz=settings.YOLO_IMGSZ,
-                    reference_path=settings.REFERENCE_CIRCUIT_PATH,
+                    reference_circuit=settings.REFERENCE_CIRCUIT_PATH,
                 )
                 _shared_ctx.ensure_resources()
     return _shared_ctx
@@ -75,7 +77,7 @@ def get_shared_context() -> PipelineContext:
 
 def run_pipeline(
     images_b64: List[str],
-    reference_path: str | None = None,
+    reference_circuit: Dict[str, Any] | str | None = None,
     rail_assignments: Dict[str, str] | None = None,
     conf: float | None = None,
     iou: float | None = None,
@@ -86,7 +88,7 @@ def run_pipeline(
 
     Args:
         images_b64: 1-3 张 base64 图片
-        reference_path: 参考电路 JSON 路径
+        reference_circuit: 参考电路 JSON 路径或内联 reference payload
         rail_assignments: 电源轨道指定, 如 {"top_plus": "VCC", "top_minus": "GND", ...}
         conf: YOLO 置信度阈值, 默认使用 settings
         iou: YOLO NMS IoU 阈值, 默认使用 settings
@@ -97,6 +99,7 @@ def run_pipeline(
         {
             "stages": {
                 "detect": {...},
+                "pin_detect": {...},
                 "mapping": {...},
                 "topology": {...},
                 "validate": {...},
@@ -126,18 +129,28 @@ def run_pipeline(
         roi_rect=ctx.roi_rect,
     )
     stages["detect"] = s1
-    logger.info("S1 detect: %d detections + %d pinned (%.0fms)",
-                len(s1["detections"]), len(s1.get("pinned_hints", [])), s1["duration_ms"])
+    logger.info("S1 detect: %d components (%.0fms)",
+                len(s1["detections"]), s1["duration_ms"])
     _notify("detect", 1.0)
 
-    # ── S2: 映射 (传入 images_b64 用于校准, pinned_hints 用于引脚精确化) ──
+    # ── S1.5: 组件 ROI pin 检测 ──
+    _notify("pin_detect", 0.0)
+    s15 = run_pin_detect(
+        detections=s1["detections"],
+        images_b64=images_b64,
+        pin_detector=ctx.pin_detector,
+    )
+    stages["pin_detect"] = s15
+    logger.info("S1.5 pin detect: %d components (%.0fms)", len(s15["components"]), s15["duration_ms"])
+    _notify("pin_detect", 1.0)
+
+    # ── S2: pin -> hole 映射 ──
     _notify("mapping", 0.0)
     s2 = run_mapping(
-        s1["detections"],
+        s15["components"],
         calibrator=ctx.calibrator,
         image_shape=s1["primary_image_shape"],
         images_b64=images_b64,
-        pinned_hints=s1.get("pinned_hints"),
     )
     stages["mapping"] = s2
     logger.info("S2 mapping: %d components (%.0fms)", len(s2["components"]), s2["duration_ms"])
@@ -163,7 +176,7 @@ def run_pipeline(
     _notify("validate", 0.0)
     s4 = run_validate(
         s3["topology_graph"],
-        reference_path=reference_path or ctx.reference_path,
+        reference_circuit=reference_circuit if reference_circuit is not None else ctx.reference_circuit,
         components=s2["components"],
     )
     stages["validate"] = s4

@@ -2,7 +2,7 @@
 Stage 1: YOLO 检测
 
 输入: 1-3 张 base64 JPEG 图片
-输出: 融合后的 Detection 列表
+输出: 融合后的组件 Detection 列表
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ import cv2
 import numpy as np
 
 from app.pipeline.vision.detector import ComponentDetector, Detection
-from app.pipeline.vision.wire_analyzer import WireAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +45,8 @@ COMPONENT_CLASSES = {
     "Diode", "IC", "Potentiometer",
 }
 
-# 作为辅助信息的类别 (不参与拓扑，用于定位引脚)
-AUXILIARY_CLASSES = {"pinned", "Pinned"}
-
 # 过滤掉的背景类 (Breadboard, Line_area 等)
-IGNORED_CLASSES = {"Breadboard", "Line_area", "breadboard", "line_area"}
+IGNORED_CLASSES = {"Breadboard", "Line_area", "breadboard", "line_area", "pinned", "Pinned"}
 
 IOU_MERGE_THRESHOLD = 0.3
 
@@ -63,7 +59,7 @@ def run_detect(
     imgsz: int = 1280,
     roi_rect: tuple | None = None,
 ) -> Dict[str, Any]:
-    """执行 YOLO 检测 + Wire 端点精炼 + 多图融合
+    """执行组件检测 + 多图融合。
 
     Returns:
         {
@@ -80,7 +76,6 @@ def run_detect(
     if not images:
         return {"detections": [], "primary_image_shape": (0, 0), "duration_ms": 0}
 
-    wire_analyzer = WireAnalyzer()
     all_det_lists: List[List[Detection]] = []
 
     for img in images:
@@ -91,17 +86,6 @@ def run_detect(
             detector.offset_detections(dets, rx1, ry1)
         else:
             dets = detector.detect(img, conf=conf, iou=iou, imgsz=imgsz)
-
-        # Wire 端点精炼
-        for det in dets:
-            if det.class_name.lower() == "wire":
-                try:
-                    endpoints, color = wire_analyzer.analyze_wire(img, det.bbox)
-                    if endpoints is not None:
-                        det.pin1_pixel, det.pin2_pixel = endpoints
-                    det.wire_color = color
-                except Exception:
-                    pass
 
         # 类名标准化 + 分类
         for det in dets:
@@ -115,15 +99,12 @@ def run_detect(
     else:
         merged = _fuse_detections(all_det_lists)
 
-    # 将 pinned 与元件检测分离
     component_dets = [d for d in merged if d.class_name in COMPONENT_CLASSES]
-    pinned_dets = [d for d in merged if d.class_name.lower() == "pinned"]
 
     duration_ms = (time.time() - t0) * 1000
 
     return {
         "detections": [_detection_to_dict(d) for d in component_dets],
-        "pinned_hints": [_pinned_to_dict(d) for d in pinned_dets],
         "primary_image_shape": images[0].shape[:2],
         "duration_ms": duration_ms,
     }
@@ -157,16 +138,6 @@ def _fuse_detections(det_lists: List[List[Detection]]) -> List[Detection]:
                 if det.confidence > bd.confidence:
                     bd.confidence = det.confidence
                     bd.bbox = det.bbox
-                if det.pin1_pixel and bd.pin1_pixel:
-                    bd.pin1_pixel = (
-                        (det.pin1_pixel[0] + bd.pin1_pixel[0]) / 2,
-                        (det.pin1_pixel[1] + bd.pin1_pixel[1]) / 2,
-                    )
-                if det.pin2_pixel and bd.pin2_pixel:
-                    bd.pin2_pixel = (
-                        (det.pin2_pixel[0] + bd.pin2_pixel[0]) / 2,
-                        (det.pin2_pixel[1] + bd.pin2_pixel[1]) / 2,
-                    )
             else:
                 base.append(det)
     return base
@@ -191,20 +162,7 @@ def _detection_to_dict(det: Detection) -> dict:
         "class_name": det.class_name,
         "confidence": det.confidence,
         "bbox": list(det.bbox),
-        "pin1_pixel": list(det.pin1_pixel) if det.pin1_pixel else None,
-        "pin2_pixel": list(det.pin2_pixel) if det.pin2_pixel else None,
         "is_obb": det.is_obb,
         "wire_color": det.wire_color,
-    }
-
-
-def _pinned_to_dict(det: Detection) -> dict:
-    """将 pinned 检测转为辅助字典 (记录被占用孔洞的中心坐标)"""
-    x1, y1, x2, y2 = det.bbox
-    cx = (x1 + x2) / 2.0
-    cy = (y1 + y2) / 2.0
-    return {
-        "center": [cx, cy],
-        "bbox": list(det.bbox),
-        "confidence": det.confidence,
+        "obb_corners": det.obb_corners.tolist() if det.obb_corners is not None else None,
     }

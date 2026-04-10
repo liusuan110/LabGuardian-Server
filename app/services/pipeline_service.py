@@ -22,7 +22,6 @@ from app.schemas.pipeline import (
     PipelineRequest,
     PipelineResult,
     PipelineStage,
-    StageResult,
 )
 from app.services.classroom_state import ClassroomState
 from app.services.guidance_service import GuidanceService
@@ -38,31 +37,10 @@ class PipelineService:
         request: PipelineRequest,
         raw: dict[str, Any],
     ) -> PipelineResult:
-        stages_raw = raw.get("stages", {})
-        stages = [
-            StageResult(
-                stage=PipelineStage(stage_name),
-                duration_ms=stage_data.get("duration_ms", 0),
-                data={k: v for k, v in stage_data.items() if k != "duration_ms"},
-            )
-            for stage_name, stage_data in stages_raw.items()
-        ]
-        s3 = stages_raw.get("topology", {})
-        s4 = stages_raw.get("validate", {})
-        return PipelineResult(
+        return PipelineResult.from_pipeline_run(
             job_id=job_id,
             station_id=request.station_id,
-            status=JobStatus.COMPLETED,
-            stages=stages,
-            total_duration_ms=raw.get("total_duration_ms", 0),
-            component_count=s3.get("component_count", 0),
-            net_count=len(s3.get("netlist_v2", {}).get("nets", [])),
-            progress=s4.get("progress", 0.0),
-            similarity=s4.get("similarity", 0.0),
-            diagnostics=s4.get("diagnostics", []),
-            comparison_report=s4.get("comparison_report", {}),
-            risk_level=s4.get("risk_level", "safe"),
-            risk_reasons=s4.get("risk_reasons", []),
+            raw=raw,
         )
 
     def sync_result_to_classroom(
@@ -107,6 +85,7 @@ class PipelineService:
         job_id = str(uuid.uuid4())
         raw = run_pipeline(
             images_b64=request.images_b64,
+            reference_circuit=request.reference_circuit,
             conf=request.conf,
             iou=request.iou,
             imgsz=request.imgsz,
@@ -125,8 +104,9 @@ class PipelineService:
         from app.worker.tasks import run_pipeline_task
 
         task = run_pipeline_task.delay(
+            station_id=request.station_id,
             images_b64=request.images_b64,
-            reference_path=request.reference_circuit,
+            reference_circuit=request.reference_circuit,
             rail_assignments=request.rail_assignments,
             conf=request.conf,
             iou=request.iou,
@@ -151,10 +131,20 @@ class PipelineService:
 
         if result.state == "SUCCESS":
             payload = result.result
+            parsed = None
+            if isinstance(payload, dict):
+                try:
+                    parsed = PipelineResult.from_pipeline_run(
+                        job_id=job_id,
+                        station_id=payload.get("station_id", ""),
+                        raw=payload,
+                    )
+                except Exception:
+                    parsed = None
             return JobStatusResponse(
                 job_id=job_id,
                 status=JobStatus.COMPLETED,
-                result=PipelineResult(**payload) if isinstance(payload, dict) else None,
+                result=parsed,
             )
 
         if result.state == "FAILURE":

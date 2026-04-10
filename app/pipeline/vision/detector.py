@@ -7,7 +7,7 @@ YOLO 检测器封装 (← src_v2/vision/detector.py)
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import cv2
@@ -23,10 +23,6 @@ class Detection:
     class_name: str = ""
     confidence: float = 0.0
     bbox: Tuple[int, int, int, int] = (0, 0, 0, 0)  # x1, y1, x2, y2
-
-    # 引脚像素坐标 (OBB 短边中点 或 YOLO-Pose 关键点)
-    pin1_pixel: Optional[Tuple[float, float]] = None
-    pin2_pixel: Optional[Tuple[float, float]] = None
 
     # OBB 支持
     is_obb: bool = False
@@ -51,7 +47,7 @@ class ComponentDetector:
     ):
         self.model = None
         self.model_path = model_path
-        self.obb_model_path = obb_model_path  # 引脚检测 OBB 模型，可后续 load_obb() 调用
+        self.obb_model_path = obb_model_path
         self.device = device
         self._is_obb = False
 
@@ -111,22 +107,13 @@ class ComponentDetector:
             conf = float(boxes.conf[i])
             x1, y1, x2, y2 = boxes.xyxy[i].cpu().numpy().astype(int)
 
-            det = Detection(
-                class_name=cls_name,
-                confidence=conf,
-                bbox=(int(x1), int(y1), int(x2), int(y2)),
+            dets.append(
+                Detection(
+                    class_name=cls_name,
+                    confidence=conf,
+                    bbox=(int(x1), int(y1), int(x2), int(y2)),
+                )
             )
-            # 默认引脚: bbox 短边中点
-            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-            w, h = x2 - x1, y2 - y1
-            if w > h:
-                det.pin1_pixel = (float(x1), float(cy))
-                det.pin2_pixel = (float(x2), float(cy))
-            else:
-                det.pin1_pixel = (float(cx), float(y1))
-                det.pin2_pixel = (float(cx), float(y2))
-
-            dets.append(det)
         return dets
 
     def _parse_obb(self, result) -> List[Detection]:
@@ -143,22 +130,10 @@ class ComponentDetector:
             x_max = int(corners[:, 0].max())
             y_max = int(corners[:, 1].max())
 
-            # 短边中点作为引脚
-            d01 = np.linalg.norm(corners[0] - corners[1])
-            d12 = np.linalg.norm(corners[1] - corners[2])
-            if d01 < d12:
-                pin1 = (corners[0] + corners[1]) / 2
-                pin2 = (corners[2] + corners[3]) / 2
-            else:
-                pin1 = (corners[1] + corners[2]) / 2
-                pin2 = (corners[3] + corners[0]) / 2
-
             det = Detection(
                 class_name=cls_name,
                 confidence=conf,
                 bbox=(x_min, y_min, x_max, y_max),
-                pin1_pixel=(float(pin1[0]), float(pin1[1])),
-                pin2_pixel=(float(pin2[0]), float(pin2[1])),
                 is_obb=True,
                 obb_corners=corners,
             )
@@ -171,10 +146,6 @@ class ComponentDetector:
         for det in detections:
             x1, y1, x2, y2 = det.bbox
             det.bbox = (x1 + dx, y1 + dy, x2 + dx, y2 + dy)
-            if det.pin1_pixel:
-                det.pin1_pixel = (det.pin1_pixel[0] + dx, det.pin1_pixel[1] + dy)
-            if det.pin2_pixel:
-                det.pin2_pixel = (det.pin2_pixel[0] + dx, det.pin2_pixel[1] + dy)
             if det.obb_corners is not None:
                 det.obb_corners[:, 0] += dx
                 det.obb_corners[:, 1] += dy
@@ -193,8 +164,4 @@ class ComponentDetector:
                 annotated, label, (x1, y1 - 8),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1,
             )
-            if det.pin1_pixel:
-                cv2.circle(annotated, (int(det.pin1_pixel[0]), int(det.pin1_pixel[1])), 4, (0, 0, 255), -1)
-            if det.pin2_pixel:
-                cv2.circle(annotated, (int(det.pin2_pixel[0]), int(det.pin2_pixel[1])), 4, (255, 0, 0), -1)
         return annotated
