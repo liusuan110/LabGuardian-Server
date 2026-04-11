@@ -83,6 +83,7 @@ component_id + pin_name + hole_id
 - `test_board_schema_default.py`
 - `test_reference_v4_roundtrip.py`
 - `test_validator_error_codes.py`
+- `tests/pipeline/` 阶段级合同与集成回归测试
 
 目前已经覆盖的核心 error code：
 
@@ -144,4 +145,5 @@ component_id + pin_name + hole_id
 
 - `docs/validator-error-codes.md`
 - `tests/fixtures/validator_error_codes/`
+- `tests/pipeline/`
 - `tests/manual/smoke/`

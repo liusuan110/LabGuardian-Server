@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     YOLO_IOU_THRESHOLD: float = 0.5
     YOLO_IMGSZ: int = 960
     YOLO_DEVICE: str = "cpu"
+    PIN_MODEL_PATH: Optional[str] = None
+    PIN_MODEL_DEVICE: str = "cpu"
 
     # ---- 面包板校准 ----
     BREADBOARD_ROWS: int = 63

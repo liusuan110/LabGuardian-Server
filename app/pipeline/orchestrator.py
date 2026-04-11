@@ -1,7 +1,7 @@
 """
 Pipeline Orchestrator
 
-串联 S1→S2→S3→S4 四阶段，管理共享资源（detector / calibrator），
+串联 S1→S1.5→S2→S3→S4 四阶段，管理共享资源（detector / pin_detector），
 支持进度回调，供 Celery task 或同步调用使用。
 """
 
@@ -30,11 +30,10 @@ ProgressCallback = Callable[[str, float], None]  # (stage_name, progress 0-1)
 
 @dataclass
 class PipelineContext:
-    """流水线上下文 —— 携带跨阶段共享对象"""
+    """流水线上下文 —— 仅携带可安全跨请求复用的共享对象"""
 
     detector: ComponentDetector = field(default=None)  # type: ignore[assignment]
-    pin_detector: PinRoiDetector = field(default_factory=PinRoiDetector)
-    calibrator: BreadboardCalibrator = field(default=None)  # type: ignore[assignment]
+    pin_detector: PinRoiDetector = field(default=None)  # type: ignore[assignment]
     reference_circuit: Optional[Dict[str, Any] | str] = None
     conf: float = 0.25
     iou: float = 0.5
@@ -48,10 +47,10 @@ class PipelineContext:
                 obb_model_path=settings.YOLO_OBB_MODEL_PATH,
                 device=settings.YOLO_DEVICE,
             )
-        if self.calibrator is None:
-            self.calibrator = BreadboardCalibrator(
-                rows=settings.BREADBOARD_ROWS,
-                cols_per_side=settings.BREADBOARD_COLS_PER_SIDE,
+        if self.pin_detector is None:
+            self.pin_detector = PinRoiDetector(
+                model_path=settings.PIN_MODEL_PATH,
+                device=settings.PIN_MODEL_DEVICE,
             )
 
 
@@ -109,6 +108,12 @@ def run_pipeline(
     """
     t0 = time.time()
     ctx = get_shared_context()
+
+    # 校准器携带网格与 fallback 状态, 不能跨请求共享.
+    calibrator = BreadboardCalibrator(
+        rows=settings.BREADBOARD_ROWS,
+        cols_per_side=settings.BREADBOARD_COLS_PER_SIDE,
+    )
     stages: Dict[str, Any] = {}
     eff_conf = ctx.conf if conf is None else conf
     eff_iou = ctx.iou if iou is None else iou
@@ -148,7 +153,7 @@ def run_pipeline(
     _notify("mapping", 0.0)
     s2 = run_mapping(
         s15["components"],
-        calibrator=ctx.calibrator,
+        calibrator=calibrator,
         image_shape=s1["primary_image_shape"],
         images_b64=images_b64,
     )

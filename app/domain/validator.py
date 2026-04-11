@@ -47,13 +47,25 @@ def _graph_signature(g: nx.Graph) -> Tuple:
 
 
 class CircuitValidator:
-    """电路验证器。
+    """电路比对与诊断系统。
 
-    当前同时承担 3 件事:
+    多级渐进式验证管线 L0 → L1 → L2 → L2.5 → L3:
+    - L0: 元件数量层级预检（快速元器件计数对比）
+    - L1: 全图同构验证（拓扑图完全一致性检查，包括极性与引脚角色）
+    - L2: 子图同构容忍（允许当前电路是参考电路的有效子集）
+    - L2.5: 极性细粒度扫描（正反向、极性未知状态诊断）
+    - L3: 图编辑距离相似度（启发式或精确GED，用于评分与排序）
+    
+    业务能力三要素：
+    1. compare(): 当前电路 vs 参考电路的分级对比
+    2. diagnose(): 独立电路风险诊断（无需参考即可检出空载/短路）
+    3. validator_report_v2: 生成结构化诊断报告（供RAG/Agent下游消费）
 
-    1. compare: 当前电路 vs 参考电路
-    2. diagnose: 不依赖参考电路的独立风险诊断
-    3. 生成 `validator_report_v2`, 作为后续 guidance / RAG / agent 的结构化输入
+    Attributes:
+        ref_graph: 参考电路的 NetworkX 图表示。
+        ref_component_instances: 参考电路被平铺解析的组件实例集合。
+        ref_netlist_v2: 参考电路底层承载的无向网表黑盒。
+        ref_topology: 解析后的高层拓扑逻辑图（用于同构检测）。
     """
 
     def __init__(self):
@@ -151,12 +163,22 @@ class CircuitValidator:
             self.ref_topology = None
 
     def compare(self, curr_analyzer: CircuitAnalyzer) -> Dict:
-        """分级诊断管线: L0→L1→L2→L2.5→L3。
+        """分级比对管线：L0→L1→L2→L2.5→L3，生成结构化诊断报告。
 
-        注意:
-        - v2 组件级比较优先负责 pin / hole / node / polarity 这类细粒度差异
-        - topology 同构主要负责“整体结构是否成立”
-        - 两者需要并存, 因为“拓扑正确但孔位不同”也是比赛场景里的有效错误
+        管线回退逻辑:
+        1. L0 快速排除：元件数量统计，发现明显缺失/多余。
+        2. v2组件级细粒度比对：O(N^2)贪心匹配，检查孔位/节点/极性差异。
+        3. L1-L3拓扑同构：
+           - `v2`组件级检查优先，但拓扑同构负责确保"电路物理意义上连通"。
+           - 两者并存（"拓扑对但孔位不同"是比赛中允许存在的重要场景）。
+           - 逐级尝试全同构（含极性）、子图同构（仅类型）、独立极性校验。
+           - 若全败，最后使用 GED 计算整体完成度得分 (<50 节点精确, 否则启发式)。
+        
+        Args:
+            curr_analyzer: 当前已解析待验的 CircuitAnalyzer 实例。
+
+        Returns:
+            Dict: validator_report_v2 结构化汇报，包含进度 progress 与诊断数组项 diagnostic_items。
         """
         result = {
             "errors": [],
@@ -323,6 +345,21 @@ class CircuitValidator:
         return result
 
     def _compare_component_instances(self, curr_instances: List[ComponentInstance]) -> Dict:
+        """核心组件级 O(N²) 二部图匹配与细粒度硬件级差异挖掘。
+
+        通过贪心策略将参考部件与距离最近（基于行定位与类型等权重）的
+        新部件进行配对。匹配完成后深入进行以下比对：
+        1. 对称引脚组对比（允许等价脚互换）
+        2. 孔位/节点匹配度差异（判断走线跳线偏差）
+        3. 细粒度极性倒置判断
+
+        Args:
+            curr_instances: 解析自新电路图像拓扑的组件实例集。
+
+        Returns:
+            字典：包含各类匹配列表 (matched_pairs), 每类错误的扁平集合，
+            以及相似度进度 (`progress`, `similarity`) 评分子指标。
+        """
         ref_instances = list(self.ref_component_instances)
         unmatched_curr = set(range(len(curr_instances)))
         matched_components: List[str] = []
@@ -435,6 +472,7 @@ class CircuitValidator:
 
     @staticmethod
     def _node_match_full(a: dict, b: dict) -> bool:
+        """VF2++ 同构匹配钩子：要求类型、极性和电源网络等价。"""
         if a.get("kind") != b.get("kind"):
             return False
         if a.get("kind") == "comp":
@@ -463,6 +501,7 @@ class CircuitValidator:
 
     @staticmethod
     def _node_match_type_only(a: dict, b: dict) -> bool:
+        """VF2++ 降级同构钩子：仅要求类型一致，忽略极性。"""
         if a.get("kind") != b.get("kind"):
             return False
         if a.get("kind") == "comp":
@@ -471,6 +510,7 @@ class CircuitValidator:
 
     @staticmethod
     def _edge_match(a: dict, b: dict) -> bool:
+        """VF2++ 边同构钩子：检查引脚角色标注（如 Base/Collector 等）一致性。"""
         ref_role = a.get("pin_role")
         cur_role = b.get("pin_role")
         if ref_role is None or cur_role is None:
@@ -480,6 +520,12 @@ class CircuitValidator:
     # ---- L2: 子图同构 ----
 
     def _check_subgraph_match(self, result: Dict, curr_topo: nx.Graph):
+        """L2 子图同构容错检测。
+
+        当全图同构（组件多一根线或少一根）无法覆盖时，检查"参考要求"是否是"当前成品"
+        的一个合法子集。如果匹配，意味着同学多接了组件，或使用了中间中转跳线，
+        这是教育与竞技环境里允许的有效错误，不应直接判零。
+        """
         if self.ref_topology is None:
             return
         from networkx.algorithms.isomorphism import GraphMatcher
@@ -527,6 +573,12 @@ class CircuitValidator:
     # ---- L2.5: 极性诊断 ----
 
     def _check_polarity_errors(self, result: Dict, curr_topo: nx.Graph):
+        """L2.5 极性细粒度扫描。
+
+        如果拓扑结构基本一致，但纯极性接反（如 LED 正负对调）不应作为
+        同构失败被忽略，而应该被记录为单独的错误报告。
+        本方法用在全同构宽松检测（跳过极性）之后专门锁定此类引脚错误。
+        """
         if self.ref_topology is None:
             return
         from networkx.algorithms.isomorphism import GraphMatcher
@@ -571,6 +623,14 @@ class CircuitValidator:
     # ---- L3: GED 相似度 ----
 
     def _compute_ged_similarity(self, result: Dict, curr_topo: nx.Graph):
+        """L3 图编辑距离相似度计算回退节点。
+
+        目的：打分/定级系统最后防线。
+        如果当前电路和黄金架构连部分子集也算不上（大量改接、漏连）：
+        - 对 <50 个节点的图精确求解 networkx 最优 GED。
+        - 对大型系统转为启发式近似计算。
+        以此换得最终比赛评分界面的定序。
+        """
         if self.ref_topology is None:
             return
         ref_size = self.ref_topology.number_of_nodes() + self.ref_topology.number_of_edges()

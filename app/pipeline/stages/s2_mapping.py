@@ -6,15 +6,12 @@ Stage 2: hole mapping.
 
 from __future__ import annotations
 
-import base64
 import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-import cv2
-import numpy as np
-
 from app.domain.board_schema import BoardSchema
+from app.pipeline.vision.image_io import decode_images_b64, decode_summary
 from app.pipeline.vision.calibrator import BreadboardCalibrator
 from app.pipeline.vision.pin_schema import default_package_type, default_symmetry_group
 
@@ -30,10 +27,21 @@ def run_mapping(
     """把 pin keypoint / schema 输出吸附到 hole_id。"""
     t0 = time.time()
 
+    calibration_mode = "uninitialized"
+    decode_meta: Dict[str, Any] = {
+        "decoded_view_count": 0,
+        "available_view_ids": [],
+        "dropped_view_ids": [],
+        "decode_errors": {},
+    }
     if images_b64:
-        _ensure_calibrated(calibrator, images_b64[0], image_shape)
+        decoded = decode_images_b64(images_b64, logger=logger, stage_name="S2")
+        decode_meta = decode_summary(decoded)
+        _ensure_calibrated(calibrator, decoded, image_shape)
+        calibration_mode = _calibration_mode(calibrator)
     elif image_shape[0] > 0 and image_shape[1] > 0:
         calibrator.build_synthetic_grid(image_shape)
+        calibration_mode = _calibration_mode(calibrator)
 
     board_schema = BoardSchema.default_breadboard()
     view_ids = _view_ids_from_images(images_b64)
@@ -44,6 +52,7 @@ def run_mapping(
         comp["component_type"] = component_type
         comp["class_name"] = component_type
         comp["package_type"] = comp.get("package_type") or default_package_type(component_type)
+        comp["input_pin_detect_interface_version"] = comp.get("input_pin_detect_interface_version") or "component_pin_detect_v1"
         comp["part_subtype"] = comp.get("part_subtype") or ""
         comp["symmetry_group"] = comp.get("symmetry_group") or default_symmetry_group(component_type)
         comp["pins"] = _map_component_pins(
@@ -55,6 +64,13 @@ def run_mapping(
         mapped.append(comp)
 
     return {
+        "interface_version": "hole_mapping_v1",
+        "board_schema_id": board_schema.schema_id,
+        "calibration": {
+            "mode": calibration_mode,
+            "grid_ready": calibrator.is_grid_ready,
+        },
+        **decode_meta,
         "components": mapped,
         "duration_ms": (time.time() - t0) * 1000,
     }
@@ -93,6 +109,8 @@ def _map_component_pins(
         observations = _build_pin_observations_from_predictions(
             keypoints_by_view=keypoints_by_view,
             visibility_by_view=visibility_by_view,
+            score_by_view=dict(pin.get("score_by_view") or {}),
+            source_by_view=dict(pin.get("source_by_view") or {}),
             view_ids=view_ids,
             confidence=float(pin.get("confidence", comp.get("confidence", 1.0))),
         )
@@ -115,7 +133,11 @@ def _map_component_pins(
                 "is_ambiguous": bool(ambiguity_reasons),
                 "ambiguity_reasons": ambiguity_reasons,
                 "is_anchor_pin": bool(pin.get("is_anchor_pin", False)),
-                "metadata": dict(pin.get("metadata") or {}),
+                "source": str(pin.get("source") or "unknown"),
+                "metadata": {
+                    **dict(pin.get("metadata") or {}),
+                    "mapping_interface_version": "hole_mapping_v1",
+                },
             }
         )
     return mapped_pins
@@ -131,25 +153,15 @@ def _extract_top_keypoint(
         if value and len(value) >= 2:
             return (float(value[0]), float(value[1]))
     return None
-
-
-def _decode_primary_image(image_b64: str) -> Optional[np.ndarray]:
-    try:
-        data = base64.b64decode(image_b64)
-        arr = np.frombuffer(data, dtype=np.uint8)
-        return cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    except Exception:
-        return None
-
-
 def _ensure_calibrated(
     calibrator: BreadboardCalibrator,
-    image_b64: str,
+    decoded_images: List[Dict[str, Any]],
     image_shape: Tuple[int, int],
 ):
     if calibrator.is_grid_ready:
         return
-    img = _decode_primary_image(image_b64)
+    top_item = next((item for item in decoded_images if item["view_id"] == "top" and item.get("decoded")), None)
+    img = top_item["image"] if top_item else None
     if img is not None:
         try:
             calibrator.ensure_calibrated(img)
@@ -157,6 +169,8 @@ def _ensure_calibrated(
                 return
         except Exception as exc:
             logger.warning("Calibration from image failed: %s", exc)
+    else:
+        logger.warning("S2 top view unavailable for calibration; using synthetic fallback")
     logger.info("Falling back to synthetic grid")
     calibrator.build_synthetic_grid(image_shape)
 
@@ -170,7 +184,8 @@ def _get_candidates(
         return []
     try:
         return calibrator.frame_pixel_to_logic_candidates(pixel[0], pixel[1], k=k)
-    except Exception:
+    except Exception as exc:
+        logger.warning("S2 candidate lookup failed for pixel %s: %s", pixel, exc)
         return []
 
 
@@ -221,6 +236,8 @@ def _view_ids_from_images(images_b64: List[str] | None) -> List[str]:
 def _build_pin_observations_from_predictions(
     keypoints_by_view: Dict[str, Any],
     visibility_by_view: Dict[str, Any],
+    score_by_view: Dict[str, Any],
+    source_by_view: Dict[str, Any],
     view_ids: List[str],
     confidence: float,
 ) -> List[Dict[str, Any]]:
@@ -233,7 +250,8 @@ def _build_pin_observations_from_predictions(
                 "view_id": view_id,
                 "keypoint": [float(keypoint[0]), float(keypoint[1])] if keypoint else None,
                 "visibility": visibility,
-                "confidence": confidence if visibility > 0 else 0.0,
+                "confidence": float(score_by_view.get(view_id, confidence if visibility > 0 else 0.0)),
+                "source": str(source_by_view.get(view_id, "unknown")),
             }
         )
     return observations
@@ -253,3 +271,11 @@ def _pin_ambiguity_reasons(
     if len(visible_views) <= 1 and len(observations) > 1:
         reasons.append("limited_multi_view_support")
     return reasons
+
+
+def _calibration_mode(calibrator: BreadboardCalibrator) -> str:
+    if getattr(calibrator, "_synthetic_grid", False):
+        return "synthetic_fallback"
+    if calibrator.is_grid_ready:
+        return "visual"
+    return "uninitialized"

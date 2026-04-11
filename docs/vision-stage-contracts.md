@@ -1,0 +1,180 @@
+# Vision Stage Contracts
+
+当前视觉主链固定为:
+
+```text
+S1 component detect
+-> S1.5 component ROI pin detect
+-> S2 hole mapping
+```
+
+这三层的协议在模型训练完成前就应保持稳定。
+
+## S1
+
+阶段: `component_detect_v1`
+
+职责:
+
+- 只使用 `top` 视图建立全局 `component_id`
+- 侧视图在当前版本不参与组件实例化
+- 若 `top` 解码失败, S1 不产生检测结果
+
+顶层字段:
+
+- `interface_version`
+- `detector_backend`
+- `detections`
+- `supplemental_detections`
+- `recall_mode`
+- `primary_image_shape`
+- `decoded_view_count`
+- `available_view_ids`
+- `dropped_view_ids`
+- `decode_errors`
+- `duration_ms`
+
+每个 detection:
+
+- `component_id`
+- `input_detection_interface_version`
+- `class_name`
+- `component_type`
+- `package_type`
+- `pin_schema_id`
+- `confidence`
+- `bbox`
+- `is_obb`
+- `orientation`
+- `view_id`
+- `source`
+- `source_model_type`
+- `wire_color`
+- `obb_corners`
+
+每个 supplemental detection:
+
+- `candidate_id`
+- `class_name`
+- `component_type`
+- `package_type`
+- `pin_schema_id`
+- `confidence`
+- `bbox`
+- `is_obb`
+- `orientation`
+- `view_id`
+- `source`
+- `source_model_type`
+- `instance_status`
+- `wire_color`
+- `obb_corners`
+
+## S1.5
+
+阶段: `component_pin_detect_v1`
+
+顶层字段:
+
+- `interface_version`
+- `pin_detector_backend`
+- `pin_detector_mode`
+- `components`
+- `decoded_view_count`
+- `available_view_ids`
+- `dropped_view_ids`
+- `decode_errors`
+- `duration_ms`
+
+每个 component:
+
+- `component_id`
+- `component_type`
+- `class_name`
+- `package_type`
+- `pin_schema_id`
+- `input_detection_interface_version`
+- `input_pin_detect_interface_version`
+- `part_subtype`
+- `symmetry_group`
+- `bbox`
+- `confidence`
+- `orientation`
+- `pins`
+- `roi`
+- `roi_by_view`
+- `pin_detector`
+
+每个 pin:
+
+- `pin_id`
+- `pin_name`
+- `keypoints_by_view`
+- `visibility_by_view`
+- `score_by_view`
+- `source_by_view`
+- `confidence`
+- `source`
+- `metadata`
+
+约定:
+
+- `source="model"` 表示来自真实 `YOLO-Pose`
+- `source="heuristic_fallback"` 表示来自 fallback
+- fallback 可以继续存在, 但必须显式标记, 不得伪装成模型输出
+- `roi_by_view[view].source="detected_bbox"` 表示 top 视图使用真实检测框
+- `roi_by_view[view].source="shared_bbox_fallback"` 表示侧视图暂时共用 top bbox 裁 ROI
+- 后续真实多视图关联完成后, 只需要替换 `shared_bbox_fallback` 这一路
+
+## S2
+
+阶段: `hole_mapping_v1`
+
+顶层字段:
+
+- `interface_version`
+- `board_schema_id`
+- `calibration`
+- `decoded_view_count`
+- `available_view_ids`
+- `dropped_view_ids`
+- `decode_errors`
+- `components`
+- `duration_ms`
+
+`calibration`:
+
+- `mode`
+- `grid_ready`
+
+每个 component:
+
+- 继承 S1.5 的核心组件字段
+- `pins`
+
+每个 mapped pin:
+
+- `pin_id`
+- `pin_name`
+- `logic_loc`
+- `hole_id`
+- `electrical_node_id`
+- `confidence`
+- `observations`
+- `candidate_hole_ids`
+- `candidate_node_ids`
+- `candidate_count`
+- `primary_visibility`
+- `visible_view_ids`
+- `observation_count`
+- `is_ambiguous`
+- `ambiguity_reasons`
+- `is_anchor_pin`
+- `source`
+- `metadata`
+
+约定:
+
+- `source` 继承自 S1.5 pin 预测来源
+- `metadata.mapping_interface_version` 固定写入 `hole_mapping_v1`
+- `calibration.mode="synthetic_fallback"` 时, 下游应将结果视为低可信校准

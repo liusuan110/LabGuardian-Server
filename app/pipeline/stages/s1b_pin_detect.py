@@ -6,15 +6,12 @@ Stage 1.5: Component ROI pin detection.
 
 from __future__ import annotations
 
-import base64
 import logging
 import time
 from typing import Any, Dict, List
 
-import cv2
-import numpy as np
-
 from app.pipeline.vision.pin_model import PinRoiDetector
+from app.pipeline.vision.image_io import decode_images_b64, decode_summary, view_id_for_index
 from app.pipeline.vision.pin_schema import (
     default_package_type,
     default_pin_schema_id,
@@ -42,8 +39,8 @@ def run_pin_detect(
 ) -> Dict[str, Any]:
     """为每个组件 ROI 生成 ordered pin predictions。"""
     t0 = time.time()
-    images = [_decode_image(b64) for b64 in images_b64]
-    images = [img for img in images if img is not None]
+    decoded = decode_images_b64(images_b64, logger=logger, stage_name="S1.5")
+    summary = decode_summary(decoded)
     view_ids = _view_ids_from_images(images_b64)
 
     counters: Dict[str, int] = {}
@@ -53,12 +50,7 @@ def run_pin_detect(
         component_id = det.get("component_id") or _next_component_id(component_type, counters)
         package_type = str(det.get("package_type") or default_package_type(component_type))
         bbox = tuple(det.get("bbox") or (0, 0, 0, 0))
-
-        top_image = images[0] if images else None
-        roi_image = None
-        roi_offset = (0, 0)
-        if top_image is not None:
-            roi_image, roi_offset = crop_component_roi(top_image, bbox)
+        rois_by_view = _build_rois_by_view(decoded, bbox)
 
         pin_schema_id = default_pin_schema_id(component_type, package_type)
         component = {
@@ -67,6 +59,8 @@ def run_pin_detect(
             "class_name": component_type,
             "package_type": package_type,
             "pin_schema_id": pin_schema_id,
+            "input_pin_detect_interface_version": "component_pin_detect_v1",
+            "input_detection_interface_version": det.get("input_detection_interface_version") or "component_detect_v1",
             "part_subtype": det.get("part_subtype") or "",
             "symmetry_group": det.get("symmetry_group") or default_symmetry_group(component_type),
             "bbox": list(bbox),
@@ -74,44 +68,71 @@ def run_pin_detect(
             "orientation": float(det.get("orientation", 0.0)),
         }
 
-        predictions = pin_detector.predict_component_pins(
-            component_id=component_id,
-            component_type=component_type,
-            package_type=package_type,
-            pin_schema_id=pin_schema_id,
-            roi_image=roi_image,
-            roi_offset=roi_offset,
-            confidence=float(det.get("confidence", 1.0)),
+        predictions_by_view: Dict[str, List[dict]] = {}
+        for view_id in view_ids:
+            roi_spec = rois_by_view.get(view_id) or {}
+            roi_image = roi_spec.get("image")
+            roi_offset = tuple(roi_spec.get("offset") or (0, 0))
+            predictions = pin_detector.predict_component_pins(
+                component_id=component_id,
+                component_type=component_type,
+                package_type=package_type,
+                pin_schema_id=pin_schema_id,
+                roi_image=roi_image,
+                roi_offset=roi_offset,
+                view_id=view_id,
+                confidence=float(det.get("confidence", 1.0)),
+            )
+            predictions_by_view[view_id] = [
+                {
+                    "pin_id": pred.pin_id,
+                    "pin_name": pred.pin_name,
+                    "keypoint": [float(pred.keypoint[0]), float(pred.keypoint[1])] if pred.keypoint else None,
+                    "visibility": pred.visibility if roi_image is not None else 0,
+                    "confidence": float(pred.confidence) if roi_image is not None else 0.0,
+                    "source": pred.source if roi_image is not None else "unavailable",
+                    "metadata": {
+                        **dict(pred.metadata),
+                        "roi_source": roi_spec.get("source", "unavailable"),
+                    },
+                }
+                for pred in predictions
+            ]
+
+        component["pins"] = _merge_predictions_by_view(
+            predictions_by_view=predictions_by_view,
+            view_ids=view_ids,
         )
-        component["pins"] = [
-            {
-                "pin_id": pred.pin_id,
-                "pin_name": pred.pin_name,
-                "keypoints_by_view": _keypoints_by_view(pred.keypoint, view_ids),
-                "visibility_by_view": _visibility_by_view(pred.visibility, view_ids),
-                "confidence": pred.confidence,
-            }
-            for pred in predictions
-        ]
+        top_roi = rois_by_view.get("top") or {}
         component["roi"] = {
-            "offset": [roi_offset[0], roi_offset[1]],
-            "shape": list(roi_image.shape[:2]) if roi_image is not None else [0, 0],
+            "offset": list(top_roi.get("offset") or [0, 0]),
+            "shape": list(top_roi.get("shape") or [0, 0]),
+            "source": top_roi.get("source", "unavailable"),
+        }
+        component["roi_by_view"] = {
+            view_id: {
+                "offset": list((rois_by_view.get(view_id) or {}).get("offset") or [0, 0]),
+                "shape": list((rois_by_view.get(view_id) or {}).get("shape") or [0, 0]),
+                "source": (rois_by_view.get(view_id) or {}).get("source", "unavailable"),
+                "available": bool((rois_by_view.get(view_id) or {}).get("image") is not None),
+            }
+            for view_id in view_ids
+        }
+        component["pin_detector"] = {
+            "interface_version": pin_detector.interface_version,
+            "backend_type": pin_detector.backend_type,
+            "backend_mode": pin_detector.backend_mode,
         }
         components.append(component)
 
     return {
+        "interface_version": "component_pin_detect_v1",
+        "pin_detector_backend": pin_detector.backend_type,
+        "pin_detector_mode": pin_detector.backend_mode,
         "components": components,
+        **summary,
         "duration_ms": (time.time() - t0) * 1000,
     }
-
-
-def _decode_image(b64: str) -> np.ndarray | None:
-    try:
-        data = base64.b64decode(b64)
-        arr = np.frombuffer(data, dtype=np.uint8)
-        return cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    except Exception:
-        return None
 
 
 def _view_ids_from_images(images_b64: List[str]) -> List[str]:
@@ -125,27 +146,65 @@ def _view_ids_from_images(images_b64: List[str]) -> List[str]:
     return view_ids
 
 
-def _keypoints_by_view(
-    top_keypoint: tuple[float, float] | None,
-    view_ids: List[str],
-) -> dict[str, list[float] | None]:
-    payload: dict[str, list[float] | None] = {}
-    for view_id in view_ids:
-        if view_id == "top" and top_keypoint is not None:
-            payload[view_id] = [float(top_keypoint[0]), float(top_keypoint[1])]
-        else:
-            payload[view_id] = None
-    return payload
+def _build_rois_by_view(decoded_images: List[dict], bbox: tuple[int, int, int, int]) -> Dict[str, Dict[str, Any]]:
+    rois: Dict[str, Dict[str, Any]] = {}
+    for item in decoded_images:
+        view_id = item["view_id"]
+        image = item["image"]
+        if image is None:
+            rois[view_id] = {"image": None, "offset": (0, 0), "shape": [0, 0], "source": "unavailable"}
+            continue
+        roi_image, roi_offset = crop_component_roi(image, bbox)
+        source = "detected_bbox" if view_id == "top" else "shared_bbox_fallback"
+        rois[view_id] = {
+            "image": roi_image,
+            "offset": roi_offset,
+            "shape": list(roi_image.shape[:2]) if roi_image is not None else [0, 0],
+            "source": source,
+        }
+    return rois
 
 
-def _visibility_by_view(
-    top_visibility: int,
+def _merge_predictions_by_view(
+    *,
+    predictions_by_view: Dict[str, List[dict]],
     view_ids: List[str],
-) -> dict[str, int]:
-    payload: dict[str, int] = {}
+) -> List[dict]:
+    merged: Dict[int, dict] = {}
     for view_id in view_ids:
-        payload[view_id] = top_visibility if view_id == "top" else 0
-    return payload
+        for pred in predictions_by_view.get(view_id, []):
+            pin_id = int(pred["pin_id"])
+            pin_entry = merged.setdefault(
+                pin_id,
+                {
+                    "pin_id": pin_id,
+                    "pin_name": pred["pin_name"],
+                    "keypoints_by_view": {vid: None for vid in view_ids},
+                    "visibility_by_view": {vid: 0 for vid in view_ids},
+                    "score_by_view": {vid: 0.0 for vid in view_ids},
+                    "source_by_view": {vid: "unavailable" for vid in view_ids},
+                    "confidence": 0.0,
+                    "source": "unavailable",
+                    "metadata": {"per_view": {}},
+                },
+            )
+            pin_entry["keypoints_by_view"][view_id] = pred["keypoint"]
+            pin_entry["visibility_by_view"][view_id] = int(pred["visibility"])
+            pin_entry["score_by_view"][view_id] = float(pred["confidence"])
+            pin_entry["source_by_view"][view_id] = str(pred["source"])
+            pin_entry["metadata"]["per_view"][view_id] = dict(pred.get("metadata") or {})
+
+    ordered = []
+    for pin_id in sorted(merged):
+        item = merged[pin_id]
+        scores = [score for score in item["score_by_view"].values() if score > 0]
+        item["confidence"] = max(scores) if scores else 0.0
+        if any(source == "model" for source in item["source_by_view"].values()):
+            item["source"] = "model"
+        elif any(source == "heuristic_fallback" for source in item["source_by_view"].values()):
+            item["source"] = "heuristic_fallback"
+        ordered.append(item)
+    return ordered
 
 
 def _next_component_id(component_type: str, counters: Dict[str, int]) -> str:
