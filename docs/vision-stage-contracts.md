@@ -123,8 +123,20 @@ S1 component detect
 - `source="heuristic_fallback"` 表示来自 fallback
 - fallback 可以继续存在, 但必须显式标记, 不得伪装成模型输出
 - `roi_by_view[view].source="detected_bbox"` 表示 top 视图使用真实检测框
-- `roi_by_view[view].source="shared_bbox_fallback"` 表示侧视图暂时共用 top bbox 裁 ROI
+- `roi_by_view[view].source="associated_bbox_candidate"` 表示侧视图 ROI 来自 side recall 候选关联
+- `roi_by_view[view].source="shared_bbox_fallback"` 表示当前没有命中 side 关联, 仍暂时共用 top bbox 裁 ROI
+- `roi_by_view[view].crop_source="package_profile_crop"` 表示 ROI 已按封装裁剪策略生成
+- `roi_by_view[view].crop_profile` 表示当前采用的封装裁剪模板
+- `roi_by_view[view].crop_bounds` 表示实际裁剪范围
+- `roi_by_view[view].association` 表示侧视图 ROI 关联元数据
 - 后续真实多视图关联完成后, 只需要替换 `shared_bbox_fallback` 这一路
+
+当前 ROI 裁剪原则:
+
+- 轴向 2-pin 器件沿主轴保留更多 lead 空间
+- DIP 封装沿短轴保留更多 pin 排空间
+- top 视图优先使用 OBB 主轴
+- side 视图当前允许走封装驱动的 fallback crop, 但来源必须显式标记
 
 ## S2
 
@@ -177,4 +189,6 @@ S1 component detect
 
 - `source` 继承自 S1.5 pin 预测来源
 - `metadata.mapping_interface_version` 固定写入 `hole_mapping_v1`
+- `metadata.vote_scores` 记录每个候选 hole 的多视图投票分数
+- `metadata.selected_by="multi_view_weighted_vote"` 表示最终 hole 来自多视图加权投票
 - `calibration.mode="synthetic_fallback"` 时, 下游应将结果视为低可信校准

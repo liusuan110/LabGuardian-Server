@@ -87,34 +87,37 @@ def _map_component_pins(
     for idx, pin in enumerate(comp.get("pins") or [], start=1):
         keypoints_by_view = dict(pin.get("keypoints_by_view") or {})
         visibility_by_view = dict(pin.get("visibility_by_view") or {})
-        top_keypoint = _extract_top_keypoint(keypoints_by_view)
-        logic_candidates = _get_candidates(top_keypoint, calibrator) if top_keypoint else []
-
-        selected_logic = logic_candidates[0] if logic_candidates else None
-        hole_id = pin.get("hole_id")
-        if not hole_id and selected_logic:
-            hole_id = board_schema.logic_loc_to_hole_id(selected_logic)
-        if not hole_id:
-            continue
-
-        hole_id = board_schema.normalize_hole_id(str(hole_id))
-        electrical_node_id = pin.get("electrical_node_id") or board_schema.resolve_hole_to_node(hole_id)
-        candidate_hole_ids = _candidate_hole_ids_from_logic(
-            selected_hole_id=hole_id,
-            logic_candidates=logic_candidates,
-            board_schema=board_schema,
-            fallback_candidates=pin.get("candidate_hole_ids") or [],
-        )
-        candidate_node_ids = _candidate_node_ids(candidate_hole_ids, board_schema)
+        pin_metadata = dict(pin.get("metadata") or {})
         observations = _build_pin_observations_from_predictions(
             keypoints_by_view=keypoints_by_view,
             visibility_by_view=visibility_by_view,
             score_by_view=dict(pin.get("score_by_view") or {}),
             source_by_view=dict(pin.get("source_by_view") or {}),
+            per_view_metadata=dict(pin_metadata.get("per_view") or {}),
             view_ids=view_ids,
             confidence=float(pin.get("confidence", comp.get("confidence", 1.0))),
+            calibrator=calibrator,
+            board_schema=board_schema,
         )
-        ambiguity_reasons = _pin_ambiguity_reasons(candidate_hole_ids, observations)
+        vote_result = _vote_hole_from_observations(
+            observations=observations,
+            board_schema=board_schema,
+            explicit_hole_id=pin.get("hole_id"),
+            fallback_candidates=pin.get("candidate_hole_ids") or [],
+        )
+        hole_id = vote_result["selected_hole_id"]
+        if not hole_id:
+            continue
+
+        selected_logic = _first_logic_for_hole(observations, hole_id)
+        electrical_node_id = pin.get("electrical_node_id") or board_schema.resolve_hole_to_node(hole_id)
+        candidate_hole_ids = vote_result["candidate_hole_ids"]
+        candidate_node_ids = _candidate_node_ids(candidate_hole_ids, board_schema)
+        ambiguity_reasons = _pin_ambiguity_reasons(
+            candidate_hole_ids,
+            observations,
+            vote_scores=vote_result["vote_scores"],
+        )
         mapped_pins.append(
             {
                 "pin_id": int(pin.get("pin_id") or idx),
@@ -135,24 +138,14 @@ def _map_component_pins(
                 "is_anchor_pin": bool(pin.get("is_anchor_pin", False)),
                 "source": str(pin.get("source") or "unknown"),
                 "metadata": {
-                    **dict(pin.get("metadata") or {}),
+                    **pin_metadata,
                     "mapping_interface_version": "hole_mapping_v1",
+                    "vote_scores": vote_result["vote_scores"],
+                    "selected_by": vote_result["selected_by"],
                 },
             }
         )
     return mapped_pins
-
-
-def _extract_top_keypoint(
-    keypoints_by_view: Dict[str, Any],
-) -> Optional[Tuple[float, float]]:
-    top = keypoints_by_view.get("top")
-    if top and len(top) >= 2:
-        return (float(top[0]), float(top[1]))
-    for value in keypoints_by_view.values():
-        if value and len(value) >= 2:
-            return (float(value[0]), float(value[1]))
-    return None
 def _ensure_calibrated(
     calibrator: BreadboardCalibrator,
     decoded_images: List[Dict[str, Any]],
@@ -238,13 +231,23 @@ def _build_pin_observations_from_predictions(
     visibility_by_view: Dict[str, Any],
     score_by_view: Dict[str, Any],
     source_by_view: Dict[str, Any],
+    per_view_metadata: Dict[str, Any],
     view_ids: List[str],
     confidence: float,
+    calibrator: BreadboardCalibrator,
+    board_schema: BoardSchema,
 ) -> List[Dict[str, Any]]:
     observations: List[Dict[str, Any]] = []
     for view_id in view_ids:
         keypoint = keypoints_by_view.get(view_id)
         visibility = int(visibility_by_view.get(view_id, 0))
+        pixel = (float(keypoint[0]), float(keypoint[1])) if keypoint else None
+        logic_candidates = _get_candidates(pixel, calibrator) if pixel else []
+        candidate_hole_ids = [
+            board_schema.normalize_hole_id(board_schema.logic_loc_to_hole_id(logic_loc))
+            for logic_loc in logic_candidates
+        ]
+        candidate_node_ids = _candidate_node_ids(candidate_hole_ids, board_schema)
         observations.append(
             {
                 "view_id": view_id,
@@ -252,6 +255,10 @@ def _build_pin_observations_from_predictions(
                 "visibility": visibility,
                 "confidence": float(score_by_view.get(view_id, confidence if visibility > 0 else 0.0)),
                 "source": str(source_by_view.get(view_id, "unknown")),
+                "roi_source": str((per_view_metadata.get(view_id) or {}).get("roi_source", "unknown")),
+                "candidate_logic_locs": [list(item) for item in logic_candidates],
+                "candidate_hole_ids": candidate_hole_ids,
+                "candidate_node_ids": candidate_node_ids,
             }
         )
     return observations
@@ -260,6 +267,8 @@ def _build_pin_observations_from_predictions(
 def _pin_ambiguity_reasons(
     candidate_hole_ids: List[str],
     observations: List[Dict[str, Any]],
+    *,
+    vote_scores: Dict[str, float],
 ) -> List[str]:
     reasons: List[str] = []
     if len(candidate_hole_ids) > 1:
@@ -270,7 +279,103 @@ def _pin_ambiguity_reasons(
     visible_views = [obs for obs in observations if int(obs.get("visibility", 0)) > 0]
     if len(visible_views) <= 1 and len(observations) > 1:
         reasons.append("limited_multi_view_support")
+    preferred = [
+        tuple(obs.get("candidate_hole_ids", [])[:1])
+        for obs in visible_views
+        if obs.get("candidate_hole_ids")
+    ]
+    if len(set(preferred)) > 1:
+        reasons.append("multi_view_vote_conflict")
+    if len(vote_scores) >= 2:
+        ordered = sorted(vote_scores.values(), reverse=True)
+        if ordered[0] - ordered[1] < 0.2:
+            reasons.append("close_vote_margin")
     return reasons
+
+
+def _vote_hole_from_observations(
+    *,
+    observations: List[Dict[str, Any]],
+    board_schema: BoardSchema,
+    explicit_hole_id: str | None,
+    fallback_candidates: List[str],
+) -> Dict[str, Any]:
+    vote_scores: Dict[str, float] = {}
+    for obs in observations:
+        visibility = int(obs.get("visibility", 0))
+        if visibility <= 0:
+            continue
+        confidence = float(obs.get("confidence", 0.0))
+        if confidence <= 0.0:
+            continue
+        view_weight = _view_weight(str(obs.get("view_id", "")))
+        source_weight = _prediction_source_weight(str(obs.get("source", "")))
+        roi_weight = _roi_source_weight(str(obs.get("roi_source", "")))
+        base = confidence * _visibility_weight(visibility) * view_weight * source_weight * roi_weight
+        for rank, hole_id in enumerate(obs.get("candidate_hole_ids") or []):
+            normalized = board_schema.normalize_hole_id(str(hole_id))
+            vote_scores[normalized] = vote_scores.get(normalized, 0.0) + base * (0.72 ** rank)
+
+    if explicit_hole_id:
+        normalized = board_schema.normalize_hole_id(str(explicit_hole_id))
+        vote_scores[normalized] = vote_scores.get(normalized, 0.0) + 0.15
+
+    for rank, hole_id in enumerate(fallback_candidates):
+        normalized = board_schema.normalize_hole_id(str(hole_id))
+        vote_scores[normalized] = vote_scores.get(normalized, 0.0) + 0.05 * (0.8 ** rank)
+
+    ordered = [item[0] for item in sorted(vote_scores.items(), key=lambda item: item[1], reverse=True)]
+    selected = ordered[0] if ordered else (board_schema.normalize_hole_id(str(explicit_hole_id)) if explicit_hole_id else None)
+    return {
+        "selected_hole_id": selected,
+        "candidate_hole_ids": ordered,
+        "vote_scores": {key: round(val, 6) for key, val in sorted(vote_scores.items(), key=lambda item: item[1], reverse=True)},
+        "selected_by": "multi_view_weighted_vote" if ordered else "explicit_or_empty",
+    }
+
+
+def _first_logic_for_hole(
+    observations: List[Dict[str, Any]],
+    hole_id: str,
+) -> Optional[Tuple[str, str]]:
+    for obs in observations:
+        for logic_loc, candidate_hole in zip(obs.get("candidate_logic_locs") or [], obs.get("candidate_hole_ids") or []):
+            if candidate_hole == hole_id and len(logic_loc) >= 2:
+                return (str(logic_loc[0]), str(logic_loc[1]))
+    return None
+
+
+def _view_weight(view_id: str) -> float:
+    if view_id == "top":
+        return 1.0
+    if view_id in {"left_front", "right_front"}:
+        return 0.72
+    return 0.6
+
+
+def _visibility_weight(visibility: int) -> float:
+    if visibility >= 2:
+        return 1.0
+    if visibility == 1:
+        return 0.55
+    return 0.0
+
+
+def _prediction_source_weight(source: str) -> float:
+    return {
+        "model": 1.0,
+        "mock_model": 1.0,
+        "heuristic_fallback": 0.72,
+    }.get(source, 0.65)
+
+
+def _roi_source_weight(source: str) -> float:
+    return {
+        "detected_bbox": 1.0,
+        "associated_bbox_candidate": 0.9,
+        "shared_bbox_fallback": 0.62,
+        "unavailable": 0.0,
+    }.get(source, 0.8)
 
 
 def _calibration_mode(calibrator: BreadboardCalibrator) -> str:

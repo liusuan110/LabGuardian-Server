@@ -326,3 +326,68 @@ class TestS2Mapping:
 
         assert result["components"] == []
         assert "calibration" in result
+
+    def test_t5_8_multi_view_weighted_vote(self):
+        """多视图候选冲突时，应按加权投票选出最终 hole。"""
+        from app.pipeline.stages.s2_mapping import run_mapping
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.fixtures import image_to_b64, make_blank_image
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+
+        def fake_candidates(x: float, y: float, k: int = 5):
+            if x < 200:
+                return [("12", "b")]
+            return [("13", "b")]
+
+        calibrator.frame_pixel_to_logic_candidates = fake_candidates  # type: ignore[method-assign]
+
+        components = [
+            {
+                "component_id": "R1",
+                "component_type": "Resistor",
+                "pins": [
+                    {
+                        "pin_id": 1,
+                        "pin_name": "pin1",
+                        "keypoints_by_view": {
+                            "top": [120.0, 240.0],
+                            "left_front": [320.0, 240.0],
+                        },
+                        "visibility_by_view": {
+                            "top": 2,
+                            "left_front": 2,
+                        },
+                        "score_by_view": {
+                            "top": 0.20,
+                            "left_front": 0.95,
+                        },
+                        "source_by_view": {
+                            "top": "model",
+                            "left_front": "model",
+                        },
+                        "confidence": 0.95,
+                        "source": "model",
+                        "metadata": {
+                            "per_view": {
+                                "top": {"roi_source": "detected_bbox"},
+                                "left_front": {"roi_source": "associated_bbox_candidate"},
+                            }
+                        },
+                    }
+                ],
+            }
+        ]
+
+        result = run_mapping(
+            components=components,
+            calibrator=calibrator,
+            image_shape=(480, 640),
+            images_b64=[image_to_b64(make_blank_image()) for _ in range(2)],
+        )
+
+        pin_data = result["components"][0]["pins"][0]
+        assert pin_data["hole_id"] == "B13"
+        assert pin_data["candidate_hole_ids"][0] == "B13"
+        assert pin_data["metadata"]["selected_by"] == "multi_view_weighted_vote"
+        assert pin_data["metadata"]["vote_scores"]["B13"] > pin_data["metadata"]["vote_scores"]["B12"]

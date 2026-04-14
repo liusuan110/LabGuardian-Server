@@ -295,6 +295,55 @@ class TestPinDetectionMultiView:
                 # score_by_view 应存在
                 assert "score_by_view" in pin_data
 
+    def test_t4_11_side_roi_association_candidate(self):
+        """侧视图 ROI 可优先使用 side candidate, 不再只走 shared bbox fallback."""
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from app.pipeline.stages.s1_detect import run_detect
+        from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
+        from tests.pipeline.fixtures import image_to_b64, make_blank_image
+
+        det = MockComponentDetector([
+            {"class_name": "Resistor", "bbox": (100, 200, 300, 260), "confidence": 0.9}
+        ])
+        pin = MockPinDetector([
+            {"pin_id": 1, "pin_name": "pin1", "keypoint": (120.0, 240.0), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 2, "pin_name": "pin2", "keypoint": (280.0, 240.0), "confidence": 0.9, "visibility": 2},
+        ])
+
+        images = [image_to_b64(make_blank_image()) for _ in range(2)]
+        s1 = run_detect(images_b64=images, detector=det)
+        side_candidates = [
+            {
+                "candidate_id": "left_front_resistor_1",
+                "class_name": "Resistor",
+                "component_type": "Resistor",
+                "package_type": "axial_2pin",
+                "pin_schema_id": "fixed_pins",
+                "confidence": 0.88,
+                "bbox": [90, 198, 320, 270],
+                "is_obb": False,
+                "orientation": 0.0,
+                "view_id": "left_front",
+                "source": "side_recall_candidate",
+                "source_model_type": "yolo_obb_component",
+                "instance_status": "candidate",
+                "wire_color": "",
+                "obb_corners": None,
+            }
+        ]
+
+        result = run_pin_detect(
+            detections=s1["detections"],
+            images_b64=images,
+            pin_detector=pin,
+            supplemental_detections=side_candidates,
+        )
+
+        comp = result["components"][0]
+        assert result["side_roi_assoc_backend"] == "side_view_roi_assoc_v1"
+        assert comp["roi_by_view"]["left_front"]["source"] == "associated_bbox_candidate"
+        assert comp["roi_by_view"]["left_front"]["association"]["matched"] is True
+
 
 class MockMultiViewPinDetector:
     """Mock Pin 检测器 — 模拟多视图返回不同 keypoint."""

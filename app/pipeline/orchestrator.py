@@ -144,6 +144,7 @@ def run_pipeline(
         detections=s1["detections"],
         images_b64=images_b64,
         pin_detector=ctx.pin_detector,
+        supplemental_detections=s1.get("supplemental_detections"),
     )
     stages["pin_detect"] = s15
     logger.info("S1.5 pin detect: %d components (%.0fms)", len(s15["components"]), s15["duration_ms"])

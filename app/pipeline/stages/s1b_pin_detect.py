@@ -11,13 +11,14 @@ import time
 from typing import Any, Dict, List
 
 from app.pipeline.vision.pin_model import PinRoiDetector
-from app.pipeline.vision.image_io import decode_images_b64, decode_summary, view_id_for_index
+from app.pipeline.vision.image_io import decode_images_b64, decode_summary
 from app.pipeline.vision.pin_schema import (
     default_package_type,
     default_pin_schema_id,
     default_symmetry_group,
 )
 from app.pipeline.vision.roi_cropper import crop_component_roi
+from app.pipeline.vision.view_association import SideViewRoiResolver
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +37,14 @@ def run_pin_detect(
     detections: List[dict],
     images_b64: List[str],
     pin_detector: PinRoiDetector,
+    supplemental_detections: List[dict] | None = None,
 ) -> Dict[str, Any]:
     """为每个组件 ROI 生成 ordered pin predictions。"""
     t0 = time.time()
     decoded = decode_images_b64(images_b64, logger=logger, stage_name="S1.5")
     summary = decode_summary(decoded)
     view_ids = _view_ids_from_images(images_b64)
+    roi_resolver = SideViewRoiResolver()
 
     counters: Dict[str, int] = {}
     components: List[dict] = []
@@ -50,7 +53,19 @@ def run_pin_detect(
         component_id = det.get("component_id") or _next_component_id(component_type, counters)
         package_type = str(det.get("package_type") or default_package_type(component_type))
         bbox = tuple(det.get("bbox") or (0, 0, 0, 0))
-        rois_by_view = _build_rois_by_view(decoded, bbox)
+        orientation = float(det.get("orientation", 0.0))
+        obb_corners = det.get("obb_corners")
+        rois_by_view = _build_rois_by_view(
+            decoded,
+            bbox,
+            component_type=component_type,
+            package_type=package_type,
+            orientation=orientation,
+            obb_corners=obb_corners,
+            supplemental_detections=supplemental_detections,
+            component_detection=det,
+            roi_resolver=roi_resolver,
+        )
 
         pin_schema_id = default_pin_schema_id(component_type, package_type)
         component = {
@@ -65,7 +80,7 @@ def run_pin_detect(
             "symmetry_group": det.get("symmetry_group") or default_symmetry_group(component_type),
             "bbox": list(bbox),
             "confidence": float(det.get("confidence", 1.0)),
-            "orientation": float(det.get("orientation", 0.0)),
+            "orientation": orientation,
         }
 
         predictions_by_view: Dict[str, List[dict]] = {}
@@ -108,12 +123,19 @@ def run_pin_detect(
             "offset": list(top_roi.get("offset") or [0, 0]),
             "shape": list(top_roi.get("shape") or [0, 0]),
             "source": top_roi.get("source", "unavailable"),
+            "crop_source": top_roi.get("crop_source", "unavailable"),
+            "crop_profile": top_roi.get("crop_profile", "none"),
+            "crop_bounds": top_roi.get("crop_bounds"),
         }
         component["roi_by_view"] = {
             view_id: {
                 "offset": list((rois_by_view.get(view_id) or {}).get("offset") or [0, 0]),
                 "shape": list((rois_by_view.get(view_id) or {}).get("shape") or [0, 0]),
                 "source": (rois_by_view.get(view_id) or {}).get("source", "unavailable"),
+                "crop_source": (rois_by_view.get(view_id) or {}).get("crop_source", "unavailable"),
+                "crop_profile": (rois_by_view.get(view_id) or {}).get("crop_profile", "none"),
+                "crop_bounds": (rois_by_view.get(view_id) or {}).get("crop_bounds"),
+                "association": (rois_by_view.get(view_id) or {}).get("association") or {},
                 "available": bool((rois_by_view.get(view_id) or {}).get("image") is not None),
             }
             for view_id in view_ids
@@ -129,6 +151,7 @@ def run_pin_detect(
         "interface_version": "component_pin_detect_v1",
         "pin_detector_backend": pin_detector.backend_type,
         "pin_detector_mode": pin_detector.backend_mode,
+        "side_roi_assoc_backend": roi_resolver.interface_version,
         "components": components,
         **summary,
         "duration_ms": (time.time() - t0) * 1000,
@@ -146,21 +169,67 @@ def _view_ids_from_images(images_b64: List[str]) -> List[str]:
     return view_ids
 
 
-def _build_rois_by_view(decoded_images: List[dict], bbox: tuple[int, int, int, int]) -> Dict[str, Dict[str, Any]]:
+def _build_rois_by_view(
+    decoded_images: List[dict],
+    bbox: tuple[int, int, int, int],
+    *,
+    component_type: str,
+    package_type: str,
+    orientation: float,
+    obb_corners: Any,
+    supplemental_detections: List[dict] | None,
+    component_detection: dict,
+    roi_resolver: SideViewRoiResolver,
+) -> Dict[str, Dict[str, Any]]:
     rois: Dict[str, Dict[str, Any]] = {}
     for item in decoded_images:
         view_id = item["view_id"]
         image = item["image"]
         if image is None:
-            rois[view_id] = {"image": None, "offset": (0, 0), "shape": [0, 0], "source": "unavailable"}
+            rois[view_id] = {
+                "image": None,
+                "offset": (0, 0),
+                "shape": [0, 0],
+                "source": "unavailable",
+                "crop_source": "unavailable",
+                "crop_profile": "none",
+                "crop_bounds": None,
+            }
             continue
-        roi_image, roi_offset = crop_component_roi(image, bbox)
-        source = "detected_bbox" if view_id == "top" else "shared_bbox_fallback"
+        view_bbox = bbox
+        assoc_source = "detected_bbox" if view_id == "top" else "shared_bbox_fallback"
+        assoc_meta: dict[str, Any] = {}
+        if view_id != "top":
+            association = roi_resolver.resolve(
+                component_detection=component_detection,
+                view_id=view_id,
+                supplemental_detections=supplemental_detections,
+            )
+            if association is not None:
+                view_bbox = association.bbox
+                assoc_source = association.source
+                assoc_meta = dict(association.metadata or {})
+                assoc_meta["matched"] = association.matched
+                assoc_meta["candidate_id"] = association.candidate_id
+                assoc_meta["association_confidence"] = association.confidence
+        roi_image, roi_offset, roi_meta = crop_component_roi(
+            image,
+            view_bbox,
+            component_type=component_type,
+            package_type=package_type,
+            orientation=orientation,
+            obb_corners=obb_corners if view_id == "top" else None,
+            view_id=view_id,
+        )
         rois[view_id] = {
             "image": roi_image,
             "offset": roi_offset,
             "shape": list(roi_image.shape[:2]) if roi_image is not None else [0, 0],
-            "source": source,
+            "source": assoc_source,
+            "crop_source": roi_meta.get("source", "package_profile_crop"),
+            "crop_profile": roi_meta.get("profile_name", "generic"),
+            "crop_bounds": roi_meta.get("bounds"),
+            "association": assoc_meta,
         }
     return rois
 
