@@ -12,6 +12,7 @@ from app.core.config import Settings, settings
 from app.services.classroom_state import ClassroomState
 from app.services.agent_service import AgentService
 from app.services.guidance_service import GuidanceService
+from app.services.kb_service import KbService
 from app.services.pipeline_service import PipelineService
 from app.services.rag_service import RagService
 from app.services.version_service import VersionService
@@ -28,6 +29,7 @@ _pipeline_service: PipelineService | None = None
 _rag_service: RagService | None = None
 _agent_service: AgentService | None = None
 _version_service: VersionService | None = None
+_kb_service: KbService | None = None
 
 
 def get_classroom() -> ClassroomState:
@@ -53,10 +55,17 @@ def get_pipeline_service() -> PipelineService:
     return _pipeline_service
 
 
+def get_kb_service() -> KbService:
+    global _kb_service
+    if _kb_service is None:
+        _kb_service = KbService()
+    return _kb_service
+
+
 def get_rag_service() -> RagService:
     global _rag_service
     if _rag_service is None:
-        _rag_service = RagService()
+        _rag_service = RagService(kb_service=get_kb_service())
     return _rag_service
 
 

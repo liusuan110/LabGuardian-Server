@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     LLM_API_KEY: Optional[str] = None
     LLM_BASE_URL: Optional[str] = None
     LLM_MODEL: Optional[str] = None
+    LLM_EMBEDDING_MODEL: str = "text-embedding-3-small"
+
+    # ---- Knowledge Base (Datasheet RAG) ----
+    KB_STORAGE_DIR: str = str(PROJECT_ROOT / "artifacts" / "kb")
+    KB_COLLECTION: str = "labguardian_kb"
+    KB_DEFAULT_TOP_K: int = 6
 
 
 settings = Settings()

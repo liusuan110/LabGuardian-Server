@@ -11,10 +11,12 @@ from typing import Any
 
 from app.schemas.angnt import AngntCitation, AngntEvidence
 from app.services.classroom_state import ClassroomState
+from app.services.kb_service import KbService
 
 
 class RagService:
-    """最小化检索与证据拼装服务."""
+    def __init__(self, kb_service: KbService | None = None) -> None:
+        self._kb_service = kb_service
 
     def build_context(
         self,
@@ -96,6 +98,32 @@ class RagService:
                 )
             )
 
+        if self._kb_service and query.strip():
+            kb_hits = self._kb_service.retrieve(query=query, top_k=top_k)
+            for hit, _ in kb_hits:
+                meta = hit.get("metadata", {}) or {}
+                source_id = f'{meta.get("doc_id", "")}:{meta.get("chunk_index", "")}'
+                citations.append(
+                    AngntCitation(
+                        source_type="datasheet_pdf",
+                        source_id=source_id,
+                        title=str(hit.get("title") or "datasheet"),
+                        snippet=str(hit.get("snippet") or "")[:260],
+                    )
+                )
+                evidence.append(
+                    AngntEvidence(
+                        evidence_type="datasheet_chunk",
+                        source_id=source_id,
+                        summary=str(hit.get("title") or "datasheet"),
+                        payload={
+                            "filename": meta.get("filename") or meta.get("source") or "datasheet",
+                            "page": meta.get("page"),
+                            "text": str(hit.get("text") or "")[:2400],
+                        },
+                    )
+                )
+
         used_retrieval = bool(citations) and bool(query.strip())
         return {
             "station": station,
@@ -104,3 +132,8 @@ class RagService:
             "evidence": evidence[:top_k],
             "used_retrieval": used_retrieval,
         }
+
+    def answer_with_kb(self, *, query: str, top_k: int) -> tuple[str, list[AngntCitation], list[AngntEvidence], bool]:
+        if not self._kb_service:
+            return "未启用知识库。", [], [], False
+        return self._kb_service.answer(query=query, top_k=top_k)

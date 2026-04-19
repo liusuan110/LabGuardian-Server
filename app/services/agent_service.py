@@ -79,36 +79,49 @@ class AgentService:
         classroom: ClassroomState,
         created_at: float,
     ) -> AngntJobResult:
-        context = self._rag_service.build_context(
+        base_context = self._rag_service.build_context(
             classroom=classroom,
             station_id=request.station_id,
             query=request.query,
             top_k=request.top_k,
         )
-        station = context["station"]
+        station = base_context["station"]
         risk_level = station.get("risk_level", "unknown") if station else "unknown"
         diagnostics = station.get("diagnostics", []) if station else []
         risk_reasons = station.get("risk_reasons", []) if station else []
 
-        answer = self._build_answer(
-            station_id=request.station_id,
-            mode=request.mode,
-            query=request.query,
-            risk_level=risk_level,
-            diagnostics=diagnostics,
-            risk_reasons=risk_reasons,
-        )
-        actions = self._build_actions(risk_level=risk_level, diagnostics=diagnostics)
+        if request.mode == "rag":
+            answer, kb_citations, kb_evidence, used = self._rag_service.answer_with_kb(
+                query=request.query,
+                top_k=request.top_k,
+            )
+            citations = list(kb_citations) + list(base_context.get("citations", []))
+            evidence = list(kb_evidence) + list(base_context.get("evidence", []))
+            used_retrieval = bool(used) or bool(base_context.get("used_retrieval"))
+            actions = self._build_actions(risk_level=risk_level, diagnostics=diagnostics)
+        else:
+            answer = self._build_answer(
+                station_id=request.station_id,
+                mode=request.mode,
+                query=request.query,
+                risk_level=risk_level,
+                diagnostics=diagnostics,
+                risk_reasons=risk_reasons,
+            )
+            citations = base_context["citations"]
+            evidence = base_context["evidence"]
+            used_retrieval = base_context["used_retrieval"]
+            actions = self._build_actions(risk_level=risk_level, diagnostics=diagnostics)
 
         return AngntJobResult(
             job_id=job_id,
             station_id=request.station_id,
             mode=request.mode,
             answer=answer,
-            citations=context["citations"],
-            evidence=context["evidence"],
+            citations=citations,
+            evidence=evidence,
             actions=actions,
-            used_retrieval=context["used_retrieval"],
+            used_retrieval=used_retrieval,
             created_at=created_at,
         )
 
