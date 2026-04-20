@@ -32,6 +32,33 @@ COMPONENT_CLASSES = {
     "Potentiometer",
 }
 
+# ── 类名标准化映射: YOLO 输出 → Pipeline 标准类名 ──
+# 确保不同模型训练出的类名统一
+CLASS_NAME_MAP = {
+    "resistor": "Resistor",
+    "Resistor": "Resistor",
+    "capacitor": "Capacitor",
+    "Capacitor": "Capacitor",
+    "wire": "Wire",
+    "Wire": "Wire",
+    "led": "LED",
+    "LED": "LED",
+    "Led": "LED",
+    "diode": "Diode",
+    "Diode": "Diode",
+    "IC": "IC",
+    "ic": "IC",
+    "potentiometer": "Potentiometer",
+    "Potentiometer": "Potentiometer",
+}
+
+# 作为元件参与拓扑构建的类别 (标准化后的名称)
+COMPONENT_CLASSES = {
+    "Resistor", "Capacitor", "Wire", "LED",
+    "Diode", "IC", "Potentiometer",
+}
+
+# 过滤掉的背景类 (Breadboard, Line_area 等)
 IGNORED_CLASSES = {"Breadboard", "Line_area", "breadboard", "line_area", "pinned", "Pinned"}
 
 _TYPE_PREFIX = {
@@ -40,6 +67,7 @@ _TYPE_PREFIX = {
     "capacitor_electrolytic": "C",
     "capacitor": "C",
     "jumper_wire": "W",
+    "capacitor": "C",
     "wire": "W",
     "led": "LED",
     "diode": "D",
@@ -169,6 +197,9 @@ def _detect_components_for_view(
     else:
         detections = detector.detect(image, conf=conf, iou=iou, imgsz=imgsz)
 
+
+    for det in detections:
+        det.class_name = CLASS_NAME_MAP.get(det.class_name, det.class_name)
     return [det for det in detections if det.class_name in COMPONENT_CLASSES and det.class_name not in IGNORED_CLASSES]
 
 
