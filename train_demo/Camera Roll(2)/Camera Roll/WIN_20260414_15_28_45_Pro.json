@@ -1,0 +1,326 @@
+{
+  "version": "4.0.0-beta.2",
+  "flags": {},
+  "shapes": [
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          720.9677419354839,
+          689.3548387096773
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1045.1612903225807,
+          532.9032258064516
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1282.258064516129,
+          610.3225806451612
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1245.1612903225807,
+          815.1612903225806
+        ]
+      ],
+      "group_id": 4,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1646.774193548387,
+          884.516129032258
+        ]
+      ],
+      "group_id": 5,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "capacitor_ceramic",
+      "score": null,
+      "points": [
+        [
+          609.7222222222223,
+          719.3055555555555
+        ],
+        [
+          675.0,
+          719.3055555555555
+        ],
+        [
+          675.0,
+          808.1944444444445
+        ],
+        [
+          609.7222222222223,
+          808.1944444444445
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "capacitor_ceramic",
+      "score": null,
+      "points": [
+        [
+          954.1666666666667,
+          534.5833333333334
+        ],
+        [
+          1016.6666666666667,
+          534.5833333333334
+        ],
+        [
+          1016.6666666666667,
+          635.9722222222222
+        ],
+        [
+          954.1666666666667,
+          635.9722222222222
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "capacitor_ceramic",
+      "score": null,
+      "points": [
+        [
+          1319.4444444444446,
+          547.0833333333334
+        ],
+        [
+          1401.388888888889,
+          547.0833333333334
+        ],
+        [
+          1401.388888888889,
+          590.1388888888889
+        ],
+        [
+          1319.4444444444446,
+          590.1388888888889
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "capacitor_ceramic",
+      "score": null,
+      "points": [
+        [
+          1283.3333333333335,
+          847.0833333333334
+        ],
+        [
+          1350.0,
+          847.0833333333334
+        ],
+        [
+          1350.0,
+          927.6388888888889
+        ],
+        [
+          1283.3333333333335,
+          927.6388888888889
+        ]
+      ],
+      "group_id": 4,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "capacitor_ceramic",
+      "score": null,
+      "points": [
+        [
+          1698.611111111111,
+          824.8611111111111
+        ],
+        [
+          1797.2222222222224,
+          824.8611111111111
+        ],
+        [
+          1797.2222222222224,
+          881.8055555555555
+        ],
+        [
+          1698.611111111111,
+          881.8055555555555
+        ]
+      ],
+      "group_id": 5,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1045.1923076923076,
+          653.6538461538462
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          724.0384615384615,
+          812.3076923076924
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1404.8076923076922,
+          609.423076923077
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1247.1153846153845,
+          927.6923076923077
+        ]
+      ],
+      "group_id": 4,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1761.985294117647,
+          884.5588235294117
+        ]
+      ],
+      "group_id": 5,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    }
+  ],
+  "imagePath": "WIN_20260414_15_28_45_Pro.jpg",
+  "imageData": null,
+  "imageHeight": 1440,
+  "imageWidth": 2560,
+  "description": ""
+}

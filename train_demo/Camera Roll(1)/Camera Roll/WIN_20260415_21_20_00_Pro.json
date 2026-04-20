@@ -1,0 +1,200 @@
+{
+  "version": "4.0.0-beta.2",
+  "flags": {},
+  "shapes": [
+    {
+      "kie_linking": [],
+      "label": "led",
+      "score": null,
+      "points": [
+        [
+          719.3442622950819,
+          947.8688524590165
+        ],
+        [
+          784.9180327868852,
+          947.8688524590165
+        ],
+        [
+          784.9180327868852,
+          1015.0819672131147
+        ],
+        [
+          719.3442622950819,
+          1015.0819672131147
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "led",
+      "score": null,
+      "points": [
+        [
+          1448.8524590163934,
+          577.3770491803278
+        ],
+        [
+          1557.049180327869,
+          577.3770491803278
+        ],
+        [
+          1557.049180327869,
+          705.2459016393443
+        ],
+        [
+          1448.8524590163934,
+          705.2459016393443
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "led",
+      "score": null,
+      "points": [
+        [
+          1929.1803278688526,
+          964.2622950819673
+        ],
+        [
+          2078.3606557377047,
+          964.2622950819673
+        ],
+        [
+          2078.3606557377047,
+          1100.327868852459
+        ],
+        [
+          1929.1803278688526,
+          1100.327868852459
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          663.6065573770491,
+          997.049180327869
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1570.1639344262296,
+          690.4918032786885
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1832.4590163934427,
+          1008.5245901639344
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          820.9836065573769,
+          964.2622950819673
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1461.967213114754,
+          795.4098360655738
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1942.2950819672133,
+          972.4590163934427
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ],
+  "imagePath": "WIN_20260415_21_20_00_Pro.jpg",
+  "imageData": null,
+  "imageHeight": 1440,
+  "imageWidth": 2560,
+  "description": ""
+}

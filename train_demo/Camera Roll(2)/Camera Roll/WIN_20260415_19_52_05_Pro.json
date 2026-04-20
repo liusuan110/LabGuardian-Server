@@ -1,0 +1,74 @@
+{
+  "version": "4.0.0-beta.2",
+  "flags": {},
+  "shapes": [
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          696.7741935483871,
+          531.2903225806451
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "jumper_wire",
+      "score": null,
+      "points": [
+        [
+          699.6969696969697,
+          554.5454545454545
+        ],
+        [
+          923.939393939394,
+          554.5454545454545
+        ],
+        [
+          923.939393939394,
+          759.090909090909
+        ],
+        [
+          699.6969696969697,
+          759.090909090909
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          966.2162162162163,
+          797.027027027027
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ],
+  "imagePath": "WIN_20260415_19_52_05_Pro.jpg",
+  "imageData": null,
+  "imageHeight": 1440,
+  "imageWidth": 2560,
+  "description": ""
+}

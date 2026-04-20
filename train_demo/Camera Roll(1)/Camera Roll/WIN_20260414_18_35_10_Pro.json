@@ -1,0 +1,171 @@
+{
+  "version": "4.0.0-beta.2",
+  "flags": {},
+  "shapes": [
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          814.516129032258,
+          732.9032258064516
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1733.8709677419356,
+          737.7419354838709
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "transistor_3pin",
+      "score": null,
+      "points": [
+        [
+          634.7222222222223,
+          837.3611111111111
+        ],
+        [
+          750.0,
+          837.3611111111111
+        ],
+        [
+          750.0,
+          935.9722222222223
+        ],
+        [
+          634.7222222222223,
+          935.9722222222223
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "transistor_3pin",
+      "score": null,
+      "points": [
+        [
+          1820.8333333333335,
+          799.8611111111111
+        ],
+        [
+          1941.6666666666667,
+          799.8611111111111
+        ],
+        [
+          1941.6666666666667,
+          887.3611111111111
+        ],
+        [
+          1820.8333333333335,
+          887.3611111111111
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          815.2777777777778,
+          854.0277777777778
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1734.7222222222224,
+          856.8055555555555
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "label": "pin3",
+      "score": null,
+      "points": [
+        [
+          812.9411764705883,
+          935.2941176470589
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin3",
+      "score": null,
+      "points": [
+        [
+          1735.2941176470588,
+          932.9411764705883
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ],
+  "imagePath": "WIN_20260414_18_35_10_Pro.jpg",
+  "imageData": null,
+  "imageHeight": 1440,
+  "imageWidth": 2560,
+  "description": ""
+}

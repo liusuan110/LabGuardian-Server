@@ -1,0 +1,200 @@
+{
+  "version": "4.0.0-beta.2",
+  "flags": {},
+  "shapes": [
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1311.2903225806451,
+          616.7741935483871
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          829.0322580645161,
+          818.3870967741935
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1469.3548387096773,
+          811.9354838709677
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "diode",
+      "score": null,
+      "points": [
+        [
+          1373.010752688172,
+          543.010752688172
+        ],
+        [
+          1437.52688172043,
+          543.010752688172
+        ],
+        [
+          1437.52688172043,
+          583.8709677419355
+        ],
+        [
+          1373.010752688172,
+          583.8709677419355
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "diode",
+      "score": null,
+      "points": [
+        [
+          732.1505376344087,
+          844.0860215053763
+        ],
+        [
+          774.0860215053764,
+          844.0860215053763
+        ],
+        [
+          774.0860215053764,
+          906.4516129032257
+        ],
+        [
+          732.1505376344087,
+          906.4516129032257
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "diode",
+      "score": null,
+      "points": [
+        [
+          1410.6451612903227,
+          845.1612903225806
+        ],
+        [
+          1447.2043010752689,
+          845.1612903225806
+        ],
+        [
+          1447.2043010752689,
+          908.6021505376343
+        ],
+        [
+          1410.6451612903227,
+          908.6021505376343
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1426.774193548387,
+          653.763440860215
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          785.9139784946237,
+          935.4838709677418
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1467.6344086021506,
+          929.0322580645161
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ],
+  "imagePath": "WIN_20260414_18_24_38_Pro.jpg",
+  "imageData": null,
+  "imageHeight": 1440,
+  "imageWidth": 2560,
+  "description": ""
+}

@@ -1,0 +1,200 @@
+{
+  "version": "4.0.0-beta.2",
+  "flags": {},
+  "shapes": [
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          880.6451612903226,
+          540.9677419354838
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1340.3225806451612,
+          466.774193548387
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1567.741935483871,
+          540.9677419354838
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "jumper_wire",
+      "score": null,
+      "points": [
+        [
+          843.2835820895522,
+          592.3880597014925
+        ],
+        [
+          1080.597014925373,
+          592.3880597014925
+        ],
+        [
+          1080.597014925373,
+          862.5373134328358
+        ],
+        [
+          843.2835820895522,
+          862.5373134328358
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "jumper_wire",
+      "score": null,
+      "points": [
+        [
+          1108.955223880597,
+          413.2835820895523
+        ],
+        [
+          1305.9701492537313,
+          413.2835820895523
+        ],
+        [
+          1305.9701492537313,
+          540.1492537313433
+        ],
+        [
+          1108.955223880597,
+          540.1492537313433
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "jumper_wire",
+      "score": null,
+      "points": [
+        [
+          1419.4029850746267,
+          526.7164179104477
+        ],
+        [
+          1538.8059701492537,
+          526.7164179104477
+        ],
+        [
+          1538.8059701492537,
+          802.8358208955224
+        ],
+        [
+          1419.4029850746267,
+          802.8358208955224
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1114.9253731343283,
+          850.5970149253731
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1114.9253731343283,
+          578.955223880597
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1455.2238805970148,
+          838.6567164179104
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ],
+  "imagePath": "WIN_20260413_23_54_11_Pro.jpg",
+  "imageData": null,
+  "imageHeight": 1440,
+  "imageWidth": 2560,
+  "description": ""
+}

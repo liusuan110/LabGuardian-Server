@@ -1,0 +1,137 @@
+{
+  "version": "4.0.0-beta.3",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "resistor",
+      "score": null,
+      "points": [
+        [
+          1160.327868852459,
+          605.2459016393443
+        ],
+        [
+          1248.8524590163934,
+          605.2459016393443
+        ],
+        [
+          1248.8524590163934,
+          672.4590163934427
+        ],
+        [
+          1160.327868852459,
+          672.4590163934427
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "resistor",
+      "score": null,
+      "points": [
+        [
+          1271.8032786885246,
+          901.9672131147541
+        ],
+        [
+          1366.8852459016393,
+          901.9672131147541
+        ],
+        [
+          1366.8852459016393,
+          967.5409836065575
+        ],
+        [
+          1271.8032786885246,
+          967.5409836065575
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1158.688524590164,
+          690.4918032786886
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1275.657894736842,
+          615.0657894736843
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1232.4590163934427,
+          920.0
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1348.8524590163934,
+          880.6557377049181
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ],
+  "imagePath": "WIN_20260413_21_34_47_Pro.jpg",
+  "imageData": null,
+  "imageHeight": 1440,
+  "imageWidth": 2560,
+  "description": ""
+}

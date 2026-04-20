@@ -1,0 +1,46 @@
+[
+  {
+    "component_id": "R1",
+    "component_type": "Resistor",
+    "class_name": "Resistor",
+    "package_type": "axial_2pin",
+    "symmetry_group": [["pin1", "pin2"]],
+    "confidence": 1.0,
+    "pins": [
+      {
+        "pin_id": 1,
+        "pin_name": "pin1",
+        "logic_loc": ["12", "a"],
+        "hole_id": "A12",
+        "electrical_node_id": "ROW_12_L",
+        "confidence": 1.0,
+        "observations": [
+          {
+            "view_id": "top",
+            "keypoint": [10.0, 20.0],
+            "visibility": 2,
+            "confidence": 1.0
+          }
+        ],
+        "is_ambiguous": false
+      },
+      {
+        "pin_id": 2,
+        "pin_name": "pin2",
+        "logic_loc": ["12", "f"],
+        "hole_id": "F12",
+        "electrical_node_id": "ROW_12_R",
+        "confidence": 1.0,
+        "observations": [
+          {
+            "view_id": "top",
+            "keypoint": [20.0, 20.0],
+            "visibility": 2,
+            "confidence": 1.0
+          }
+        ],
+        "is_ambiguous": false
+      }
+    ]
+  }
+]

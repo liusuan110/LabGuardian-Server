@@ -1,0 +1,263 @@
+{
+  "version": "4.0.0-beta.2",
+  "flags": {},
+  "shapes": [
+    {
+      "kie_linking": [],
+      "label": "capacitor_electrolytic",
+      "score": null,
+      "points": [
+        [
+          514.4262295081966,
+          701.9672131147541
+        ],
+        [
+          688.1967213114754,
+          701.9672131147541
+        ],
+        [
+          688.1967213114754,
+          821.6393442622951
+        ],
+        [
+          514.4262295081966,
+          821.6393442622951
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "capacitor_electrolytic",
+      "score": null,
+      "points": [
+        [
+          832.4590163934425,
+          683.9344262295083
+        ],
+        [
+          1012.7868852459015,
+          683.9344262295083
+        ],
+        [
+          1012.7868852459015,
+          834.7540983606558
+        ],
+        [
+          832.4590163934425,
+          834.7540983606558
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "capacitor_electrolytic",
+      "score": null,
+      "points": [
+        [
+          1230.8196721311476,
+          479.016393442623
+        ],
+        [
+          1309.5081967213116,
+          479.016393442623
+        ],
+        [
+          1309.5081967213116,
+          605.2459016393443
+        ],
+        [
+          1230.8196721311476,
+          605.2459016393443
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "capacitor_electrolytic",
+      "score": null,
+      "points": [
+        [
+          1673.4426229508197,
+          910.1639344262295
+        ],
+        [
+          1794.7540983606557,
+          910.1639344262295
+        ],
+        [
+          1794.7540983606557,
+          1036.393442622951
+        ],
+        [
+          1673.4426229508197,
+          1036.393442622951
+        ]
+      ],
+      "group_id": 4,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          732.4590163934425,
+          741.3114754098361
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1084.9180327868853,
+          731.4754098360656
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1186.5573770491803,
+          657.704918032787
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1627.5409836065573,
+          959.344262295082
+        ]
+      ],
+      "group_id": 4,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          757.0491803278687,
+          875.7377049180328
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1014.4262295081966,
+          905.2459016393443
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1324.2622950819673,
+          659.344262295082
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1766.8852459016393,
+          918.360655737705
+        ]
+      ],
+      "group_id": 4,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    }
+  ],
+  "imagePath": "WIN_20260415_21_07_04_Pro.jpg",
+  "imageData": null,
+  "imageHeight": 1440,
+  "imageWidth": 2560,
+  "description": ""
+}

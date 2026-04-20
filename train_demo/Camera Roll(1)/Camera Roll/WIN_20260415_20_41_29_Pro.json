@@ -1,0 +1,199 @@
+{
+  "version": "4.0.0-beta.2",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          430.9259259259258,
+          891.7592592592592
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1049.4444444444443,
+          919.537037037037
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1871.6666666666667,
+          878.7962962962962
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1817.9629629629628,
+          726.9444444444445
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          897.5925925925924,
+          925.0925925925925
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          449.44444444444434,
+          752.8703703703703
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "capacitor_ceramic",
+      "score": null,
+      "points": [
+        [
+          325.3703703703702,
+          738.0555555555555
+        ],
+        [
+          395.74074074074065,
+          738.0555555555555
+        ],
+        [
+          395.74074074074065,
+          815.8333333333334
+        ],
+        [
+          325.3703703703702,
+          815.8333333333334
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "capacitor_ceramic",
+      "score": null,
+      "points": [
+        [
+          904.9999999999999,
+          919.537037037037
+        ],
+        [
+          995.7407407407405,
+          919.537037037037
+        ],
+        [
+          995.7407407407405,
+          962.1296296296296
+        ],
+        [
+          904.9999999999999,
+          962.1296296296296
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "capacitor_ceramic",
+      "score": null,
+      "points": [
+        [
+          1866.111111111111,
+          708.4259259259259
+        ],
+        [
+          1945.7407407407406,
+          708.4259259259259
+        ],
+        [
+          1945.7407407407406,
+          797.3148148148148
+        ],
+        [
+          1866.111111111111,
+          797.3148148148148
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ],
+  "imagePath": "WIN_20260415_20_41_29_Pro.jpg",
+  "imageData": null,
+  "imageHeight": 1440,
+  "imageWidth": 2560
+}

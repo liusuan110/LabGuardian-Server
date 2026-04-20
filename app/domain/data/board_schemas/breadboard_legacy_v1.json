@@ -1,0 +1,116 @@
+{
+  "schema_id": "breadboard_legacy_v1",
+  "board_type": "competition_breadboard_63row_dualrail",
+  "aliases": {
+    "PWR_PLUS": "PWR_PLUS",
+    "PWR_MINUS": "PWR_MINUS",
+    "VCC": "PWR_PLUS",
+    "GND": "PWR_MINUS"
+  },
+  "generated_groups": [
+    {
+      "kind": "main_strip",
+      "cols": ["A", "B", "C", "D", "E"],
+      "row_start": 1,
+      "row_end": 63,
+      "side": "L",
+      "electrical_node_template": "ROW_{row}_{side}",
+      "group_type": "main_grid"
+    },
+    {
+      "kind": "main_strip",
+      "cols": ["F", "G", "H", "I", "J"],
+      "row_start": 1,
+      "row_end": 63,
+      "side": "R",
+      "electrical_node_template": "ROW_{row}_{side}",
+      "group_type": "main_grid"
+    },
+    {
+      "kind": "track",
+      "track": "LP",
+      "segments": [
+        {
+          "row_start": 1,
+          "row_end": 31,
+          "suffix": "_SEG1"
+        },
+        {
+          "row_start": 32,
+          "row_end": 63,
+          "suffix": "_SEG2"
+        }
+      ],
+      "electrical_node_template": "TRACK_{track}{segment_suffix}",
+      "group_type": "track"
+    },
+    {
+      "kind": "track",
+      "track": "LN",
+      "segments": [
+        {
+          "row_start": 1,
+          "row_end": 31,
+          "suffix": "_SEG1"
+        },
+        {
+          "row_start": 32,
+          "row_end": 63,
+          "suffix": "_SEG2"
+        }
+      ],
+      "electrical_node_template": "TRACK_{track}{segment_suffix}",
+      "group_type": "track"
+    },
+    {
+      "kind": "track",
+      "track": "RP",
+      "segments": [
+        {
+          "row_start": 1,
+          "row_end": 31,
+          "suffix": "_SEG1"
+        },
+        {
+          "row_start": 32,
+          "row_end": 63,
+          "suffix": "_SEG2"
+        }
+      ],
+      "electrical_node_template": "TRACK_{track}{segment_suffix}",
+      "group_type": "track"
+    },
+    {
+      "kind": "track",
+      "track": "RN",
+      "segments": [
+        {
+          "row_start": 1,
+          "row_end": 31,
+          "suffix": "_SEG1"
+        },
+        {
+          "row_start": 32,
+          "row_end": 63,
+          "suffix": "_SEG2"
+        }
+      ],
+      "electrical_node_template": "TRACK_{track}{segment_suffix}",
+      "group_type": "track"
+    }
+  ],
+  "holes": {
+    "PWR_PLUS": {
+      "hole_id": "PWR_PLUS",
+      "electrical_node_id": "PWR_PLUS",
+      "group_type": "power",
+      "col": "+"
+    },
+    "PWR_MINUS": {
+      "hole_id": "PWR_MINUS",
+      "electrical_node_id": "PWR_MINUS",
+      "group_type": "power",
+      "col": "-"
+    }
+  }
+}

@@ -1,0 +1,200 @@
+{
+  "version": "4.0.0-beta.2",
+  "flags": {},
+  "shapes": [
+    {
+      "kie_linking": [],
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          792.0370370370368,
+          939.9074074074073
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1473.5185185185185,
+          823.2407407407406
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "kie_linking": [],
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1812.4074074074074,
+          708.4259259259259
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {}
+    },
+    {
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1801.2962962962963,
+          608.4259259259259
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1430.9259259259256,
+          684.3518518518517
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          642.0370370370368,
+          910.2777777777777
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "capacitor_ceramic",
+      "score": null,
+      "points": [
+        [
+          617.9629629629627,
+          928.7962962962962
+        ],
+        [
+          710.5555555555554,
+          928.7962962962962
+        ],
+        [
+          710.5555555555554,
+          975.0925925925925
+        ],
+        [
+          617.9629629629627,
+          975.0925925925925
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "capacitor_ceramic",
+      "score": null,
+      "points": [
+        [
+          1379.074074074074,
+          717.6851851851851
+        ],
+        [
+          1440.185185185185,
+          717.6851851851851
+        ],
+        [
+          1440.185185185185,
+          801.0185185185184
+        ],
+        [
+          1379.074074074074,
+          801.0185185185184
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "capacitor_ceramic",
+      "score": null,
+      "points": [
+        [
+          1840.185185185185,
+          578.796296296296
+        ],
+        [
+          1919.8148148148146,
+          578.796296296296
+        ],
+        [
+          1919.8148148148146,
+          662.1296296296294
+        ],
+        [
+          1840.185185185185,
+          662.1296296296294
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ],
+  "imagePath": "WIN_20260415_20_40_42_Pro.jpg",
+  "imageData": null,
+  "imageHeight": 1440,
+  "imageWidth": 2560,
+  "description": ""
+}

@@ -1,0 +1,12 @@
+capacitor_ceramic
+capacitor_cerani
+capacitor_electro
+capacitor_electrolytic
+diode
+jumper_wire
+led
+pin1
+pin2
+pin3
+resistor
+transistor_3pin

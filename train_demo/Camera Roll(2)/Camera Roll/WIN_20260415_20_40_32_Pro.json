@@ -1,0 +1,199 @@
+{
+  "version": "4.0.0-beta.2",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "capacitor_ceramic",
+      "score": null,
+      "points": [
+        [
+          617.9629629629627,
+          910.2777777777777
+        ],
+        [
+          701.2962962962961,
+          910.2777777777777
+        ],
+        [
+          701.2962962962961,
+          960.2777777777777
+        ],
+        [
+          617.9629629629627,
+          960.2777777777777
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "capacitor_ceramic",
+      "score": null,
+      "points": [
+        [
+          1136.4814814814815,
+          584.3518518518515
+        ],
+        [
+          1197.5925925925926,
+          584.3518518518515
+        ],
+        [
+          1197.5925925925926,
+          667.6851851851851
+        ],
+        [
+          1136.4814814814815,
+          667.6851851851851
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "capacitor_ceramic",
+      "score": null,
+      "points": [
+        [
+          1377.2222222222222,
+          704.7222222222222
+        ],
+        [
+          1434.6296296296296,
+          704.7222222222222
+        ],
+        [
+          1434.6296296296296,
+          789.9074074074073
+        ],
+        [
+          1377.2222222222222,
+          789.9074074074073
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          638.3333333333331,
+          901.0185185185184
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1210.5555555555557,
+          615.8333333333331
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin1",
+      "score": null,
+      "points": [
+        [
+          1423.5185185185185,
+          680.648148148148
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          784.6296296296293,
+          936.2037037037036
+        ]
+      ],
+      "group_id": 1,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1210.5555555555557,
+          717.6851851851851
+        ]
+      ],
+      "group_id": 2,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "pin2",
+      "score": null,
+      "points": [
+        [
+          1469.8148148148146,
+          812.1296296296296
+        ]
+      ],
+      "group_id": 3,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ],
+  "imagePath": "WIN_20260415_20_40_32_Pro.jpg",
+  "imageData": null,
+  "imageHeight": 1440,
+  "imageWidth": 2560
+}

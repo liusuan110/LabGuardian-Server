@@ -1,0 +1,67 @@
+{
+  "meta": {
+    "created_at": "2026-04-10T12:00:00",
+    "format": "labguardian_ref_v4"
+  },
+  "components": [],
+  "netlist_v2": {
+    "scene_id": "fixture_simple_reference",
+    "board_schema_id": "breadboard_legacy_v1",
+    "components": [
+      {
+        "component_id": "R1",
+        "component_type": "Resistor",
+        "package_type": "axial_2pin",
+        "part_subtype": "resistor_generic",
+        "polarity": "none",
+        "orientation": 0.0,
+        "symmetry_group": [["pin1", "pin2"]],
+        "pins": [
+          {
+            "pin_id": 1,
+            "pin_name": "pin1",
+            "hole_id": "B12",
+            "electrical_node_id": "ROW_12_L",
+            "electrical_net_id": "NET_000",
+            "confidence": 1.0,
+            "is_ambiguous": false
+          },
+          {
+            "pin_id": 2,
+            "pin_name": "pin2",
+            "hole_id": "F12",
+            "electrical_node_id": "ROW_12_R",
+            "electrical_net_id": "NET_001",
+            "confidence": 1.0,
+            "is_ambiguous": false
+          }
+        ],
+        "confidence": 1.0,
+        "metadata": {
+          "source": "fixture"
+        }
+      }
+    ],
+    "nets": [
+      {
+        "electrical_net_id": "NET_000",
+        "member_node_ids": ["ROW_12_L"],
+        "member_hole_ids": ["B12"],
+        "power_role": "",
+        "labels": []
+      },
+      {
+        "electrical_net_id": "NET_001",
+        "member_node_ids": ["ROW_12_R"],
+        "member_hole_ids": ["F12"],
+        "power_role": "",
+        "labels": []
+      }
+    ],
+    "node_index": {
+      "ROW_12_L": ["B12"],
+      "ROW_12_R": ["F12"]
+    }
+  },
+  "topology": null
+}

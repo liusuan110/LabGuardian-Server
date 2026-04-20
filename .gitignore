@@ -1,0 +1,32 @@
+# OS / editor
+.DS_Store
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Local environment
+.env
+!.env.example
+
+# Generated demo / experiment outputs
+demo_output/
+detect_results/
+proposal_heatmaps/
+artifacts/archive/*.txt
+test_output/
+test_output_multi/
+
+# Coverage / packaging
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
