@@ -179,13 +179,38 @@ class BreadboardCalibrator:
     @staticmethod
     def _cluster_1d(values: np.ndarray, expected_count: int) -> np.ndarray:
         """一维聚类: 将检测到的坐标聚类到预期数量的组"""
-        sorted_vals = np.sort(values)
-        if len(sorted_vals) < expected_count:
-            return sorted_vals
+        arr = np.asarray(values, dtype=np.float32)
+        arr = arr[np.isfinite(arr)]
+        if arr.size == 0:
+            return np.array([], dtype=np.float32)
 
-        # 简单均匀采样
-        indices = np.linspace(0, len(sorted_vals) - 1, expected_count, dtype=int)
-        return sorted_vals[indices]
+        arr.sort()
+        if arr.size <= expected_count:
+            return arr.astype(np.float32)
+
+        q_low = float(np.percentile(arr, 2))
+        q_high = float(np.percentile(arr, 98))
+        span = max(1.0, q_high - q_low)
+        inlier = arr[(arr >= q_low - 0.05 * span) & (arr <= q_high + 0.05 * span)]
+        if inlier.size < expected_count:
+            inlier = arr
+
+        centers = np.quantile(inlier, np.linspace(0.0, 1.0, expected_count)).astype(np.float32)
+        for _ in range(12):
+            dists = np.abs(inlier[:, None] - centers[None, :])
+            labels = np.argmin(dists, axis=1)
+            new_centers = centers.copy()
+            for k in range(expected_count):
+                members = inlier[labels == k]
+                if members.size > 0:
+                    new_centers[k] = float(np.median(members))
+            if np.allclose(new_centers, centers, atol=0.25):
+                centers = new_centers
+                break
+            centers = new_centers
+
+        centers.sort()
+        return centers.astype(np.float32)
 
     # ============================================================
     # 空间哈希 & RANSAC 单应性 (Spatial Hashing & Homography)
@@ -662,16 +687,21 @@ class BreadboardCalibrator:
     @staticmethod
     def _find_peaks_1d(values: List[float], span: int, sigma: float = 3.0, min_density: float = 1.5) -> List[int]:
         """1D 高斯平滑后找峰值"""
-        from scipy.ndimage import gaussian_filter1d
-
         if span < 10 or not values:
             return []
-        profile = np.zeros(span)
+        profile = np.zeros(span, dtype=np.float32)
         for v in values:
             iv = int(v)
             if 0 <= iv < span:
                 profile[iv] += 1
-        smoothed = gaussian_filter1d(profile, sigma=sigma)
+        sig = float(max(0.5, sigma))
+        radius = int(max(3, round(sig * 3)))
+        xs = np.arange(-radius, radius + 1, dtype=np.float32)
+        kernel = np.exp(-(xs * xs) / (2.0 * sig * sig))
+        kernel_sum = float(kernel.sum())
+        if kernel_sum > 0:
+            kernel /= kernel_sum
+        smoothed = np.convolve(profile, kernel, mode="same")
         peaks = []
         for i in range(1, len(smoothed) - 1):
             if smoothed[i] > smoothed[i - 1] and smoothed[i] > smoothed[i + 1] and smoothed[i] > min_density:
@@ -828,13 +858,16 @@ class BreadboardCalibrator:
             logger.warning("[Calibrator] Cannot determine row pitch")
             return False
         row_pitch = float(np.median(valid_diffs))
-        r_min, r_max = min(row_values), max(row_values)
-        num_rows = max(1, round((r_max - r_min) / row_pitch) + 1)
-        self._row_coords = np.linspace(r_min, r_max, num_rows)
-        self.rows = num_rows
+        rv = np.array(row_values, dtype=np.float32)
+        r_min = float(np.percentile(rv, 2))
+        r_max = float(np.percentile(rv, 98))
+        span = (self.rows - 1) * row_pitch
+        start_low = r_max - span
+        start = r_min if r_min >= start_low else start_low
+        self._row_coords = (start + np.arange(self.rows, dtype=np.float32) * row_pitch).astype(np.float32)
 
         # 计算空间哈希参数
         self._compute_grid_params()
 
-        logger.info("[Calibrator] %d rows, pitch=%.1f, range=[%.0f, %.0f]", num_rows, row_pitch, r_min, r_max)
+        logger.info("[Calibrator] %d rows, pitch=%.1f, range=[%.0f, %.0f]", self.rows, row_pitch, r_min, r_max)
         return True
