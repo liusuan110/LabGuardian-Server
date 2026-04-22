@@ -1,0 +1,12 @@
+path: d:/train_demo/yolo_packed2_pose_roi_context_v1
+train: images/train
+val: images/val
+names:
+  0: capacitor_ceramic
+  1: capacitor_electrolytic
+  2: diode
+  3: jumper_wire
+  4: led
+  5: resistor
+  6: transistor_3pin
+kpt_shape: [3, 3]
