@@ -15,10 +15,18 @@ def make_mapped_component(
     pins: list[dict],
 ) -> dict:
     """构建 S2 输出的模拟 mapped component."""
+    package_type_map = {
+        "Resistor": "axial_2pin",
+        "Capacitor": "capacitor_2pin",
+        "CapacitorCeramic": "capacitor_ceramic_2pin",
+        "CapacitorElectrolytic": "capacitor_electrolytic_2pin",
+        "Wire": "jumper_wire_2pin",
+        "Transistor": "transistor_3pin",
+    }
     return {
         "component_id": component_id,
         "component_type": component_type,
-        "package_type": "axial_2pin" if component_type in ("Resistor", "Capacitor", "Wire") else "generic",
+        "package_type": package_type_map.get(component_type, "generic"),
         "pins": pins,
         "confidence": 0.95,
     }
@@ -183,6 +191,44 @@ class TestS3Topology:
 
         types = {c["component_type"] for c in result["netlist_v2"]["components"]}
         assert types == {"Resistor", "Capacitor", "LED"}
+
+    def test_t6_6b_fine_grained_component_types_preserved(self):
+        """细粒度电容和三极管类型应完整进入 netlist_v2."""
+        from app.pipeline.stages.s3_topology import run_topology
+
+        components = [
+            make_mapped_component("CC1", "CapacitorCeramic", [
+                make_pin(1, hole_id="A1", electrical_node_id="ROW_1_L"),
+                make_pin(2, hole_id="A5", electrical_node_id="ROW_5_L"),
+            ]),
+            make_mapped_component("CE1", "CapacitorElectrolytic", [
+                {
+                    **make_pin(1, hole_id="B1", electrical_node_id="ROW_1_R"),
+                    "pin_name": "positive",
+                },
+                {
+                    **make_pin(2, hole_id="B5", electrical_node_id="ROW_5_R"),
+                    "pin_name": "negative",
+                },
+            ]),
+            make_mapped_component("Q1", "Transistor", [
+                make_pin(1, hole_id="C1", electrical_node_id="ROW_1_L"),
+                make_pin(2, hole_id="C2", electrical_node_id="ROW_2_L"),
+                make_pin(3, hole_id="C3", electrical_node_id="ROW_3_L"),
+            ]),
+        ]
+
+        result = run_topology(components=components)
+        exported = {c["component_id"]: c for c in result["netlist_v2"]["components"]}
+
+        assert exported["CC1"]["component_type"] == "CapacitorCeramic"
+        assert exported["CC1"]["package_type"] == "capacitor_ceramic_2pin"
+        assert exported["CE1"]["component_type"] == "CapacitorElectrolytic"
+        assert exported["CE1"]["package_type"] == "capacitor_electrolytic_2pin"
+        assert [p["pin_name"] for p in exported["CE1"]["pins"]] == ["positive", "negative"]
+        assert exported["Q1"]["component_type"] == "Transistor"
+        assert exported["Q1"]["package_type"] == "transistor_3pin"
+        assert len(exported["Q1"]["pins"]) == 3
 
     def test_t6_7_netlist_v2_schema(self):
         """验证 netlist_v2 输出 schema 完整性"""

@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import cv2
 import numpy as np
 
+from app.pipeline.vision.label_mapping import default_pin_count
+from app.pipeline.vision.model_inspector import inspect_yolo_weight
 from app.pipeline.vision.pin_schema import default_pin_names
 
 logger = logging.getLogger(__name__)
@@ -46,6 +49,15 @@ class PinRoiDetector:
         self.model_path = model_path
         self.device = device
         self.model = None
+        self.model_contract: dict[str, object] = {
+            "path": "",
+            "exists": False,
+            "task": "unknown",
+            "model_class": "unknown",
+            "names": [],
+            "kpt_shape": None,
+            "loaded": False,
+        }
         if model_path:
             self.load(model_path)
 
@@ -70,16 +82,26 @@ class PinRoiDetector:
         path = model_path or self.model_path
         if not path:
             return False
+        contract = inspect_yolo_weight(path)
+        contract["loaded"] = False
+        self.model_contract = contract
+        task = str(contract.get("task") or "unknown")
+        if task in {"detect", "obb"}:
+            logger.error("[PinDetector] Refusing non-pose weight for pin detector: %s (task=%s)", path, task)
+            self.model = None
+            return False
         try:
             from ultralytics import YOLO
 
             self.model = YOLO(path)
             self.model_path = path
+            self.model_contract["loaded"] = True
             logger.info("[PinDetector] Loaded ROI pin model: %s", path)
             return True
         except Exception as exc:
             logger.warning("[PinDetector] Failed to load ROI pin model %s: %s", path, exc)
             self.model = None
+            self.model_contract["loaded"] = False
             return False
 
     def predict_component_pins(
@@ -261,14 +283,7 @@ class PinRoiDetector:
 
 
 def _infer_pin_count(component_type: str, package_type: str) -> int:
-    ctype = component_type.lower()
-    if ctype == "ic" and package_type == "dip8":
-        return 2
-    if ctype in ("potentiometer", "potentiometer_3pin"):
-        return 3
-    if ctype in ("transistor", "transistor_3pin"):
-        return 3
-    return 2
+    return default_pin_count(component_type, package_type)
 
 
 def _build_foreground_mask(roi_image: np.ndarray) -> np.ndarray:

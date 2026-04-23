@@ -12,6 +12,7 @@ from typing import Any, Dict, List
 
 from app.pipeline.vision.pin_model import PinRoiDetector
 from app.pipeline.vision.image_io import decode_images_b64, decode_summary
+from app.pipeline.vision.label_mapping import component_id_prefix, normalize_component_type
 from app.pipeline.vision.pin_schema import (
     default_package_type,
     default_pin_schema_id,
@@ -21,22 +22,6 @@ from app.pipeline.vision.roi_cropper import crop_component_roi
 from app.pipeline.vision.view_association import SideViewRoiResolver
 
 logger = logging.getLogger(__name__)
-
-_TYPE_PREFIX = {
-    "resistor": "R",
-    "capacitor_ceramic": "C",
-    "capacitor_electrolytic": "C",
-    "capacitor": "C",
-    "jumper_wire": "W",
-    "wire": "W",
-    "led": "LED",
-    "diode": "D",
-    "ic": "IC",
-    "potentiometer": "POT",
-    "transistor_3pin": "Q",
-    "transistor": "Q",
-}
-
 
 def run_pin_detect(
     detections: List[dict],
@@ -54,7 +39,7 @@ def run_pin_detect(
     counters: Dict[str, int] = {}
     components: List[dict] = []
     for det in detections:
-        component_type = str(det.get("class_name") or "UNKNOWN")
+        component_type = normalize_component_type(str(det.get("component_type") or det.get("class_name") or "UNKNOWN"))
         component_id = det.get("component_id") or _next_component_id(component_type, counters)
         package_type = str(det.get("package_type") or default_package_type(component_type))
         bbox = tuple(det.get("bbox") or (0, 0, 0, 0))
@@ -156,6 +141,7 @@ def run_pin_detect(
         "interface_version": "component_pin_detect_v1",
         "pin_detector_backend": pin_detector.backend_type,
         "pin_detector_mode": pin_detector.backend_mode,
+        "pin_detector_contract": dict(getattr(pin_detector, "model_contract", {}) or {}),
         "side_roi_assoc_backend": roi_resolver.interface_version,
         "components": components,
         **summary,
@@ -282,7 +268,7 @@ def _merge_predictions_by_view(
 
 
 def _next_component_id(component_type: str, counters: Dict[str, int]) -> str:
-    key = component_type.lower()
-    prefix = _TYPE_PREFIX.get(key, key[:3].upper() or "CMP")
-    counters[key] = counters.get(key, 0) + 1
-    return f"{prefix}{counters[key]}"
+    normalized = normalize_component_type(component_type)
+    prefix = component_id_prefix(normalized)
+    counters[normalized] = counters.get(normalized, 0) + 1
+    return f"{prefix}{counters[normalized]}"

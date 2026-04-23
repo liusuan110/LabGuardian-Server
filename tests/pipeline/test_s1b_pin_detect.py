@@ -70,6 +70,50 @@ class TestPinDetectionMock:
         assert len(result["components"]) == 1
         assert len(result["components"][0]["pins"]) == 3
 
+    def test_t4_2b_mock_transistor_3pin(self, blank_image_b64):
+        """模型新标签 transistor_3pin 会被解释为 3-pin Transistor."""
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
+        from app.pipeline.stages.s1_detect import run_detect
+
+        det = MockComponentDetector([
+            {"class_name": "transistor_3pin", "bbox": (100, 200, 300, 260), "confidence": 0.9}
+        ])
+        pin = MockPinDetector([
+            {"pin_id": 1, "pin_name": "pin1", "keypoint": (100.0, 240.0), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 2, "pin_name": "pin2", "keypoint": (200.0, 240.0), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 3, "pin_name": "pin3", "keypoint": (300.0, 240.0), "confidence": 0.9, "visibility": 2},
+        ])
+
+        s1 = run_detect(images_b64=[blank_image_b64], detector=det)
+        result = run_pin_detect(detections=s1["detections"], images_b64=[blank_image_b64], pin_detector=pin)
+
+        assert result["components"][0]["component_type"] == "Transistor"
+        assert result["components"][0]["package_type"] == "transistor_3pin"
+        assert len(result["components"][0]["pins"]) == 3
+
+    def test_t4_2c_electrolytic_pin_names(self, blank_image_b64):
+        """细粒度电解电容默认 pin_name 为 positive/negative."""
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
+        from app.pipeline.stages.s1_detect import run_detect
+
+        det = MockComponentDetector([
+            {"class_name": "capacitor_electrolytic", "bbox": (100, 200, 240, 320), "confidence": 0.9}
+        ])
+        pin = MockPinDetector([
+            {"pin_id": 1, "pin_name": "positive", "keypoint": (120.0, 240.0), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 2, "pin_name": "negative", "keypoint": (200.0, 240.0), "confidence": 0.9, "visibility": 2},
+        ])
+
+        s1 = run_detect(images_b64=[blank_image_b64], detector=det)
+        result = run_pin_detect(detections=s1["detections"], images_b64=[blank_image_b64], pin_detector=pin)
+
+        pin_names = [p["pin_name"] for p in result["components"][0]["pins"]]
+        assert result["components"][0]["component_type"] == "CapacitorElectrolytic"
+        assert result["components"][0]["package_type"] == "capacitor_electrolytic_2pin"
+        assert pin_names == ["positive", "negative"]
+
     def test_t4_3_mock_ic_dip8(self, blank_image_b64):
         """T4.5: Mock IC DIP-8 → len(pins)=2 (anchor pair)"""
         from app.pipeline.stages.s1b_pin_detect import run_pin_detect
@@ -325,7 +369,7 @@ class TestPinDetectionMultiView:
                 "orientation": 0.0,
                 "view_id": "left_front",
                 "source": "side_recall_candidate",
-                "source_model_type": "yolo_obb_component",
+                "source_model_type": "yolo_detect_component",
                 "instance_status": "candidate",
                 "wire_color": "",
                 "obb_corners": None,

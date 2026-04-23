@@ -22,6 +22,13 @@ component_id + pin_name + hole_id
 -> validator_report_v2
 ```
 
+当前视觉默认主路径已经收口为：
+
+- `S1 = YOLO-Detect`
+- `S1.5 = YOLO-Pose`
+
+`OBB` 解析能力只作为兼容分支保留，不再作为默认组件检测方案。
+
 `topology_input.py` 已不再接受旧 `pin1_logic / pin2_logic` 直接建图。
 旧字段目前仍可能出现在 S2 输出中，用于调试和过渡观察，但不再参与正式拓扑构建主链。
 `circuit.py / validator.py / ic_models.py / polarity.py` 的内部主逻辑也已经切到

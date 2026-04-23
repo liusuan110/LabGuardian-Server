@@ -50,6 +50,35 @@ class TestS1ComponentDetection:
         assert ids == {"R1", "C1", "LED1"}
         assert types == {"Resistor", "Capacitor", "LED"}
 
+    def test_t2_2b_model_labels_normalized(self, blank_image_b64):
+        """模型细粒度标签会被标准化成后端语义."""
+        from app.pipeline.stages.s1_detect import run_detect
+        from tests.pipeline.mocks import MockComponentDetector
+
+        detector = MockComponentDetector([
+            {"class_name": "capacitor_ceramic", "bbox": (100, 100, 180, 180), "confidence": 0.91},
+            {"class_name": "capacitor_electrolytic", "bbox": (220, 100, 320, 210), "confidence": 0.92},
+            {"class_name": "jumper_wire", "bbox": (50, 220, 250, 250), "confidence": 0.93},
+            {"class_name": "transistor_3pin", "bbox": (360, 110, 430, 220), "confidence": 0.94},
+        ])
+
+        result = run_detect(images_b64=[blank_image_b64], detector=detector)
+        by_type = {d["component_type"]: d for d in result["detections"]}
+
+        assert "CapacitorCeramic" in by_type
+        assert by_type["CapacitorCeramic"]["package_type"] == "capacitor_ceramic_2pin"
+
+        assert "CapacitorElectrolytic" in by_type
+        assert by_type["CapacitorElectrolytic"]["package_type"] == "capacitor_electrolytic_2pin"
+        assert by_type["CapacitorElectrolytic"]["pin_schema_id"] == "polarized_2pin"
+
+        assert "Wire" in by_type
+        assert by_type["Wire"]["package_type"] == "jumper_wire_2pin"
+
+        assert "Transistor" in by_type
+        assert by_type["Transistor"]["package_type"] == "transistor_3pin"
+        assert by_type["Transistor"]["pin_schema_id"] == "fixed_3pins"
+
     def test_t2_3_empty_detections(self, blank_image_b64):
         """T2.3: 0 个元件 → detections=[]"""
         from app.pipeline.stages.s1_detect import run_detect
@@ -100,7 +129,8 @@ class TestS1ComponentDetection:
             detector=mock_detector_resistor,
         )
         assert result["interface_version"] == "component_detect_v1"
-        assert result["detector_backend"] == "yolo_obb_component"
+        assert result["detector_backend"] == "mock_component_detector"
+        assert result["detector_contract"]["task"] == "mock"
 
     def test_t2_recall_mode_single_image(self, mock_detector_resistor, blank_image_b64):
         """T3.1: 单张图 → recall_mode=top_primary_plus_side_candidates"""

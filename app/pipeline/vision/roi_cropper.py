@@ -4,7 +4,7 @@ ROI crop helpers for component-centered pin detection.
 当前 ROI 裁剪策略明确按封装工作, 而不是对所有元件统一 margin:
 - 轴向 2-pin 器件沿主轴给更多 lead 空间
 - DIP 封装沿短轴给更多 pin 排空间
-- top 视图优先用 OBB 主轴
+- top 视图优先使用 bbox 几何方向; 若历史兼容输入提供 OBB, 则可辅助裁剪
 - side 视图在缺真实 bbox 时仍走封装驱动的保守 crop
 """
 
@@ -27,7 +27,11 @@ def crop_component_roi(
     obb_corners: list[list[float]] | np.ndarray | None = None,
     view_id: str = "top",
 ) -> tuple[np.ndarray | None, tuple[int, int], dict[str, Any]]:
-    """按封装、朝向和 OBB 几何裁剪单元件 ROI."""
+    """按封装、朝向和 bbox 几何裁剪单元件 ROI.
+
+    当前 detect 主路径主要依赖标准 bbox。
+    `obb_corners` 仅作为历史兼容输入参与细化裁剪。
+    """
     if _bbox_mostly_outside_image(bbox, image.shape[:2]):
         # 某些测试/离线联调会直接把“单元件 ROI 图”作为输入传进来,
         # 这时 bbox 仍可能是原始整图坐标。为了让第二阶段接口稳定,

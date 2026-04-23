@@ -16,6 +16,7 @@ import networkx as nx
 
 from app.domain.board_schema import BoardSchema
 from app.domain.netlist_models import ComponentInstance, ElectricalNet, NetlistV2, PinAssignment
+from app.pipeline.vision.label_mapping import component_id_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,10 @@ def norm_component_type(t: str) -> str:
     u = str(t).strip().upper()
     if "RESIST" in u:
         return "Resistor"
+    if "CAPACITOR_CERAMIC" in u or u == "CAPACITORCERAMIC":
+        return "CapacitorCeramic"
+    if "CAPACITOR_ELECTROLYTIC" in u or u == "CAPACITORELECTROLYTIC":
+        return "CapacitorElectrolytic"
     if "CAPACIT" in u or u == "CAP":
         return "Capacitor"
     if "WIRE" in u:
@@ -39,6 +44,8 @@ def norm_component_type(t: str) -> str:
         return "LED"
     if "DIODE" in u:
         return "Diode"
+    if "TRANSISTOR" in u:
+        return "Transistor"
     if u == "IC":
         return "IC"
     if "POTENTIOMETER" in u or "POT" in u:
@@ -73,10 +80,10 @@ class PinRole(Enum):
     TERMINAL_B = "terminal_b"
 
 
-POLARIZED_TYPES = {"LED", "Diode"}
-THREE_PIN_TYPES: set = set()
-CAPACITOR_TYPES = {"Capacitor"}
-NON_POLAR_TYPES = {"Resistor", "Wire", "Capacitor", "Potentiometer"}
+POLARIZED_TYPES = {"LED", "Diode", "CapacitorElectrolytic"}
+THREE_PIN_TYPES = {"Transistor", "Potentiometer"}
+CAPACITOR_TYPES = {"Capacitor", "CapacitorCeramic", "CapacitorElectrolytic"}
+NON_POLAR_TYPES = {"Resistor", "Wire", "Capacitor", "CapacitorCeramic", "Transistor", "Potentiometer"}
 IC_TYPES = {"IC"}
 POTENTIOMETER_TYPES = {"Potentiometer"}
 POWER_KEYWORDS = {"VCC", "GND", "POWER", "BATTERY"}
@@ -172,14 +179,9 @@ class CircuitAnalyzer:
         self.power_nets = {}
         self._name_counters = {}
 
-    _TYPE_PREFIX = {
-        "Resistor": "R", "Capacitor": "C", "Wire": "W", "LED": "LED",
-        "Diode": "D", "IC": "IC", "Potentiometer": "POT",
-    }
-
     def _auto_name(self, comp_type: str) -> str:
         norm = self._norm_type(comp_type)
-        prefix = self._TYPE_PREFIX.get(norm, norm[:3])
+        prefix = component_id_prefix(norm)
         self._name_counters[norm] = self._name_counters.get(norm, 0) + 1
         return f"{prefix}{self._name_counters[norm]}"
 
@@ -668,7 +670,7 @@ class CircuitAnalyzer:
                 net1_id, net2_id = pin_nets[0], pin_nets[1]
                 if ctype == "Resistor":
                     lines.append(f"{comp.component_id} {net1_id} {net2_id} 1k")
-                elif ctype == "Capacitor":
+                elif ctype in CAPACITOR_TYPES:
                     lines.append(f"{comp.component_id} {net1_id} {net2_id} 100n")
                 elif ctype == "LED":
                     lines.append(f"D_{comp.component_id} {net1_id} {net2_id} LED")

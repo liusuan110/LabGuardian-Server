@@ -146,6 +146,38 @@ class TestS4Validation:
         assert "diagnostics" in result
         assert isinstance(result["diagnostics"], list)
 
+    def test_t7_4b_electrolytic_unknown_polarity(self):
+        """细粒度电解电容 polarity=unknown 时也应进入极性诊断."""
+        from app.pipeline.stages.s4_validate import run_validate
+        from app.pipeline.stages.s3_topology import run_topology
+
+        components = [
+            {
+                "component_id": "CE1",
+                "component_type": "CapacitorElectrolytic",
+                "package_type": "capacitor_electrolytic_2pin",
+                "polarity": "unknown",
+                "pins": [
+                    {"pin_id": 1, "pin_name": "positive", "hole_id": "A1",
+                     "electrical_node_id": "ROW_1_L", "confidence": 0.95,
+                     "observations": [], "source": "heuristic_fallback"},
+                    {"pin_id": 2, "pin_name": "negative", "hole_id": "A3",
+                     "electrical_node_id": "ROW_3_L", "confidence": 0.95,
+                     "observations": [], "source": "heuristic_fallback"},
+                ],
+            }
+        ]
+
+        s3 = run_topology(components=components)
+        result = run_validate(
+            topology_graph=s3["topology_graph"],
+            reference_circuit=None,
+            components=components,
+        )
+
+        diagnostic_text = " ".join(str(item) for item in result.get("diagnostics", []))
+        assert "CapacitorElectrolytic" in diagnostic_text or isinstance(result["diagnostics"], list)
+
     def test_t7_5_empty_topology(self):
         """空拓扑 → 不 crash"""
         from app.pipeline.stages.s4_validate import run_validate

@@ -47,7 +47,8 @@
 
 - S1 不再负责 pin 推断
 - side detection 目前只做候选补召回, 不直接进入主实例列表
-- 真实 `YOLO-OBB` 模型后续主要接在 `detector.py`
+- 真实 `YOLO-Detect` 组件模型后续主要接在 `detector.py`
+- `OBB` 仅保留兼容解析分支, 不再作为默认组件检测路线
 
 ### S1.5: Component ROI Pin Detect
 
@@ -214,7 +215,7 @@ component_id + pin_name + hole_id
 
 - `app/pipeline/orchestrator.py`: S1-S4 总调度
 - `app/pipeline/stages/`: detect / pin detect / mapping / topology / validate
-- `app/pipeline/vision/`: YOLO-OBB、YOLO-Pose 接口、校准、ROI、图像解码等底层视觉能力
+- `app/pipeline/vision/`: YOLO-Detect、YOLO-Pose 接口、校准、ROI、图像解码等底层视觉能力
 
 建议约束:
 
@@ -313,7 +314,7 @@ component_id + pin_name + hole_id
 
 如果团队成员要并行开发，推荐按下面入口分工：
 
-### 接 `YOLO-OBB`
+### 接 `YOLO-Detect`
 
 优先看:
 
