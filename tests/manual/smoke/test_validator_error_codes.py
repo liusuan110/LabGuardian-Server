@@ -137,6 +137,21 @@ def main() -> int:
         fixture_dir / "mapped_led_pin_extra.json",
         "PIN_EXTRA",
     )
+    _assert_compare_code(
+        fixture_dir / "reference_capacitor_ceramic_v4.json",
+        fixture_dir / "mapped_capacitor_ceramic_hole_mismatch.json",
+        "HOLE_MISMATCH",
+    )
+    _assert_compare_code(
+        fixture_dir / "reference_capacitor_electrolytic_v4.json",
+        fixture_dir / "mapped_capacitor_electrolytic_unknown_polarity.json",
+        "POLARITY_UNKNOWN",
+    )
+    _assert_compare_code(
+        fixture_dir / "reference_transistor_v4.json",
+        fixture_dir / "mapped_transistor_missing_pin.json",
+        "PIN_MISSING",
+    )
 
     _assert_diagnose_code(
         fixture_dir / "mapped_floating_pin.json",

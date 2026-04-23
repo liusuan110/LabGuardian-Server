@@ -1,0 +1,30 @@
+[
+  {
+    "component_id": "Q1",
+    "component_type": "Transistor",
+    "class_name": "Transistor",
+    "package_type": "transistor_3pin",
+    "polarity": "none",
+    "confidence": 1.0,
+    "pins": [
+      {
+        "pin_id": 1,
+        "pin_name": "pin1",
+        "logic_loc": ["20", "b"],
+        "hole_id": "B20",
+        "electrical_node_id": "ROW_20_L",
+        "confidence": 1.0,
+        "is_ambiguous": false
+      },
+      {
+        "pin_id": 2,
+        "pin_name": "pin2",
+        "logic_loc": ["21", "b"],
+        "hole_id": "B21",
+        "electrical_node_id": "ROW_21_L",
+        "confidence": 1.0,
+        "is_ambiguous": false
+      }
+    ]
+  }
+]

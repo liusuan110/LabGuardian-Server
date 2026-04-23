@@ -4,7 +4,14 @@ T9: 接口版本与元数据测试 — 验证所有 stage 的接口完整性
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+TRAINED_DETECT_WEIGHT = PROJECT_ROOT / "train_demo" / "runs" / "detect_components" / "weights" / "best.pt"
+TRAINED_POSE_WEIGHT = PROJECT_ROOT / "train_demo" / "runs" / "pose_components" / "weights" / "best.pt"
 
 
 class TestInterfaceVersions:
@@ -211,3 +218,86 @@ class TestInterfaceVersions:
         assert result["pin_detector_mode"] == "heuristic_fallback"
         assert "pin_detector_backend" in result
         assert result["pin_detector_backend"] == "yolo_pose"
+
+    def test_t9_8_detector_contract_present(self, blank_image_b64):
+        """S1 会透传 detector contract."""
+        from app.pipeline.stages.s1_detect import run_detect
+        from tests.pipeline.mocks import MockComponentDetector
+
+        det = MockComponentDetector([
+            {"class_name": "Resistor", "bbox": (100, 200, 300, 260), "confidence": 0.95}
+        ])
+        result = run_detect(images_b64=[blank_image_b64], detector=det)
+
+        assert "detector_contract" in result
+        assert result["detector_contract"]["task"] == "mock"
+
+    def test_t9_9_pin_detector_contract_present(self, blank_image_b64):
+        """S1.5 会透传 pin detector contract."""
+        from app.pipeline.stages.s1_detect import run_detect
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from app.pipeline.vision.pin_model import PinRoiDetector
+        from tests.pipeline.mocks import MockComponentDetector
+
+        det = MockComponentDetector([
+            {"class_name": "Resistor", "bbox": (100, 200, 300, 260), "confidence": 0.95}
+        ])
+        s1 = run_detect(images_b64=[blank_image_b64], detector=det)
+        pin_det = PinRoiDetector(model_path=None, device="cpu")
+        result = run_pin_detect(
+            detections=s1["detections"],
+            images_b64=[blank_image_b64],
+            pin_detector=pin_det,
+        )
+
+        assert "pin_detector_contract" in result
+        assert result["pin_detector_contract"]["task"] == "unknown"
+
+
+class TestRealModelContracts:
+    """真实模型权重的轻量合同检查（不要求成功加载 torch/ultralytics）."""
+
+    def test_t9_10_default_model_paths_point_to_trained_weights_when_present(self):
+        if not TRAINED_DETECT_WEIGHT.exists() or not TRAINED_POSE_WEIGHT.exists():
+            pytest.skip("trained weights not available")
+
+        assert TRAINED_DETECT_WEIGHT.name == "best.pt"
+        assert TRAINED_POSE_WEIGHT.name == "best.pt"
+
+    def test_t9_11_component_detector_rejects_pose_weight(self):
+        from app.pipeline.vision.detector import ComponentDetector
+
+        if not TRAINED_POSE_WEIGHT.exists():
+            pytest.skip("pose weight not available")
+
+        detector = ComponentDetector(model_path=None, device="cpu")
+        ok = detector.load(str(TRAINED_POSE_WEIGHT))
+        assert ok is False
+        assert detector.model is None
+        assert detector.model_contract["task"] == "pose"
+
+    def test_t9_12_pin_detector_rejects_detect_weight(self):
+        from app.pipeline.vision.pin_model import PinRoiDetector
+
+        if not TRAINED_DETECT_WEIGHT.exists():
+            pytest.skip("detect weight not available")
+
+        detector = PinRoiDetector(model_path=None, device="cpu")
+        ok = detector.load(str(TRAINED_DETECT_WEIGHT))
+        assert ok is False
+        assert detector.model is None
+        assert detector.model_contract["task"] in {"detect", "obb"}
+
+    def test_t9_13_real_weight_contracts_match_expected_tasks(self):
+        from app.pipeline.vision.model_inspector import inspect_yolo_weight
+
+        if not TRAINED_DETECT_WEIGHT.exists() or not TRAINED_POSE_WEIGHT.exists():
+            pytest.skip("trained weights not available")
+
+        detect_contract = inspect_yolo_weight(TRAINED_DETECT_WEIGHT)
+        pose_contract = inspect_yolo_weight(TRAINED_POSE_WEIGHT)
+
+        assert detect_contract["task"] in {"detect", "obb"}
+        assert "resistor" in [str(name).lower() for name in detect_contract["names"]]
+        assert pose_contract["task"] == "pose"
+        assert "transistor_3pin" in [str(name).lower() for name in pose_contract["names"]]

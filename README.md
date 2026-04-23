@@ -20,10 +20,11 @@ LabGuardian 的服务器端负责把视觉识别结果转换成可验证、可�
 - 新网表模型已经落地：`netlist_v2`
 - 比赛板 `board_schema` 已接入默认加载流程
 - pipeline 已切到 `S1 component detect -> S1.5 ROI pin detect -> S2 hole mapping`
+- 当前组件检测主路径已经收口为 `YOLO-Detect`，`OBB` 仅保留兼容解析能力
 - S1 现在固定由 `top` 视图建立全局 `component_id`
 - S1 已支持 `side recall candidates` 输出，但 side 候选当前不直接进入主实例链
 - S1.5 已支持多视图 ROI pin 检测结构，侧视图当前用显式 `shared_bbox_fallback`
-- S1.5 的 ROI 裁剪已切到“按封装 + OBB 主轴”的策略，不再使用统一 margin
+- S1.5 的 ROI 裁剪已切到“按封装 + bbox 几何方向”的策略，不再使用统一 margin
 - S1.5 已预留侧视图 ROI 关联骨架，优先尝试使用 `side recall candidates`
 - S2 开始原生输出 `components[].pins[]`
 - S3 / S4 / validator 已开始消费新结构
@@ -72,7 +73,7 @@ LabGuardian 的服务器端负责把视觉识别结果转换成可验证、可�
 
 ```text
 top / left / right 图片
--> S1: component detect (YOLO-OBB)
+-> S1: component detect (YOLO-Detect)
 -> S1.5: component ROI pin detect (YOLO-Pose 接口预留)
 -> S2: pin keypoint -> hole_id / electrical_node_id
 -> S3: topology / netlist_v2
@@ -299,7 +300,7 @@ component_id + pin_name + hole_id
 
 | 目标 | 首先看哪些文件 |
 |---|---|
-| 接入 `YOLO-OBB` 组件检测模型 | [app/pipeline/vision/detector.py](app/pipeline/vision/detector.py), [app/pipeline/stages/s1_detect.py](app/pipeline/stages/s1_detect.py) |
+| 接入 `YOLO-Detect` 组件检测模型 | [app/pipeline/vision/detector.py](app/pipeline/vision/detector.py), [app/pipeline/stages/s1_detect.py](app/pipeline/stages/s1_detect.py) |
 | 接入 `YOLO-Pose` 引脚检测模型 | [app/pipeline/vision/pin_model.py](app/pipeline/vision/pin_model.py), [app/pipeline/stages/s1b_pin_detect.py](app/pipeline/stages/s1b_pin_detect.py) |
 | 修改 ROI 裁剪或多视图 ROI 来源 | [app/pipeline/vision/roi_cropper.py](app/pipeline/vision/roi_cropper.py), [app/pipeline/stages/s1b_pin_detect.py](app/pipeline/stages/s1b_pin_detect.py) |
 | 修改 pin schema / 封装默认规则 | [app/pipeline/vision/pin_schema.py](app/pipeline/vision/pin_schema.py) |

@@ -10,6 +10,8 @@ from app.pipeline.vision.detector import Detection
 class MockComponentDetector:
     """Mock YOLO 检测器 — 返回预设 bbox，不依赖真实模型."""
 
+    backend_type = "mock_component_detector"
+
     def __init__(self, detections: list[dict[str, Any]]):
         """
         Args:
@@ -23,6 +25,15 @@ class MockComponentDetector:
         """
         self._dets = detections
         self.detected_count = 0
+        self.model_contract = {
+            "path": "",
+            "exists": False,
+            "task": "mock",
+            "model_class": "MockComponentDetector",
+            "names": [],
+            "kpt_shape": None,
+            "loaded": True,
+        }
 
     def detect(
         self,

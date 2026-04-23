@@ -10,6 +10,13 @@ S1 component detect
 
 这三层的协议在模型训练完成前就应保持稳定。
 
+当前默认视觉主路径：
+
+- `S1`: `YOLO-Detect`
+- `S1.5`: `YOLO-Pose`
+
+其中 `OBB` 相关字段仅作为历史兼容保留，不是当前主方案。
+
 ## S1
 
 阶段: `component_detect_v1`
@@ -20,10 +27,16 @@ S1 component detect
 - 侧视图在当前版本不参与组件实例化
 - 若 `top` 解码失败, S1 不产生检测结果
 
+当前默认 backend:
+
+- `detector_backend = "yolo_detect_component"`
+- 若历史兼容权重为 `OBBModel`，才可能出现 `yolo_obb_component`
+
 顶层字段:
 
 - `interface_version`
 - `detector_backend`
+- `detector_contract`
 - `detections`
 - `supplemental_detections`
 - `recall_mode`
@@ -44,13 +57,13 @@ S1 component detect
 - `pin_schema_id`
 - `confidence`
 - `bbox`
-- `is_obb`
+- `is_obb`（兼容字段，detect 主路径通常为 `false`）
 - `orientation`
 - `view_id`
 - `source`
 - `source_model_type`
 - `wire_color`
-- `obb_corners`
+- `obb_corners`（兼容字段，detect 主路径通常为 `null`）
 
 每个 supplemental detection:
 
@@ -61,14 +74,14 @@ S1 component detect
 - `pin_schema_id`
 - `confidence`
 - `bbox`
-- `is_obb`
+- `is_obb`（兼容字段）
 - `orientation`
 - `view_id`
 - `source`
 - `source_model_type`
 - `instance_status`
 - `wire_color`
-- `obb_corners`
+- `obb_corners`（兼容字段）
 
 ## S1.5
 
@@ -79,6 +92,7 @@ S1 component detect
 - `interface_version`
 - `pin_detector_backend`
 - `pin_detector_mode`
+- `pin_detector_contract`
 - `components`
 - `decoded_view_count`
 - `available_view_ids`
@@ -135,7 +149,8 @@ S1 component detect
 
 - 轴向 2-pin 器件沿主轴保留更多 lead 空间
 - DIP 封装沿短轴保留更多 pin 排空间
-- top 视图优先使用 OBB 主轴
+- top 视图优先使用 bbox 几何方向
+- 若历史兼容输入提供 `obb_corners`，可作为裁剪辅助，但不是主路径前提
 - side 视图当前允许走封装驱动的 fallback crop, 但来源必须显式标记
 
 ## S2

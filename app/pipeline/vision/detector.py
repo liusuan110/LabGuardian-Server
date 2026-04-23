@@ -1,17 +1,22 @@
 """
-YOLO 检测器封装 (← src_v2/vision/detector.py)
+YOLO 组件检测器封装.
 
-封装 Ultralytics YOLO, 支持 HBB 和 OBB 模型
+当前视觉主路径使用 YOLO-Detect（HBB）。
+OBB 解析能力仅作为兼容分支保留, 方便后续接历史模型或离线对比,
+但不再作为当前项目的默认检测方案。
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
+
+from app.pipeline.vision.model_inspector import inspect_yolo_weight
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +29,7 @@ class Detection:
     confidence: float = 0.0
     bbox: Tuple[int, int, int, int] = (0, 0, 0, 0)  # x1, y1, x2, y2
 
-    # OBB 支持
+    # OBB 兼容字段（当前主路径默认不会产出）
     is_obb: bool = False
     obb_corners: Optional[np.ndarray] = None  # (4, 2)
 
@@ -37,7 +42,15 @@ class Detection:
 
 
 class ComponentDetector:
-    """YOLO 检测器"""
+    """组件检测器.
+
+    主路径:
+    - 加载 detect 模型
+    - 输出标准 bbox
+
+    兼容路径:
+    - 若历史权重被识别为 OBBModel，仍可解析旋转框
+    """
 
     def __init__(
         self,
@@ -50,27 +63,75 @@ class ComponentDetector:
         self.obb_model_path = obb_model_path
         self.device = device
         self._is_obb = False
+        self.model_contract: dict[str, object] = {
+            "path": "",
+            "exists": False,
+            "task": "unknown",
+            "model_class": "unknown",
+            "names": [],
+            "kpt_shape": None,
+            "loaded": False,
+        }
 
         # 有路径就自动加载
         if model_path:
             self.load(model_path)
 
+    @property
+    def backend_type(self) -> str:
+        return "yolo_obb_component" if self._is_obb else "yolo_detect_component"
+
     def load(self, model_path: Optional[str] = None) -> bool:
-        """加载 YOLO 模型"""
+        """加载组件检测模型.
+
+        当前会优先按 detect 主路径工作；若权重合同显示是 OBBModel，
+        则自动切到兼容解析分支。
+        """
         path = model_path or self.model_path
         if not path:
             logger.warning("[Detector] No model path specified")
+            return False
+        if not Path(path).exists():
+            logger.error("[Detector] Model path does not exist: %s", path)
+            self.model = None
+            self.model_contract = {
+                "path": str(path),
+                "exists": False,
+                "task": "unknown",
+                "model_class": "unknown",
+                "names": [],
+                "kpt_shape": None,
+                "loaded": False,
+            }
+            return False
+
+        contract = inspect_yolo_weight(path)
+        contract["loaded"] = False
+        self.model_contract = contract
+        task = str(contract.get("task") or "unknown")
+        if task == "pose":
+            logger.error("[Detector] Refusing pose weight for component detector: %s", path)
+            self.model = None
+            self._is_obb = False
             return False
 
         try:
             from ultralytics import YOLO
 
             self.model = YOLO(path)
-            self._is_obb = "obb" in str(path).lower()
-            logger.info(f"[Detector] Loaded: {path} (OBB={self._is_obb})")
+            self.model_path = path
+            self._is_obb = task == "obb" or "obb" in Path(path).name.lower()
+            self.model_contract["loaded"] = True
+            logger.info(
+                "[Detector] Loaded: %s (task=%s backend=%s)",
+                path,
+                task,
+                self.backend_type,
+            )
             return True
         except Exception as e:
             logger.error(f"[Detector] Load failed: {e}")
+            self.model_contract["loaded"] = False
             return False
 
     def detect(

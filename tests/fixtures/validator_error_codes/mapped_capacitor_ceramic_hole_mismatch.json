@@ -1,0 +1,30 @@
+[
+  {
+    "component_id": "CC1",
+    "component_type": "CapacitorCeramic",
+    "class_name": "CapacitorCeramic",
+    "package_type": "capacitor_ceramic_2pin",
+    "polarity": "none",
+    "confidence": 1.0,
+    "pins": [
+      {
+        "pin_id": 1,
+        "pin_name": "pin1",
+        "logic_loc": ["12", "a"],
+        "hole_id": "A12",
+        "electrical_node_id": "ROW_12_L",
+        "confidence": 1.0,
+        "is_ambiguous": false
+      },
+      {
+        "pin_id": 2,
+        "pin_name": "pin2",
+        "logic_loc": ["12", "f"],
+        "hole_id": "F12",
+        "electrical_node_id": "ROW_12_R",
+        "confidence": 1.0,
+        "is_ambiguous": false
+      }
+    ]
+  }
+]

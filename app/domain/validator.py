@@ -221,8 +221,8 @@ class CircuitValidator:
             return result
 
         # L0: 元件数量统计
-        ref_counts = Counter(c.component_type for c in self.ref_component_instances)
-        curr_counts = Counter(c.component_type for c in curr_analyzer.component_instances)
+        ref_counts = Counter(norm_component_type(c.component_type) for c in self.ref_component_instances)
+        curr_counts = Counter(norm_component_type(c.component_type) for c in curr_analyzer.component_instances)
         for t in sorted(set(ref_counts.keys()) | set(curr_counts.keys())):
             r_c, c_c = ref_counts[t], curr_counts[t]
             if c_c < r_c:
@@ -888,7 +888,10 @@ def _component_instance_from_dict(item: Dict) -> ComponentInstance:
 
 
 def _needs_polarity_check(comp: ComponentInstance) -> bool:
-    return str(comp.polarity or "none") in ("forward", "reverse", "unknown")
+    return (
+        str(comp.polarity or "none") in ("forward", "reverse", "unknown")
+        or norm_component_type(comp.component_type) in POLARIZED_TYPES
+    )
 
 
 def _first_pin_row(comp: ComponentInstance) -> Optional[int]:
@@ -905,7 +908,7 @@ def _first_pin_row(comp: ComponentInstance) -> Optional[int]:
 
 
 def _component_match_cost(ref_comp: ComponentInstance, curr_comp: ComponentInstance) -> float:
-    if ref_comp.component_type != curr_comp.component_type:
+    if norm_component_type(ref_comp.component_type) != norm_component_type(curr_comp.component_type):
         return 1000.0
 
     cost = 0.0

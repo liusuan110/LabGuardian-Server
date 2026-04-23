@@ -14,68 +14,18 @@ from typing import Any, Dict, List, Tuple
 
 from app.pipeline.vision.detector import ComponentDetector, Detection
 from app.pipeline.vision.image_io import decode_images_b64, decode_summary
-from app.pipeline.vision.pin_schema import default_package_type, default_pin_schema_id
+from app.pipeline.vision.label_mapping import (
+    component_id_prefix,
+    default_package_type,
+    default_pin_schema_id,
+    is_supported_component_type,
+    normalize_component_type,
+)
 
 logger = logging.getLogger(__name__)
 
-# ── 模型直接输出的元件类别 ──
-# 保留原始标签，不做转换
-COMPONENT_CLASSES = {
-    "capacitor_ceramic",
-    "capacitor_electrolytic",
-    "diode",
-    "jumper_wire",
-    "led",
-    "resistor",
-    "transistor_3pin",
-    "IC",
-    "Potentiometer",
-}
-
-# ── 类名标准化映射: YOLO 输出 → Pipeline 标准类名 ──
-# 确保不同模型训练出的类名统一
-CLASS_NAME_MAP = {
-    "resistor": "Resistor",
-    "Resistor": "Resistor",
-    "capacitor": "Capacitor",
-    "Capacitor": "Capacitor",
-    "wire": "Wire",
-    "Wire": "Wire",
-    "led": "LED",
-    "LED": "LED",
-    "Led": "LED",
-    "diode": "Diode",
-    "Diode": "Diode",
-    "IC": "IC",
-    "ic": "IC",
-    "potentiometer": "Potentiometer",
-    "Potentiometer": "Potentiometer",
-}
-
-# 作为元件参与拓扑构建的类别 (标准化后的名称)
-COMPONENT_CLASSES = {
-    "Resistor", "Capacitor", "Wire", "LED",
-    "Diode", "IC", "Potentiometer",
-}
-
 # 过滤掉的背景类 (Breadboard, Line_area 等)
 IGNORED_CLASSES = {"Breadboard", "Line_area", "breadboard", "line_area", "pinned", "Pinned"}
-
-_TYPE_PREFIX = {
-    "resistor": "R",
-    "capacitor_ceramic": "C",
-    "capacitor_electrolytic": "C",
-    "capacitor": "C",
-    "jumper_wire": "W",
-    "capacitor": "C",
-    "wire": "W",
-    "led": "LED",
-    "diode": "D",
-    "ic": "IC",
-    "potentiometer": "POT",
-    "transistor_3pin": "Q",
-}
-
 
 def run_detect(
     images_b64: List[str],
@@ -120,14 +70,20 @@ def run_detect(
             roi_rect=roi_rect,
         )
         supplemental_detections.extend(
-            _candidate_detection_to_dict(det, view_id=item["view_id"], candidate_index=index + 1)
+            _candidate_detection_to_dict(
+                det,
+                view_id=item["view_id"],
+                candidate_index=index + 1,
+                source_model_type=getattr(detector, "backend_type", "component_detector"),
+            )
             for index, det in enumerate(side_detections)
         )
 
     if top_image is None:
         return {
             "interface_version": "component_detect_v1",
-            "detector_backend": "yolo_obb_component",
+            "detector_backend": getattr(detector, "backend_type", "component_detector"),
+            "detector_contract": dict(getattr(detector, "model_contract", {}) or {}),
             "detections": [],
             "supplemental_detections": supplemental_detections,
             "recall_mode": "side_candidates_only",
@@ -150,8 +106,12 @@ def run_detect(
 
     return {
         "interface_version": "component_detect_v1",
-        "detector_backend": "yolo_obb_component",
-        "detections": [_detection_to_dict(d) for d in component_dets],
+        "detector_backend": getattr(detector, "backend_type", "component_detector"),
+        "detector_contract": dict(getattr(detector, "model_contract", {}) or {}),
+        "detections": [
+            _detection_to_dict(d, source_model_type=getattr(detector, "backend_type", "component_detector"))
+            for d in component_dets
+        ],
         "supplemental_detections": supplemental_detections,
         "recall_mode": "top_primary_plus_side_candidates",
         "primary_image_shape": top_image.shape[:2],
@@ -163,10 +123,10 @@ def run_detect(
 def _assign_component_ids(detections: List[Detection]) -> None:
     counters: Dict[str, int] = {}
     for det in detections:
-        key = det.class_name.lower()
-        prefix = _TYPE_PREFIX.get(key, key[:3].upper() or "CMP")
-        counters[key] = counters.get(key, 0) + 1
-        setattr(det, "component_id", f"{prefix}{counters[key]}")
+        component_type = str(det.class_name or "UNKNOWN")
+        prefix = component_id_prefix(component_type)
+        counters[component_type] = counters.get(component_type, 0) + 1
+        setattr(det, "component_id", f"{prefix}{counters[component_type]}")
 
 
 def _compute_orientation(det: Detection) -> float:
@@ -199,11 +159,13 @@ def _detect_components_for_view(
 
 
     for det in detections:
-        det.class_name = CLASS_NAME_MAP.get(det.class_name, det.class_name)
-    return [det for det in detections if det.class_name in COMPONENT_CLASSES and det.class_name not in IGNORED_CLASSES]
+        if det.class_name in IGNORED_CLASSES:
+            continue
+        det.class_name = normalize_component_type(det.class_name)
+    return [det for det in detections if is_supported_component_type(det.class_name) and det.class_name not in IGNORED_CLASSES]
 
 
-def _detection_to_dict(det: Detection) -> dict:
+def _detection_to_dict(det: Detection, *, source_model_type: str = "component_detector") -> dict:
     component_type = det.class_name
     package_type = default_package_type(component_type)
     pin_schema_id = default_pin_schema_id(component_type, package_type)
@@ -220,7 +182,7 @@ def _detection_to_dict(det: Detection) -> dict:
         "orientation": _compute_orientation(det),
         "view_id": "top",
         "source": "component_detector",
-        "source_model_type": "yolo_obb_component",
+        "source_model_type": source_model_type,
         "wire_color": det.wire_color,
         "obb_corners": det.obb_corners.tolist() if det.obb_corners is not None else None,
     }
@@ -231,6 +193,7 @@ def _candidate_detection_to_dict(
     *,
     view_id: str,
     candidate_index: int,
+    source_model_type: str = "component_detector",
 ) -> dict:
     component_type = det.class_name
     package_type = default_package_type(component_type)
@@ -247,7 +210,7 @@ def _candidate_detection_to_dict(
         "orientation": _compute_orientation(det),
         "view_id": view_id,
         "source": "side_recall_candidate",
-        "source_model_type": "yolo_obb_component",
+        "source_model_type": source_model_type,
         "instance_status": "candidate",
         "wire_color": det.wire_color,
         "obb_corners": det.obb_corners.tolist() if det.obb_corners is not None else None,

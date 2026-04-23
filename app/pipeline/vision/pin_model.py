@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import cv2
 import numpy as np
 
+from app.pipeline.vision.label_mapping import default_pin_count
+from app.pipeline.vision.model_inspector import inspect_yolo_weight
 from app.pipeline.vision.pin_schema import default_pin_names
 
 logger = logging.getLogger(__name__)
@@ -29,6 +32,16 @@ class PinPrediction:
     visibility: int
     source: str
     metadata: dict[str, object]
+
+
+@dataclass
+class ModelPinParseResult:
+    ordered_keypoints: list[tuple[float, float] | None]
+    raw_keypoint_count: int
+    raw_visible_keypoint_count: int
+    used_keypoint_count: int
+    extra_keypoints_ignored: int
+    ignored_keypoints_reason: str
 
 
 class PinRoiDetector:
@@ -46,6 +59,15 @@ class PinRoiDetector:
         self.model_path = model_path
         self.device = device
         self.model = None
+        self.model_contract: dict[str, object] = {
+            "path": "",
+            "exists": False,
+            "task": "unknown",
+            "model_class": "unknown",
+            "names": [],
+            "kpt_shape": None,
+            "loaded": False,
+        }
         if model_path:
             self.load(model_path)
 
@@ -70,16 +92,26 @@ class PinRoiDetector:
         path = model_path or self.model_path
         if not path:
             return False
+        contract = inspect_yolo_weight(path)
+        contract["loaded"] = False
+        self.model_contract = contract
+        task = str(contract.get("task") or "unknown")
+        if task in {"detect", "obb"}:
+            logger.error("[PinDetector] Refusing non-pose weight for pin detector: %s (task=%s)", path, task)
+            self.model = None
+            return False
         try:
             from ultralytics import YOLO
 
             self.model = YOLO(path)
             self.model_path = path
+            self.model_contract["loaded"] = True
             logger.info("[PinDetector] Loaded ROI pin model: %s", path)
             return True
         except Exception as exc:
             logger.warning("[PinDetector] Failed to load ROI pin model %s: %s", path, exc)
             self.model = None
+            self.model_contract["loaded"] = False
             return False
 
     def predict_component_pins(
@@ -113,20 +145,25 @@ class PinRoiDetector:
                     pin_name=pin_names[idx],
                     keypoint=(
                         (
-                            float(model_keypoints[idx][0] + ox),
-                            float(model_keypoints[idx][1] + oy),
+                            float(model_keypoints.ordered_keypoints[idx][0] + ox),
+                            float(model_keypoints.ordered_keypoints[idx][1] + oy),
                         )
-                        if idx < len(model_keypoints) and model_keypoints[idx] is not None
+                        if idx < len(model_keypoints.ordered_keypoints) and model_keypoints.ordered_keypoints[idx] is not None
                         else None
                     ),
                     confidence=confidence,
-                    visibility=2 if idx < len(model_keypoints) and model_keypoints[idx] is not None else 0,
+                    visibility=2 if idx < len(model_keypoints.ordered_keypoints) and model_keypoints.ordered_keypoints[idx] is not None else 0,
                     source="model",
                     metadata={
                         "backend_type": self.backend_type,
                         "backend_mode": "model",
                         "interface_version": self.interface_version,
                         "view_id": view_id,
+                        "raw_keypoint_count": model_keypoints.raw_keypoint_count,
+                        "raw_visible_keypoint_count": model_keypoints.raw_visible_keypoint_count,
+                        "used_keypoint_count": model_keypoints.used_keypoint_count,
+                        "extra_keypoints_ignored": model_keypoints.extra_keypoints_ignored,
+                        "ignored_keypoints_reason": model_keypoints.ignored_keypoints_reason,
                     },
                 )
                 for idx in range(pin_count)
@@ -154,6 +191,11 @@ class PinRoiDetector:
                     "interface_version": self.interface_version,
                     "heuristic_score": round(float(heuristic_score), 4),
                     "view_id": view_id,
+                    "raw_keypoint_count": 0,
+                    "raw_visible_keypoint_count": 0,
+                    "used_keypoint_count": sum(1 for point in keypoints if point is not None),
+                    "extra_keypoints_ignored": 0,
+                    "ignored_keypoints_reason": "",
                 },
             )
             for idx in range(pin_count)
@@ -166,7 +208,7 @@ class PinRoiDetector:
         component_type: str,
         package_type: str,
         pin_count: int,
-    ) -> list[tuple[float, float] | None] | None:
+    ) -> ModelPinParseResult | None:
         """真实第二模型接口.
 
         约定:
@@ -187,12 +229,11 @@ class PinRoiDetector:
             if xy is None or len(xy) == 0:
                 return None
             points = xy[0].cpu().numpy()
-            ordered: list[tuple[float, float] | None] = []
-            for idx in range(min(pin_count, len(points))):
-                ordered.append((float(points[idx][0]), float(points[idx][1])))
-            while len(ordered) < pin_count:
-                ordered.append(None)
-            return ordered
+            conf_obj = getattr(first.keypoints, "conf", None)
+            confs = None
+            if conf_obj is not None and len(conf_obj) > 0:
+                confs = conf_obj[0].cpu().numpy()
+            return _parse_model_keypoints(points=points, confs=confs, pin_count=pin_count)
         except Exception as exc:
             logger.warning(
                 "[PinDetector] Model inference failed for %s/%s: %s",
@@ -261,14 +302,68 @@ class PinRoiDetector:
 
 
 def _infer_pin_count(component_type: str, package_type: str) -> int:
-    ctype = component_type.lower()
-    if ctype == "ic" and package_type == "dip8":
-        return 2
-    if ctype in ("potentiometer", "potentiometer_3pin"):
-        return 3
-    if ctype in ("transistor", "transistor_3pin"):
-        return 3
-    return 2
+    return default_pin_count(component_type, package_type)
+
+
+def _is_valid_model_keypoint(x: float, y: float, score: float | None) -> bool:
+    if not np.isfinite(x) or not np.isfinite(y):
+        return False
+    if score is not None and (not np.isfinite(score) or score <= 0.0):
+        return False
+    # 当前 pose 训练为全局 kpt_shape=[3,3]。
+    # 对两脚器件，第 3 个点是 padding 槽位，通常会落成 (0, 0, 0)。
+    if abs(float(x)) < 1e-6 and abs(float(y)) < 1e-6:
+        return False
+    return True
+
+
+def _parse_model_keypoints(
+    *,
+    points: np.ndarray,
+    confs: np.ndarray | None,
+    pin_count: int,
+) -> ModelPinParseResult:
+    ordered: list[tuple[float, float] | None] = []
+    raw_keypoint_count = int(len(points))
+    raw_visible_keypoint_count = 0
+    used_keypoint_count = 0
+
+    for idx in range(raw_keypoint_count):
+        score = float(confs[idx]) if confs is not None and idx < len(confs) else None
+        x = float(points[idx][0])
+        y = float(points[idx][1])
+        if _is_valid_model_keypoint(x, y, score):
+            raw_visible_keypoint_count += 1
+
+    for idx in range(pin_count):
+        if idx >= raw_keypoint_count:
+            ordered.append(None)
+            continue
+        score = float(confs[idx]) if confs is not None and idx < len(confs) else None
+        x = float(points[idx][0])
+        y = float(points[idx][1])
+        if _is_valid_model_keypoint(x, y, score):
+            ordered.append((x, y))
+            used_keypoint_count += 1
+        else:
+            ordered.append(None)
+
+    extra_keypoints_ignored = max(0, raw_keypoint_count - pin_count)
+    if extra_keypoints_ignored and pin_count == 2:
+        ignored_reason = "schema_padding_for_2pin"
+    elif extra_keypoints_ignored:
+        ignored_reason = "schema_excess_keypoints"
+    else:
+        ignored_reason = ""
+
+    return ModelPinParseResult(
+        ordered_keypoints=ordered,
+        raw_keypoint_count=raw_keypoint_count,
+        raw_visible_keypoint_count=raw_visible_keypoint_count,
+        used_keypoint_count=used_keypoint_count,
+        extra_keypoints_ignored=extra_keypoints_ignored,
+        ignored_keypoints_reason=ignored_reason,
+    )
 
 
 def _build_foreground_mask(roi_image: np.ndarray) -> np.ndarray:

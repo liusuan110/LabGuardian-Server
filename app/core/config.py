@@ -15,6 +15,50 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # 项目根目录 (LabGuardian-Server/)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 MODELS_DIR = PROJECT_ROOT / "models"
+EXTERNAL_MODEL_RUNS_DIR = PROJECT_ROOT / "train_demo" / "runs"
+
+
+def _first_existing_path(*candidates: Path) -> Optional[str]:
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _prefer_existing_path(current: Optional[str], fallback: Optional[str]) -> Optional[str]:
+    if current:
+        try:
+            if Path(current).exists():
+                return current
+        except Exception:
+            pass
+    return fallback
+
+
+def _normalize_runtime_device(requested: Optional[str], default: str = "cpu") -> str:
+    value = str(requested or default).strip()
+    if not value:
+        return default
+    if value.lower() == "cpu":
+        return "cpu"
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return value
+    except Exception:
+        pass
+    return "cpu"
+
+
+DEFAULT_COMPONENT_MODEL_PATH = _first_existing_path(
+    EXTERNAL_MODEL_RUNS_DIR / "detect_components" / "weights" / "best.pt",
+    MODELS_DIR / "component_best.pt",
+)
+DEFAULT_PIN_MODEL_PATH = _first_existing_path(
+    EXTERNAL_MODEL_RUNS_DIR / "pose_components" / "weights" / "best.pt",
+    MODELS_DIR / "pin_pose_best.pt",
+)
 
 
 class Settings(BaseSettings):
@@ -43,13 +87,14 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
 
     # ---- YOLO ----
-    YOLO_MODEL_PATH: str = str(MODELS_DIR / "yolov8n.pt")
-    YOLO_OBB_MODEL_PATH: Optional[str] = None   # 引脚检测 OBB 模型，训练完成后填写
+    YOLO_MODEL_PATH: str = DEFAULT_COMPONENT_MODEL_PATH or str(MODELS_DIR / "yolov8n.pt")
+    # 当前视觉主路径使用 YOLO-Detect。OBB 仅保留兼容位，不参与默认主流程。
+    YOLO_OBB_MODEL_PATH: Optional[str] = None
     YOLO_CONF_THRESHOLD: float = 0.25
     YOLO_IOU_THRESHOLD: float = 0.5
     YOLO_IMGSZ: int = 960
     YOLO_DEVICE: str = "cpu"
-    PIN_MODEL_PATH: Optional[str] = None
+    PIN_MODEL_PATH: Optional[str] = DEFAULT_PIN_MODEL_PATH
     PIN_MODEL_DEVICE: str = "cpu"
 
     # ---- 面包板校准 ----
@@ -78,3 +123,8 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+settings.YOLO_MODEL_PATH = _prefer_existing_path(settings.YOLO_MODEL_PATH, DEFAULT_COMPONENT_MODEL_PATH) or settings.YOLO_MODEL_PATH
+settings.PIN_MODEL_PATH = _prefer_existing_path(settings.PIN_MODEL_PATH, DEFAULT_PIN_MODEL_PATH)
+settings.YOLO_DEVICE = _normalize_runtime_device(settings.YOLO_DEVICE)
+settings.PIN_MODEL_DEVICE = _normalize_runtime_device(settings.PIN_MODEL_DEVICE)
+settings.REFERENCE_CIRCUIT_PATH = _prefer_existing_path(settings.REFERENCE_CIRCUIT_PATH, None)

@@ -13,7 +13,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.domain.board_schema import BoardSchema
 from app.pipeline.vision.image_io import decode_images_b64, decode_summary
 from app.pipeline.vision.calibrator import BreadboardCalibrator
-from app.pipeline.vision.pin_schema import default_package_type, default_symmetry_group
+from app.pipeline.vision.label_mapping import (
+    default_package_type,
+    default_symmetry_group,
+    normalize_component_type,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +52,7 @@ def run_mapping(
     mapped: List[dict] = []
     for item in components:
         comp = dict(item)
-        component_type = str(comp.get("component_type") or comp.get("class_name") or "UNKNOWN")
+        component_type = normalize_component_type(str(comp.get("component_type") or comp.get("class_name") or "UNKNOWN"))
         comp["component_type"] = component_type
         comp["class_name"] = component_type
         comp["package_type"] = comp.get("package_type") or default_package_type(component_type)

@@ -14,17 +14,12 @@ from app.domain.board_schema import BoardSchema
 from app.domain.circuit import CircuitAnalyzer
 from app.domain.ic_models import UA741_PIN_ROLES, build_dip8_pin_locs
 from app.domain.netlist_models import ComponentInstance, PinAssignment, PinObservation
-
-
-_TYPE_PREFIX = {
-    "resistor": "R",
-    "capacitor": "C",
-    "wire": "W",
-    "led": "LED",
-    "diode": "D",
-    "ic": "IC",
-    "potentiometer": "POT",
-}
+from app.pipeline.vision.label_mapping import (
+    component_id_prefix,
+    default_package_type as mapped_default_package_type,
+    default_symmetry_group as mapped_default_symmetry_group,
+    normalize_component_type,
+)
 
 
 def normalize_components_for_topology(
@@ -81,7 +76,7 @@ def _from_structured_component(
     board_schema: BoardSchema,
 ) -> ComponentInstance | None:
     # 新链路优先: 只要 S2 已经给出了 `pins[]`, 后端后续都以结构化 pin 为准。
-    component_type = str(comp.get("component_type") or comp.get("class_name") or "UNKNOWN")
+    component_type = normalize_component_type(str(comp.get("component_type") or comp.get("class_name") or "UNKNOWN"))
     component_id = comp.get("component_id") or _next_component_id(component_type, counters)
     package_type = str(comp.get("package_type") or _default_package_type(component_type))
     pin_schema_id = str(comp.get("pin_schema_id") or "")
@@ -126,7 +121,7 @@ def _from_structured_component(
         part_subtype=str(comp.get("part_subtype") or ""),
         polarity=str(comp.get("polarity") or "none"),
         orientation=float(comp.get("orientation", 0.0)),
-        symmetry_group=[list(group) for group in comp.get("symmetry_group", [])],
+        symmetry_group=[list(group) for group in (comp.get("symmetry_group") or _default_symmetry_group(component_type))],
         pins=pins,
         confidence=float(comp.get("confidence", 1.0)),
         metadata={
@@ -193,36 +188,18 @@ def _from_structured_ic_anchor_pair(
     )
 
 def _default_package_type(component_type: str) -> str:
-    c = component_type.lower()
-    if c == "resistor":
-        return "axial_2pin"
-    if c == "wire":
-        return "jumper_wire_2pin"
-    if c == "led":
-        return "led_2pin"
-    if c == "diode":
-        return "diode_2pin"
-    if c == "capacitor":
-        return "capacitor_2pin"
-    if c == "potentiometer":
-        return "potentiometer_3pin"
-    if c == "ic":
-        return "dip8"
-    return "generic"
+    return mapped_default_package_type(component_type)
 
 
 def _default_symmetry_group(component_type: str) -> List[List[str]]:
-    c = component_type.lower()
-    if c in ("resistor", "wire", "capacitor"):
-        return [["pin1", "pin2"]]
-    return []
+    return mapped_default_symmetry_group(component_type)
 
 
 def _next_component_id(component_type: str, counters: defaultdict[str, int]) -> str:
-    c = component_type.lower()
-    prefix = _TYPE_PREFIX.get(c, c[:3].upper() or "CMP")
-    counters[c] += 1
-    return f"{prefix}{counters[c]}"
+    normalized = normalize_component_type(component_type)
+    prefix = component_id_prefix(normalized)
+    counters[normalized] += 1
+    return f"{prefix}{counters[normalized]}"
 
 
 def _pin_observations_from_payload(payload: list[dict]) -> List[PinObservation]:

@@ -4,7 +4,7 @@ ROI crop helpers for component-centered pin detection.
 当前 ROI 裁剪策略明确按封装工作, 而不是对所有元件统一 margin:
 - 轴向 2-pin 器件沿主轴给更多 lead 空间
 - DIP 封装沿短轴给更多 pin 排空间
-- top 视图优先用 OBB 主轴
+- top 视图优先使用 bbox 几何方向; 若历史兼容输入提供 OBB, 则可辅助裁剪
 - side 视图在缺真实 bbox 时仍走封装驱动的保守 crop
 """
 
@@ -26,8 +26,15 @@ def crop_component_roi(
     orientation: float = 0.0,
     obb_corners: list[list[float]] | np.ndarray | None = None,
     view_id: str = "top",
+    scale_multiplier: float = 1.0,
 ) -> tuple[np.ndarray | None, tuple[int, int], dict[str, Any]]:
-    """按封装、朝向和 OBB 几何裁剪单元件 ROI."""
+    """按封装、朝向和 bbox 几何裁剪单元件 ROI.
+
+    当前 detect 主路径主要依赖标准 bbox。
+    这里将 detect 产出的 bbox 视为“元件本体范围”，再按封装把 ROI
+    外扩到更接近“主体 + 可见引脚”的区域。
+    `obb_corners` 仅作为历史兼容输入参与细化裁剪。
+    """
     if _bbox_mostly_outside_image(bbox, image.shape[:2]):
         # 某些测试/离线联调会直接把“单元件 ROI 图”作为输入传进来,
         # 这时 bbox 仍可能是原始整图坐标。为了让第二阶段接口稳定,
@@ -42,6 +49,7 @@ def crop_component_roi(
         }
 
     profile = roi_crop_profile(component_type, package_type, view_id=view_id)
+    profile = _scaled_profile(profile, scale_multiplier=scale_multiplier)
     bounds = _compute_crop_bounds(
         bbox=bbox,
         image_shape=image.shape[:2],
@@ -73,11 +81,38 @@ def crop_component_roi(
     return roi, (x1, y1), {
         "source": "package_profile_crop",
         "profile_name": str(profile.get("profile_name", "generic")),
+        "expand_mode": str(profile.get("expand_mode", "body_bbox_expand")),
         "package_type": package_type,
         "component_type": component_type,
         "view_id": view_id,
+        "scale_multiplier": float(scale_multiplier),
+        "body_bbox": [int(v) for v in bbox],
+        "body_size": [int(max(0, bbox[2] - bbox[0])), int(max(0, bbox[3] - bbox[1]))],
         "bounds": [x1, y1, x2, y2],
+        "roi_size": [int(x2 - x1), int(y2 - y1)],
     }
+
+
+def _scaled_profile(profile: dict[str, Any], *, scale_multiplier: float) -> dict[str, Any]:
+    if abs(scale_multiplier - 1.0) < 1e-6:
+        return dict(profile)
+    scaled = dict(profile)
+    for key in ("major_pad_ratio", "minor_pad_ratio"):
+        if key in scaled:
+            scaled[key] = float(scaled[key]) * float(scale_multiplier)
+    for key in (
+        "min_major_pad_px",
+        "min_minor_pad_px",
+        "min_major_span_px",
+        "min_minor_span_px",
+        "min_roi_w",
+        "min_roi_h",
+    ):
+        if key in scaled:
+            scaled[key] = max(1, int(round(float(scaled[key]) * float(scale_multiplier))))
+    scaled["profile_name"] = f"{profile.get('profile_name', 'generic')}@x{scale_multiplier:.2f}"
+    scaled["scale_multiplier"] = float(scale_multiplier)
+    return scaled
 
 
 def _bbox_mostly_outside_image(
@@ -155,6 +190,12 @@ def _expanded_bounds_from_obb(
 
     half_major = major_len / 2.0 + major_pad
     half_minor = minor_len / 2.0 + minor_pad
+    min_major_span = float(profile.get("min_major_span_px", 0))
+    min_minor_span = float(profile.get("min_minor_span_px", 0))
+    if min_major_span > 0:
+        half_major = max(half_major, min_major_span / 2.0)
+    if min_minor_span > 0:
+        half_minor = max(half_minor, min_minor_span / 2.0)
     expanded = np.array(
         [
             center - major_dir * half_major - minor_dir * half_minor,
@@ -190,17 +231,44 @@ def _expanded_bounds_from_bbox(
     minor_extent = height if horizontal else width
     major_pad = max(float(profile.get("min_major_pad_px", 6)), major_extent * float(profile.get("major_pad_ratio", 0.18)))
     minor_pad = max(float(profile.get("min_minor_pad_px", 6)), minor_extent * float(profile.get("minor_pad_ratio", 0.18)))
+    min_major_span = float(profile.get("min_major_span_px", 0))
+    min_minor_span = float(profile.get("min_minor_span_px", 0))
 
     if horizontal:
-        ex1 = int(np.floor(x1 - major_pad))
-        ey1 = int(np.floor(y1 - minor_pad))
-        ex2 = int(np.ceil(x2 + major_pad))
-        ey2 = int(np.ceil(y2 + minor_pad))
+        body_major_start = x1
+        body_major_end = x2
+        body_minor_start = y1
+        body_minor_end = y2
     else:
-        ex1 = int(np.floor(x1 - minor_pad))
-        ey1 = int(np.floor(y1 - major_pad))
-        ex2 = int(np.ceil(x2 + minor_pad))
-        ey2 = int(np.ceil(y2 + major_pad))
+        body_major_start = y1
+        body_major_end = y2
+        body_minor_start = x1
+        body_minor_end = x2
+
+    major_start = int(np.floor(body_major_start - major_pad))
+    major_end = int(np.ceil(body_major_end + major_pad))
+    minor_start = int(np.floor(body_minor_start - minor_pad))
+    minor_end = int(np.ceil(body_minor_end + minor_pad))
+
+    major_span = major_end - major_start
+    minor_span = minor_end - minor_start
+    if min_major_span > 0 and major_span < min_major_span:
+        major_center = (body_major_start + body_major_end) / 2.0
+        half_major = min_major_span / 2.0
+        major_start = int(np.floor(major_center - half_major))
+        major_end = int(np.ceil(major_center + half_major))
+    if min_minor_span > 0 and minor_span < min_minor_span:
+        minor_center = (body_minor_start + body_minor_end) / 2.0
+        half_minor = min_minor_span / 2.0
+        minor_start = int(np.floor(minor_center - half_minor))
+        minor_end = int(np.ceil(minor_center + half_minor))
+
+    if horizontal:
+        ex1, ex2 = major_start, major_end
+        ey1, ey2 = minor_start, minor_end
+    else:
+        ex1, ex2 = minor_start, minor_end
+        ey1, ey2 = major_start, major_end
 
     return _enforce_min_roi_size((ex1, ey1, ex2, ey2), image_shape=(img_h, img_w), profile=profile)
 

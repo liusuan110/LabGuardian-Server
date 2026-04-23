@@ -70,6 +70,50 @@ class TestPinDetectionMock:
         assert len(result["components"]) == 1
         assert len(result["components"][0]["pins"]) == 3
 
+    def test_t4_2b_mock_transistor_3pin(self, blank_image_b64):
+        """模型新标签 transistor_3pin 会被解释为 3-pin Transistor."""
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
+        from app.pipeline.stages.s1_detect import run_detect
+
+        det = MockComponentDetector([
+            {"class_name": "transistor_3pin", "bbox": (100, 200, 300, 260), "confidence": 0.9}
+        ])
+        pin = MockPinDetector([
+            {"pin_id": 1, "pin_name": "pin1", "keypoint": (100.0, 240.0), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 2, "pin_name": "pin2", "keypoint": (200.0, 240.0), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 3, "pin_name": "pin3", "keypoint": (300.0, 240.0), "confidence": 0.9, "visibility": 2},
+        ])
+
+        s1 = run_detect(images_b64=[blank_image_b64], detector=det)
+        result = run_pin_detect(detections=s1["detections"], images_b64=[blank_image_b64], pin_detector=pin)
+
+        assert result["components"][0]["component_type"] == "Transistor"
+        assert result["components"][0]["package_type"] == "transistor_3pin"
+        assert len(result["components"][0]["pins"]) == 3
+
+    def test_t4_2c_electrolytic_pin_names(self, blank_image_b64):
+        """细粒度电解电容默认 pin_name 为 positive/negative."""
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
+        from app.pipeline.stages.s1_detect import run_detect
+
+        det = MockComponentDetector([
+            {"class_name": "capacitor_electrolytic", "bbox": (100, 200, 240, 320), "confidence": 0.9}
+        ])
+        pin = MockPinDetector([
+            {"pin_id": 1, "pin_name": "positive", "keypoint": (120.0, 240.0), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 2, "pin_name": "negative", "keypoint": (200.0, 240.0), "confidence": 0.9, "visibility": 2},
+        ])
+
+        s1 = run_detect(images_b64=[blank_image_b64], detector=det)
+        result = run_pin_detect(detections=s1["detections"], images_b64=[blank_image_b64], pin_detector=pin)
+
+        pin_names = [p["pin_name"] for p in result["components"][0]["pins"]]
+        assert result["components"][0]["component_type"] == "CapacitorElectrolytic"
+        assert result["components"][0]["package_type"] == "capacitor_electrolytic_2pin"
+        assert pin_names == ["positive", "negative"]
+
     def test_t4_3_mock_ic_dip8(self, blank_image_b64):
         """T4.5: Mock IC DIP-8 → len(pins)=2 (anchor pair)"""
         from app.pipeline.stages.s1b_pin_detect import run_pin_detect
@@ -325,7 +369,7 @@ class TestPinDetectionMultiView:
                 "orientation": 0.0,
                 "view_id": "left_front",
                 "source": "side_recall_candidate",
-                "source_model_type": "yolo_obb_component",
+                "source_model_type": "yolo_detect_component",
                 "instance_status": "candidate",
                 "wire_color": "",
                 "obb_corners": None,
@@ -386,3 +430,104 @@ def mock_pin_detector_2pin():
         {"pin_id": 1, "pin_name": "pin1", "keypoint": (120.0, 240.0), "confidence": 0.95, "visibility": 2},
         {"pin_id": 2, "pin_name": "pin2", "keypoint": (280.0, 240.0), "confidence": 0.95, "visibility": 2},
     ])
+
+
+class _FakeTensor:
+    def __init__(self, arr):
+        self._arr = np.array(arr, dtype=np.float32)
+
+    def cpu(self):
+        return self
+
+    def numpy(self):
+        return self._arr
+
+    def __len__(self):
+        return len(self._arr)
+
+
+class _FakeKeypoints:
+    def __init__(self, xy, conf):
+        self.xy = [_FakeTensor(xy)]
+        self.conf = [_FakeTensor(conf)]
+
+
+class _FakePoseResult:
+    def __init__(self, xy, conf):
+        self.keypoints = _FakeKeypoints(xy, conf)
+
+
+class _FakePoseModel:
+    def __init__(self, xy, conf):
+        self._xy = xy
+        self._conf = conf
+
+    def __call__(self, roi_image, verbose=False, device="cpu"):
+        return [_FakePoseResult(self._xy, self._conf)]
+
+
+class TestPinModelSchemaAlignment:
+    def test_two_pin_components_ignore_third_padding_keypoint(self):
+        from app.pipeline.vision.pin_model import PinRoiDetector
+
+        detector = PinRoiDetector(model_path=None, device="cpu")
+        detector.model = _FakePoseModel(
+            xy=[
+                [12.0, 10.0],
+                [88.0, 10.0],
+                [0.0, 0.0],
+            ],
+            conf=[0.95, 0.91, 0.0],
+        )
+
+        preds = detector.predict_component_pins(
+            component_id="LED1",
+            component_type="LED",
+            package_type="led_2pin",
+            pin_schema_id="fixed_pins",
+            roi_image=np.zeros((32, 100, 3), dtype=np.uint8),
+            roi_offset=(5, 7),
+            view_id="top",
+            confidence=0.9,
+        )
+
+        assert len(preds) == 2
+        assert [p.pin_name for p in preds] == ["anode", "cathode"]
+        assert preds[0].keypoint == (17.0, 17.0)
+        assert preds[1].keypoint == (93.0, 17.0)
+        assert preds[0].metadata["raw_keypoint_count"] == 3
+        assert preds[0].metadata["used_keypoint_count"] == 2
+        assert preds[0].metadata["extra_keypoints_ignored"] == 1
+        assert preds[0].metadata["ignored_keypoints_reason"] == "schema_padding_for_2pin"
+
+    def test_transistor_keeps_three_schema_keypoints(self):
+        from app.pipeline.vision.pin_model import PinRoiDetector
+
+        detector = PinRoiDetector(model_path=None, device="cpu")
+        detector.model = _FakePoseModel(
+            xy=[
+                [10.0, 20.0],
+                [20.0, 20.0],
+                [30.0, 20.0],
+            ],
+            conf=[0.9, 0.92, 0.88],
+        )
+
+        preds = detector.predict_component_pins(
+            component_id="Q1",
+            component_type="Transistor",
+            package_type="transistor_3pin",
+            pin_schema_id="fixed_3pins",
+            roi_image=np.zeros((40, 40, 3), dtype=np.uint8),
+            roi_offset=(1, 2),
+            view_id="top",
+            confidence=0.9,
+        )
+
+        assert len(preds) == 3
+        assert [p.pin_name for p in preds] == ["pin1", "pin2", "pin3"]
+        assert preds[2].keypoint == (31.0, 22.0)
+        assert preds[0].metadata["raw_keypoint_count"] == 3
+        assert preds[0].metadata["used_keypoint_count"] == 3
+        assert preds[0].metadata["extra_keypoints_ignored"] == 0
+        assert preds[0].metadata["ignored_keypoints_reason"] == ""
