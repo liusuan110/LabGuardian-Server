@@ -15,7 +15,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # 项目根目录 (LabGuardian-Server/)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 MODELS_DIR = PROJECT_ROOT / "models"
-EXTERNAL_MODEL_RUNS_DIR = Path("/Users/liusuan/Desktop/LabGuardian-Server-model-only/train_demo/runs")
+EXTERNAL_MODEL_RUNS_DIR = PROJECT_ROOT / "train_demo" / "runs"
 
 
 def _first_existing_path(*candidates: Path) -> Optional[str]:
@@ -32,7 +32,23 @@ def _prefer_existing_path(current: Optional[str], fallback: Optional[str]) -> Op
                 return current
         except Exception:
             pass
-    return fallback or current
+    return fallback
+
+
+def _normalize_runtime_device(requested: Optional[str], default: str = "cpu") -> str:
+    value = str(requested or default).strip()
+    if not value:
+        return default
+    if value.lower() == "cpu":
+        return "cpu"
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return value
+    except Exception:
+        pass
+    return "cpu"
 
 
 DEFAULT_COMPONENT_MODEL_PATH = _first_existing_path(
@@ -109,3 +125,6 @@ class Settings(BaseSettings):
 settings = Settings()
 settings.YOLO_MODEL_PATH = _prefer_existing_path(settings.YOLO_MODEL_PATH, DEFAULT_COMPONENT_MODEL_PATH) or settings.YOLO_MODEL_PATH
 settings.PIN_MODEL_PATH = _prefer_existing_path(settings.PIN_MODEL_PATH, DEFAULT_PIN_MODEL_PATH)
+settings.YOLO_DEVICE = _normalize_runtime_device(settings.YOLO_DEVICE)
+settings.PIN_MODEL_DEVICE = _normalize_runtime_device(settings.PIN_MODEL_DEVICE)
+settings.REFERENCE_CIRCUIT_PATH = _prefer_existing_path(settings.REFERENCE_CIRCUIT_PATH, None)

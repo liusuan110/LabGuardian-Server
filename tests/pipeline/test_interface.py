@@ -9,8 +9,9 @@ from pathlib import Path
 import pytest
 
 
-TRAINED_DETECT_WEIGHT = Path("/Users/liusuan/Desktop/LabGuardian-Server-model-only/train_demo/runs/detect_components/weights/best.pt")
-TRAINED_POSE_WEIGHT = Path("/Users/liusuan/Desktop/LabGuardian-Server-model-only/train_demo/runs/pose_components/weights/best.pt")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+TRAINED_DETECT_WEIGHT = PROJECT_ROOT / "train_demo" / "runs" / "detect_components" / "weights" / "best.pt"
+TRAINED_POSE_WEIGHT = PROJECT_ROOT / "train_demo" / "runs" / "pose_components" / "weights" / "best.pt"
 
 
 class TestInterfaceVersions:
