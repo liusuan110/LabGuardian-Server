@@ -29,6 +29,18 @@ component_id + pin_name + hole_id
 
 `OBB` 解析能力只作为兼容分支保留，不再作为默认组件检测方案。
 
+当前模型资产和候选模型整理见：
+
+- [vision-model-inventory.md](vision-model-inventory.md)
+
+面包板网格化 / `calibrator.py` 当前由队友继续推进。当前仓库内其他阶段应把它视为稳定边界：
+
+```text
+pin pixel -> frame_pixel_to_logic_candidates() -> hole_id candidates
+```
+
+不要在 S1、S1.5、S3、S4 中绕过 S2 直接猜孔位。
+
 `topology_input.py` 已不再接受旧 `pin1_logic / pin2_logic` 直接建图。
 旧字段目前仍可能出现在 S2 输出中，用于调试和过渡观察，但不再参与正式拓扑构建主链。
 `circuit.py / validator.py / ic_models.py / polarity.py` 的内部主逻辑也已经切到
@@ -65,9 +77,10 @@ component_id + pin_name + hole_id
 
 仍待继续：
 
-- `pin_model.py` 还是 stub，占位承接旧 detection hint
+- 继续用真实图片 A/B 比较 `pose_roi_context_v12` 和 `train_demo/models`
 - S2 的 side-view observation 目前还是轻量占位
 - 真正的多视图 pin 证据还要继续接上游视觉输出
+- `calibrator.py` 的具体网格拟合策略由队友继续优化，其他阶段保持接口消费
 
 ### 3. Netlist 与 Validator
 

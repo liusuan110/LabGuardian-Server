@@ -14,8 +14,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 项目根目录 (LabGuardian-Server/)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-MODELS_DIR = PROJECT_ROOT / "models"
-EXTERNAL_MODEL_RUNS_DIR = PROJECT_ROOT / "train_demo" / "runs"
+TRAIN_DEMO_DIR = PROJECT_ROOT / "train_demo"
 
 
 def _first_existing_path(*candidates: Path) -> Optional[str]:
@@ -52,12 +51,12 @@ def _normalize_runtime_device(requested: Optional[str], default: str = "cpu") ->
 
 
 DEFAULT_COMPONENT_MODEL_PATH = _first_existing_path(
-    EXTERNAL_MODEL_RUNS_DIR / "detect_components" / "weights" / "best.pt",
-    MODELS_DIR / "component_best.pt",
+    TRAIN_DEMO_DIR / "detect_components" / "weights" / "best.pt",
 )
 DEFAULT_PIN_MODEL_PATH = _first_existing_path(
-    EXTERNAL_MODEL_RUNS_DIR / "pose_components" / "weights" / "best.pt",
-    MODELS_DIR / "pin_pose_best.pt",
+    TRAIN_DEMO_DIR / "models" / "weights" / "best.pt",
+    TRAIN_DEMO_DIR / "pose_roi_context_v12" / "weights" / "best.pt",
+    TRAIN_DEMO_DIR / "pose_components" / "weights" / "best.pt",
 )
 
 
@@ -87,7 +86,7 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
 
     # ---- YOLO ----
-    YOLO_MODEL_PATH: str = DEFAULT_COMPONENT_MODEL_PATH or str(MODELS_DIR / "yolov8n.pt")
+    YOLO_MODEL_PATH: str = DEFAULT_COMPONENT_MODEL_PATH or str(TRAIN_DEMO_DIR / "detect_components" / "weights" / "best.pt")
     # 当前视觉主路径使用 YOLO-Detect。OBB 仅保留兼容位，不参与默认主流程。
     YOLO_OBB_MODEL_PATH: Optional[str] = None
     YOLO_CONF_THRESHOLD: float = 0.25

@@ -149,6 +149,7 @@ S1 component detect
 
 - 轴向 2-pin 器件沿主轴保留更多 lead 空间
 - DIP 封装沿短轴保留更多 pin 排空间
+- 裁剪不只依赖比例 margin，还会按封装设置最小有效跨度，避免只裁到元件本体而漏掉引脚活动区
 - top 视图优先使用 bbox 几何方向
 - 若历史兼容输入提供 `obb_corners`，可作为裁剪辅助，但不是主路径前提
 - side 视图当前允许走封装驱动的 fallback crop, 但来源必须显式标记
@@ -207,3 +208,9 @@ S1 component detect
 - `metadata.vote_scores` 记录每个候选 hole 的多视图投票分数
 - `metadata.selected_by="multi_view_weighted_vote"` 表示最终 hole 来自多视图加权投票
 - `calibration.mode="synthetic_fallback"` 时, 下游应将结果视为低可信校准
+
+协作边界:
+
+- 面包板二维网格化 / `calibrator.py` 的内部拟合策略当前由队友继续推进
+- S2 只依赖 `BreadboardCalibrator` 暴露的候选查询接口
+- 上游视觉阶段不得直接写死孔位编号或绕过 S2 生成最终 `hole_id`

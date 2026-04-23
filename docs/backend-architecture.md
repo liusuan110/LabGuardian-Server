@@ -11,6 +11,7 @@
 
 - API / Service / Domain / Pipeline 分层已经基本建立
 - 视觉链已经固定为 `S1 -> S1.5 -> S2 -> S3 -> S4`
+- 当前模型清单和推荐权重统一维护在 `docs/vision-model-inventory.md`
 - `topology_input.py` 已切换为只接受结构化 `components[].pins[]`
 - 新 `netlist_v2 + validator_report_v2` 链路已经可以作为后续 guidance / RAG / agent 的正式基础
 - `circuit.py` / `validator.py` 的主逻辑已切换到 `ComponentInstance`
@@ -100,7 +101,9 @@
 当前协作约束:
 
 - S2 不再负责从 bbox 猜 pin
-- 新逻辑优先增强多视图融合和证据质量, 而不是重新引入旧 pin 推断
+- S2 只消费 `BreadboardCalibrator.frame_pixel_to_logic_candidates()` 一类稳定接口
+- `calibrator.py` 的面包板网格化 / hole_id 编号细节由校准模块独立演进
+- S1 / S1.5 / S3 / S4 不要绕开 S2 自己硬猜 `hole_id`
 
 ### S3: Topology / Netlist
 
@@ -424,6 +427,10 @@ component_id + pin_name + hole_id
   - 重点维护 `app/pipeline/stages/s2_mapping.py`
   - 输出必须优先对齐 `components[].pins[]`
   - 同时维护 `s1_detect.py / s1b_pin_detect.py / detector.py / pin_model.py`
+- 面包板校准 / 网格团队
+  - 重点维护 `app/pipeline/vision/calibrator.py`
+  - 对外保持 pixel -> `candidate_hole_ids` / `candidate_node_ids` 的接口稳定
+  - 不要求其他阶段理解内部网格拟合、孔洞补点或透视校正细节
 - 拓扑 / 网表团队
   - 重点维护 `app/pipeline/topology_input.py`、`app/domain/circuit.py`
   - 避免把 board 规则写回视觉阶段
@@ -435,7 +442,8 @@ component_id + pin_name + hole_id
 
 为了让 README 和架构文档保持同一套认知，这里明确当前还未完成的点：
 
-- `YOLO-Pose` 真实第二模型尚未正式接入, 当前仍允许 `heuristic_fallback`
+- `YOLO-Pose` 已有真实模型接入口, 当前重点是候选权重 A/B、ROI 覆盖率和复杂场景稳定性
 - 侧视图 ROI 目前仍可能使用 `shared_bbox_fallback`
 - side recall candidates 目前还没有完全接成“缺失实例补全”
+- 面包板 pixel -> hole_id 的网格化细节由 `calibrator.py` 继续独立优化
 - 比赛板实物若与默认 schema 有差异, 还需要补正式 schema JSON

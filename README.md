@@ -38,6 +38,7 @@ LabGuardian 的服务器端负责把视觉识别结果转换成可验证、可�
 - [README.md](README.md)
 - [backend-architecture.md](docs/backend-architecture.md)
 - [current-status.md](docs/current-status.md)
+- [vision-model-inventory.md](docs/vision-model-inventory.md)
 - [board-schema-format.md](docs/board-schema-format.md)
 - [vision-stage-contracts.md](docs/vision-stage-contracts.md)
 - [validator-error-codes.md](docs/validator-error-codes.md)
@@ -74,7 +75,7 @@ LabGuardian 的服务器端负责把视觉识别结果转换成可验证、可�
 ```text
 top / left / right 图片
 -> S1: component detect (YOLO-Detect)
--> S1.5: component ROI pin detect (YOLO-Pose 接口预留)
+-> S1.5: component ROI pin detect (YOLO-Pose, fallback 显式标记)
 -> S2: pin keypoint -> hole_id / electrical_node_id
 -> S3: topology / netlist_v2
 -> S4: validator_report_v2 / risk
@@ -126,12 +127,13 @@ top / left / right 图片
 - `top` 视图 ROI 来源为 `detected_bbox`
 - 侧视图 ROI 现在优先尝试 `associated_bbox_candidate`
 - 未命中侧视图候选时，才回退到 `shared_bbox_fallback`
+- 当前 ROI 裁剪已经切到“封装 profile + 最小有效跨度”的策略，用于尽量覆盖完整元件本体和引脚活动区
 - ROI 元数据会继续保留:
   - `crop_source`
   - `crop_profile`
   - `crop_bounds`
   - `association`
-- `PinRoiDetector` 已有正式 `YOLO-Pose` 接口, 真实模型尚未接入时会走 `heuristic_fallback`
+- `PinRoiDetector` 已能加载真实 `YOLO-Pose` 权重；模型失败或未产出有效点时会显式走 `heuristic_fallback`
 
 ### S2: 孔位映射与多视图证据整理
 
@@ -160,6 +162,12 @@ top / left / right 图片
 - 保留投票元数据:
   - `vote_scores`
   - `selected_by`
+
+协作说明:
+
+- 面包板网格化 / `calibrator.py` 当前由队友继续推进
+- 本仓库其他阶段继续以 `calibrator` 提供的 `frame_pixel_to_logic_candidates()` 为边界消费结果
+- 不建议在 S1/S1.5/S3/S4 中绕过 S2 直接推断 `hole_id`
 
 ### S3: 拓扑与网表构建
 
