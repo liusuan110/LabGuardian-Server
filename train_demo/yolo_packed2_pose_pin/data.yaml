@@ -1,6 +1,0 @@
-path: d:/train_demo/yolo_packed2_pose_pin
-train: images/train
-val: images/val
-names:
-  0: component
-kpt_shape: [3, 3]
