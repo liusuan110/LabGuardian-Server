@@ -7,6 +7,7 @@ T4: Pin 检测测试 — 验证启发式 fallback 和多视图融合
 from __future__ import annotations
 
 import logging
+import cv2
 import numpy as np
 import pytest
 
@@ -423,6 +424,49 @@ class MockMultiViewPinDetector:
         ]
 
 
+class MockEdgeRetryPinDetector:
+    backend_mode = "mock_model"
+    backend_type = "mock_pose"
+    interface_version = "pin_detector_v1"
+
+    def __init__(self):
+        self.calls = 0
+
+    def predict_component_pins(self, **kwargs):
+        from app.pipeline.vision.pin_model import PinPrediction
+
+        self.calls += 1
+        offset_x, offset_y = kwargs.get("roi_offset", (0, 0))
+
+        if self.calls == 1:
+            pin1 = (float(offset_x), float(offset_y + 20))
+            pin2 = (float(offset_x + 40), float(offset_y + 20))
+        else:
+            pin1 = (float(offset_x + 24), float(offset_y + 24))
+            pin2 = (float(offset_x + 80), float(offset_y + 24))
+
+        return [
+            PinPrediction(
+                pin_id=1,
+                pin_name="pin1",
+                keypoint=pin1,
+                confidence=0.95,
+                visibility=2,
+                source="mock_model",
+                metadata={"retry_call": self.calls},
+            ),
+            PinPrediction(
+                pin_id=2,
+                pin_name="pin2",
+                keypoint=pin2,
+                confidence=0.95,
+                visibility=2,
+                source="mock_model",
+                metadata={"retry_call": self.calls},
+            ),
+        ]
+
+
 def mock_pin_detector_2pin():
     """Factory: 创建 2-pin Mock PinDetector."""
     from tests.pipeline.mocks import MockPinDetector
@@ -430,6 +474,15 @@ def mock_pin_detector_2pin():
         {"pin_id": 1, "pin_name": "pin1", "keypoint": (120.0, 240.0), "confidence": 0.95, "visibility": 2},
         {"pin_id": 2, "pin_name": "pin2", "keypoint": (280.0, 240.0), "confidence": 0.95, "visibility": 2},
     ])
+
+
+def _make_wire_trace_image() -> np.ndarray:
+    image = np.full((120, 260, 3), 255, dtype=np.uint8)
+    cv2.line(image, (36, 60), (224, 60), (255, 0, 0), 8)
+    cv2.line(image, (18, 60), (36, 60), (120, 120, 120), 3)
+    cv2.line(image, (224, 60), (242, 60), (120, 120, 120), 3)
+    cv2.rectangle(image, (96, 84), (142, 104), (40, 40, 40), -1)
+    return image
 
 
 class _FakeTensor:
@@ -531,3 +584,85 @@ class TestPinModelSchemaAlignment:
         assert preds[0].metadata["used_keypoint_count"] == 3
         assert preds[0].metadata["extra_keypoints_ignored"] == 0
         assert preds[0].metadata["ignored_keypoints_reason"] == ""
+
+
+class TestAdaptiveRoiRetry:
+    def test_retry_when_model_keypoint_is_on_roi_edge(self, blank_image_b64):
+        from app.pipeline.stages.s1_detect import run_detect
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from tests.pipeline.mocks import MockComponentDetector
+
+        det = MockComponentDetector([
+            {"class_name": "CapacitorCeramic", "bbox": (100, 200, 170, 250), "confidence": 0.95}
+        ])
+        pin = MockEdgeRetryPinDetector()
+
+        s1 = run_detect(images_b64=[blank_image_b64], detector=det)
+        result = run_pin_detect(
+            detections=s1["detections"],
+            images_b64=[blank_image_b64],
+            pin_detector=pin,
+        )
+
+        comp = result["components"][0]
+        assert pin.calls >= 2
+        assert comp["roi"]["retry_attempts"] >= 2
+        assert float(comp["roi"]["scale_multiplier"]) > 1.0
+
+
+class TestWireColorTrace:
+    def test_wire_trace_detector_finds_colored_jumper_endpoints(self):
+        from app.pipeline.vision.pin_model import PinRoiDetector
+
+        detector = PinRoiDetector(model_path=None, device="cpu")
+        roi_image = _make_wire_trace_image()
+
+        preds = detector.predict_component_pins(
+            component_id="W1",
+            component_type="Wire",
+            package_type="jumper_wire_2pin",
+            pin_schema_id="fixed_pins",
+            roi_image=roi_image,
+            roi_offset=(10, 20),
+            view_id="top",
+            confidence=0.95,
+        )
+
+        assert len(preds) == 2
+        assert preds[0].source == "wire_color_trace"
+        assert preds[1].source == "wire_color_trace"
+        assert preds[0].keypoint is not None
+        assert preds[1].keypoint is not None
+        assert preds[0].keypoint[0] < 50
+        assert preds[1].keypoint[0] > 240
+        assert preds[0].metadata["trace_color_mode"] in {"color_hsv", "dark_fallback"}
+        assert preds[0].metadata["trace_span_px"] > 150
+
+    def test_run_pin_detect_preserves_components_json_with_wire_trace(self):
+        from app.pipeline.stages.s1_detect import run_detect
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from app.pipeline.vision.pin_model import PinRoiDetector
+        from tests.pipeline.mocks import MockComponentDetector
+        from tests.pipeline.fixtures import image_to_b64
+
+        det = MockComponentDetector([
+            {"class_name": "Wire", "bbox": (18, 40, 242, 80), "confidence": 0.95}
+        ])
+        pin_detector = PinRoiDetector(model_path=None, device="cpu")
+        wire_b64 = image_to_b64(_make_wire_trace_image())
+
+        s1 = run_detect(images_b64=[wire_b64], detector=det)
+        result = run_pin_detect(
+            detections=s1["detections"],
+            images_b64=[wire_b64],
+            pin_detector=pin_detector,
+        )
+
+        comp = result["components"][0]
+        assert comp["component_type"] == "Wire"
+        assert len(comp["pins"]) == 2
+        assert comp["pins"][0]["source"] == "wire_color_trace"
+        assert comp["pins"][1]["source"] == "wire_color_trace"
+        assert "keypoints_by_view" in comp["pins"][0]
+        assert "visibility_by_view" in comp["pins"][0]
+        assert "score_by_view" in comp["pins"][0]

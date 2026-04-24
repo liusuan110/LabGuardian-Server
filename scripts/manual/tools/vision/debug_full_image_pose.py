@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """
-Full-image YOLO-Pose debug runner.
+Experimental full-image YOLO-Pose runner.
 
 实验目的:
 - 不使用 ROI 裁切
 - 直接在整图上跑 YOLO-Pose
 - 将 pose 实例按类别 + IoU 关联回 S1 组件检测结果
 - 输出可视化与 hole mapping 结果, 用于比较 ROI pose 与 full-image pose
+
+注意:
+- 该脚本不是正式 pipeline 入口
+- 它会绕开正式 S1.5 的 ROI pin 检测主语义
+- 仅用于研究 full-image pose 方案是否值得进入主链
 """
 
 from __future__ import annotations
@@ -337,6 +342,11 @@ def _draw_debug(
 
         for pin in comp.get("pins") or []:
             kp = (pin.get("keypoints_by_view") or {}).get("top")
+            if kp is None:
+                observations = pin.get("observations") or []
+                top_obs = next((obs for obs in observations if obs.get("view_id") == "top"), None)
+                if top_obs is not None:
+                    kp = top_obs.get("keypoint")
             if not kp:
                 continue
             px, py = int(round(kp[0])), int(round(kp[1]))
@@ -353,14 +363,14 @@ def _draw_debug(
     cv2.imwrite(str(out_path), canvas)
 
 
-def run_on_image(image_path: Path, out_root: Path) -> None:
+def run_on_image(image_path: Path, out_root: Path, pin_model_path: str | None = None) -> None:
     detector = ComponentDetector(
         model_path=settings.YOLO_MODEL_PATH,
         obb_model_path=settings.YOLO_OBB_MODEL_PATH,
         device=settings.YOLO_DEVICE,
     )
     pin_detector = PinRoiDetector(
-        model_path=settings.PIN_MODEL_PATH,
+        model_path=pin_model_path or settings.PIN_MODEL_PATH,
         device=settings.PIN_MODEL_DEVICE,
     )
 
@@ -402,6 +412,7 @@ def run_on_image(image_path: Path, out_root: Path) -> None:
         json.dump(
             {
                 "image": str(image_path),
+                "pin_model_path": str(pin_model_path or settings.PIN_MODEL_PATH),
                 "detect_count": len(s1["detections"]),
                 "pose_instance_count": len(pose_instances),
                 "calibration": s2["calibration"],
@@ -417,6 +428,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("images", nargs="*", help="Image paths")
     parser.add_argument("--out", default="/tmp/labguardian_full_image_pose_debug", help="Output directory")
+    parser.add_argument("--pin-model", default=None, help="Explicit full-image pose weight path")
     args = parser.parse_args()
 
     if args.images:
@@ -431,7 +443,7 @@ def main() -> None:
     out_root = Path(args.out)
     out_root.mkdir(parents=True, exist_ok=True)
     for image_path in images:
-        run_on_image(image_path, out_root)
+        run_on_image(image_path, out_root, pin_model_path=args.pin_model)
     print(out_root)
 
 

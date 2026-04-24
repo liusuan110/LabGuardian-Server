@@ -29,6 +29,7 @@ ROI_RETRY_SCALES = {
     "left_front": [1.0, 1.3, 1.7],
     "right_front": [1.0, 1.3, 1.7],
 }
+ROI_EDGE_MARGIN_PX = 12
 
 def run_pin_detect(
     detections: List[dict],
@@ -340,7 +341,11 @@ def _predict_with_adaptive_roi(
         )
         best_predictions = predictions
         best_roi_spec = roi_spec
-        if _predictions_are_usable(predictions):
+        if _predictions_are_usable(predictions) and not _predictions_need_more_context(
+            predictions,
+            roi_spec,
+            margin_px=ROI_EDGE_MARGIN_PX,
+        ):
             break
 
     return best_predictions or [], best_roi_spec
@@ -357,6 +362,32 @@ def _predictions_are_usable(predictions: list) -> bool:
         if getattr(pred, "source", "") == "model" and getattr(pred, "keypoint", None) is not None:
             model_visible += 1
     return visible >= 2 and model_visible >= max(1, visible // 2)
+
+
+def _predictions_need_more_context(
+    predictions: list,
+    roi_spec: dict[str, Any],
+    *,
+    margin_px: float,
+) -> bool:
+    crop_bounds = roi_spec.get("crop_bounds")
+    if not crop_bounds or len(crop_bounds) != 4:
+        return False
+
+    x1, y1, x2, y2 = [float(v) for v in crop_bounds]
+    for pred in predictions:
+        keypoint = getattr(pred, "keypoint", None)
+        if keypoint is None:
+            continue
+        source = str(getattr(pred, "source", "") or "")
+        if source in {"unavailable", "heuristic_fallback"}:
+            continue
+
+        px, py = float(keypoint[0]), float(keypoint[1])
+        margin = min(px - x1, x2 - px, py - y1, y2 - py)
+        if margin < float(margin_px):
+            return True
+    return False
 
 
 def _merge_predictions_by_view(
@@ -393,7 +424,9 @@ def _merge_predictions_by_view(
         item = merged[pin_id]
         scores = [score for score in item["score_by_view"].values() if score > 0]
         item["confidence"] = max(scores) if scores else 0.0
-        if any(source == "model" for source in item["source_by_view"].values()):
+        if any(source == "wire_color_trace" for source in item["source_by_view"].values()):
+            item["source"] = "wire_color_trace"
+        elif any(source == "model" for source in item["source_by_view"].values()):
             item["source"] = "model"
         elif any(source == "heuristic_fallback" for source in item["source_by_view"].values()):
             item["source"] = "heuristic_fallback"

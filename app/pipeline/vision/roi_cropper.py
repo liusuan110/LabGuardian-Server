@@ -101,6 +101,14 @@ def _scaled_profile(profile: dict[str, Any], *, scale_multiplier: float) -> dict
         if key in scaled:
             scaled[key] = float(scaled[key]) * float(scale_multiplier)
     for key in (
+        "major_pad_before_ratio",
+        "major_pad_after_ratio",
+        "minor_pad_before_ratio",
+        "minor_pad_after_ratio",
+    ):
+        if key in scaled:
+            scaled[key] = float(scaled[key]) * float(scale_multiplier)
+    for key in (
         "min_major_pad_px",
         "min_minor_pad_px",
         "min_major_span_px",
@@ -185,23 +193,49 @@ def _expanded_bounds_from_obb(
     minor_len = edge_specs[-1][0]
     minor_dir = np.array([-major_dir[1], major_dir[0]], dtype=np.float32)
 
-    major_pad = max(float(profile.get("min_major_pad_px", 6)), major_len * float(profile.get("major_pad_ratio", 0.18)))
-    minor_pad = max(float(profile.get("min_minor_pad_px", 6)), minor_len * float(profile.get("minor_pad_ratio", 0.18)))
+    major_before_pad = _pad_from_profile(
+        profile,
+        axis="major",
+        side="before",
+        extent=major_len,
+    )
+    major_after_pad = _pad_from_profile(
+        profile,
+        axis="major",
+        side="after",
+        extent=major_len,
+    )
+    minor_before_pad = _pad_from_profile(
+        profile,
+        axis="minor",
+        side="before",
+        extent=minor_len,
+    )
+    minor_after_pad = _pad_from_profile(
+        profile,
+        axis="minor",
+        side="after",
+        extent=minor_len,
+    )
 
-    half_major = major_len / 2.0 + major_pad
-    half_minor = minor_len / 2.0 + minor_pad
     min_major_span = float(profile.get("min_major_span_px", 0))
     min_minor_span = float(profile.get("min_minor_span_px", 0))
-    if min_major_span > 0:
-        half_major = max(half_major, min_major_span / 2.0)
-    if min_minor_span > 0:
-        half_minor = max(half_minor, min_minor_span / 2.0)
+    current_major_span = major_len + major_before_pad + major_after_pad
+    current_minor_span = minor_len + minor_before_pad + minor_after_pad
+    if min_major_span > 0 and current_major_span < min_major_span:
+        extra = (min_major_span - current_major_span) / 2.0
+        major_before_pad += extra
+        major_after_pad += extra
+    if min_minor_span > 0 and current_minor_span < min_minor_span:
+        extra = (min_minor_span - current_minor_span) / 2.0
+        minor_before_pad += extra
+        minor_after_pad += extra
     expanded = np.array(
         [
-            center - major_dir * half_major - minor_dir * half_minor,
-            center + major_dir * half_major - minor_dir * half_minor,
-            center + major_dir * half_major + minor_dir * half_minor,
-            center - major_dir * half_major + minor_dir * half_minor,
+            center - major_dir * (major_len / 2.0 + major_before_pad) - minor_dir * (minor_len / 2.0 + minor_before_pad),
+            center + major_dir * (major_len / 2.0 + major_after_pad) - minor_dir * (minor_len / 2.0 + minor_before_pad),
+            center + major_dir * (major_len / 2.0 + major_after_pad) + minor_dir * (minor_len / 2.0 + minor_after_pad),
+            center - major_dir * (major_len / 2.0 + major_before_pad) + minor_dir * (minor_len / 2.0 + minor_after_pad),
         ],
         dtype=np.float32,
     )
@@ -229,8 +263,30 @@ def _expanded_bounds_from_bbox(
     horizontal = angle < 45.0 or angle > 135.0
     major_extent = width if horizontal else height
     minor_extent = height if horizontal else width
-    major_pad = max(float(profile.get("min_major_pad_px", 6)), major_extent * float(profile.get("major_pad_ratio", 0.18)))
-    minor_pad = max(float(profile.get("min_minor_pad_px", 6)), minor_extent * float(profile.get("minor_pad_ratio", 0.18)))
+    major_before_pad = _pad_from_profile(
+        profile,
+        axis="major",
+        side="before",
+        extent=major_extent,
+    )
+    major_after_pad = _pad_from_profile(
+        profile,
+        axis="major",
+        side="after",
+        extent=major_extent,
+    )
+    minor_before_pad = _pad_from_profile(
+        profile,
+        axis="minor",
+        side="before",
+        extent=minor_extent,
+    )
+    minor_after_pad = _pad_from_profile(
+        profile,
+        axis="minor",
+        side="after",
+        extent=minor_extent,
+    )
     min_major_span = float(profile.get("min_major_span_px", 0))
     min_minor_span = float(profile.get("min_minor_span_px", 0))
 
@@ -245,10 +301,10 @@ def _expanded_bounds_from_bbox(
         body_minor_start = x1
         body_minor_end = x2
 
-    major_start = int(np.floor(body_major_start - major_pad))
-    major_end = int(np.ceil(body_major_end + major_pad))
-    minor_start = int(np.floor(body_minor_start - minor_pad))
-    minor_end = int(np.ceil(body_minor_end + minor_pad))
+    major_start = int(np.floor(body_major_start - major_before_pad))
+    major_end = int(np.ceil(body_major_end + major_after_pad))
+    minor_start = int(np.floor(body_minor_start - minor_before_pad))
+    minor_end = int(np.ceil(body_minor_end + minor_after_pad))
 
     major_span = major_end - major_start
     minor_span = minor_end - minor_start
@@ -271,6 +327,27 @@ def _expanded_bounds_from_bbox(
         ey1, ey2 = major_start, major_end
 
     return _enforce_min_roi_size((ex1, ey1, ex2, ey2), image_shape=(img_h, img_w), profile=profile)
+
+
+def _pad_from_profile(
+    profile: dict[str, Any],
+    *,
+    axis: str,
+    side: str,
+    extent: float,
+) -> float:
+    if axis not in {"major", "minor"}:
+        raise ValueError(f"unsupported axis: {axis}")
+    if side not in {"before", "after"}:
+        raise ValueError(f"unsupported side: {side}")
+
+    ratio_key = f"{axis}_pad_{side}_ratio"
+    fallback_ratio_key = f"{axis}_pad_ratio"
+    min_key = f"min_{axis}_pad_px"
+
+    ratio = float(profile.get(ratio_key, profile.get(fallback_ratio_key, 0.18)))
+    min_pad = float(profile.get(min_key, 6))
+    return max(min_pad, extent * ratio)
 
 
 def _enforce_min_roi_size(

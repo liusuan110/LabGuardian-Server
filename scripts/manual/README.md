@@ -11,20 +11,28 @@
 
 ## Vision tools
 
-当前 `tools/vision/` 里的脚本分三类:
+当前 `tools/vision/` 里的脚本按职责分四类:
 
+- 正式链路调试:
+  - `run_official_pipeline_debug.py`
+  - 只调用正式 `run_pipeline()`
+  - 适合演示、联调、核对当前主链输出
 - 数据准备:
   - `labelme_pose_dataset_utils.py`
   - `mine_component_roi_priors.py`
   - `build_pose_roi_dataset.py`
-- 模型评估:
+- 模型研究 / 实验:
   - `evaluate_full_image_pose_dataset.py`
   - `debug_full_image_pose.py`
-- 面包板网格调试:
+  - 允许使用实验性 full-image pose 逻辑, 不代表正式主链
+- 面包板网格诊断:
   - `debug_calibrator_grid.py`
+  - 只诊断 calibrator, 不代表完整 pipeline 演示
 
 协作约定:
 
+- 对外演示或回归核对当前系统能力时, 优先使用 `run_official_pipeline_debug.py`。
+- `debug_full_image_pose.py` 这类脚本只能用于研究候选方案, 不能当成正式链路结果解释给团队。
 - 面包板网格化实现当前由队友继续推进，`debug_calibrator_grid.py` 只作为可视化/诊断入口保留。
 - 新的 pin pose 模型评估优先输出到 `/tmp/...`，不要把一次性可视化结果提交进仓库。
 - 模型资产清单统一维护在 `docs/vision-model-inventory.md`。

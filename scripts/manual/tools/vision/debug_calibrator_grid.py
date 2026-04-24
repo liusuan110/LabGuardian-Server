@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+"""
+Breadboard calibrator diagnostic runner.
+
+注意:
+- 该脚本用于可视化/诊断 `BreadboardCalibrator`
+- 不是正式视觉主链的标准演示入口
+- 面包板网格化逻辑的演进应限制在 calibrator 边界内
+"""
+
 from __future__ import annotations
 
 import argparse
