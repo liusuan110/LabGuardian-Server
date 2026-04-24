@@ -600,23 +600,44 @@ class BreadboardCalibrator:
             d = np.sqrt(np.sum((hole_arr - point.reshape(1, 2)) ** 2, axis=1))
             return float(np.min(d))
 
+        board_mask = getattr(self, "_board_mask", None)
+        use_mask = isinstance(board_mask, np.ndarray) and board_mask.ndim == 2
+        if use_mask:
+            mask_h, mask_w = int(board_mask.shape[0]), int(board_mask.shape[1])
+
+            def inside_mask(point: np.ndarray, pad: int = 2) -> bool:
+                x = int(round(float(point[0])))
+                y = int(round(float(point[1])))
+                if x < 0 or y < 0 or x >= mask_w or y >= mask_h:
+                    return False
+                x1 = max(0, x - pad)
+                y1 = max(0, y - pad)
+                x2 = min(mask_w, x + pad + 1)
+                y2 = min(mask_h, y + pad + 1)
+                patch = board_mask[y1:y2, x1:x2]
+                return bool(patch.size > 0 and int(np.max(patch)) > 0)
+        else:
+
+            def inside_mask(point: np.ndarray, pad: int = 2) -> bool:  # type: ignore[no-redef]
+                return False
+
         for row_idx in range(self._grid_matrix.shape[0]):
             for col_idx in range(self._grid_matrix.shape[1]):
                 if self._valid_main_mask[row_idx, col_idx]:
                     continue
                 point = self._grid_matrix[row_idx, col_idx]
-                if nearest_dist(point) <= main_threshold:
+                if (use_mask and inside_mask(point, pad=2)) or nearest_dist(point) <= main_threshold:
                     self._valid_main_mask[row_idx, col_idx] = True
 
         for row_idx in range(self._top_rail_matrix.shape[0]):
             for rail_idx in range(self._top_rail_matrix.shape[1]):
                 if not self._valid_top_mask[row_idx, rail_idx]:
                     point = self._top_rail_matrix[row_idx, rail_idx]
-                    if nearest_dist(point) <= rail_threshold:
+                    if (use_mask and inside_mask(point, pad=2)) or nearest_dist(point) <= rail_threshold:
                         self._valid_top_mask[row_idx, rail_idx] = True
                 if not self._valid_bot_mask[row_idx, rail_idx]:
                     point = self._bot_rail_matrix[row_idx, rail_idx]
-                    if nearest_dist(point) <= rail_threshold:
+                    if (use_mask and inside_mask(point, pad=2)) or nearest_dist(point) <= rail_threshold:
                         self._valid_bot_mask[row_idx, rail_idx] = True
 
     @staticmethod

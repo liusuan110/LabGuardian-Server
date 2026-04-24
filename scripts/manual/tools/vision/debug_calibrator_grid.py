@@ -4,11 +4,17 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 
 import cv2
 import numpy as np
 
-from app.pipeline.vision.calibrator import BreadboardCalibrator
+try:
+    from app.pipeline.vision.calibrator import BreadboardCalibrator
+except ModuleNotFoundError:
+    repo_root = Path(__file__).resolve().parents[4]
+    sys.path.insert(0, str(repo_root))
+    from app.pipeline.vision.calibrator import BreadboardCalibrator
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -18,6 +24,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         nargs="+",
         required=True,
         help="Absolute image paths to visualize.",
+    )
+    parser.add_argument(
+        "--corners",
+        default=None,
+        help="Manual corner points: x1,y1;x2,y2;x3,y3;x4,y4",
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Pick 4 corner points by clicking on the image when --corners is not provided.",
+    )
+    parser.add_argument(
+        "--refine-corners",
+        action="store_true",
+        help="Snap picked corners to the detected board contour for extra stability.",
     )
     parser.add_argument(
         "--output-root",
@@ -44,16 +65,37 @@ def main() -> int:
     args = build_arg_parser().parse_args()
     args.output_root.mkdir(parents=True, exist_ok=True)
 
+    manual_corners = parse_corners(args.corners) if args.corners else None
+
     for image_path_str in args.images:
         image_path = Path(image_path_str)
-        image = cv2.imread(str(image_path))
+        image = read_image(image_path)
         if image is None:
             print(f"skip unreadable image: {image_path}")
             continue
 
         calibrator = BreadboardCalibrator(rows=args.rows, cols_per_side=args.cols_per_side)
-        success = calibrator.ensure_calibrated(image)
-        warped = calibrator.warp(image)
+        selected_corners = manual_corners
+        if selected_corners is None and args.interactive:
+            selected_corners = pick_corners_interactive(image, title=str(image_path))
+
+        corners_raw = selected_corners.astype(np.float32) if selected_corners is not None else None
+        corners_refined = None
+        if corners_raw is not None and args.refine_corners:
+            corners_refined = refine_corners_to_board(image, corners_raw)
+            if not _is_reasonable_refinement(corners_raw, corners_refined):
+                corners_refined = None
+
+        if selected_corners is not None:
+            corners = corners_refined if corners_refined is not None else corners_raw
+            corners = order_corners_clockwise(corners)
+            calibrator.calibrate(corners)
+            warped = calibrator.warp(image)
+            calibrator.detect_holes(warped)
+            success = calibrator.is_grid_ready
+        else:
+            success = calibrator.ensure_calibrated(image)
+            warped = calibrator.warp(image)
 
         out_dir = args.output_root / image_path.stem
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -64,6 +106,14 @@ def main() -> int:
         orig_demo = image.copy()
         warped_demo = warped.copy()
 
+        corners_ordered = None
+        if corners_refined is not None:
+            corners_ordered = order_corners_clockwise(corners_refined)
+        elif corners_raw is not None:
+            corners_ordered = order_corners_clockwise(corners_raw)
+        if corners_raw is not None:
+            draw_selected_corners(orig_overlay, corners_raw, corners_refined, corners_ordered)
+
         draw_board_candidates(orig_overlay, calibrator, image)
         draw_original_grid_overlay(orig_overlay, calibrator)
         draw_warped_grid_overlay(warped_overlay, calibrator)
@@ -71,6 +121,8 @@ def main() -> int:
         draw_anchor_grid_demo(warped_demo, calibrator)
         draw_original_anchor_grid_demo(orig_demo, calibrator)
 
+        if corners_raw is not None:
+            cv2.imwrite(str(out_dir / "original_selected_corners.png"), orig_overlay)
         cv2.imwrite(str(out_dir / "original_with_grid.png"), orig_overlay)
         cv2.imwrite(str(out_dir / "warped_grid.png"), warped_overlay)
         cv2.imwrite(str(out_dir / "warped_grid_points.png"), warped_points_only)
@@ -78,7 +130,14 @@ def main() -> int:
         cv2.imwrite(str(out_dir / "original_anchor_grid_demo.png"), orig_demo)
         cv2.imwrite(str(out_dir / "warped_raw.png"), warped)
 
-        summary = build_summary(image_path, calibrator, success)
+        summary = build_summary(
+            image_path,
+            calibrator,
+            success,
+            corners_raw=corners_raw,
+            corners_refined=corners_refined,
+            corners_ordered=corners_ordered,
+        )
         (out_dir / "summary.json").write_text(
             json.dumps(summary, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -88,13 +147,276 @@ def main() -> int:
     return 0
 
 
-def build_summary(image_path: Path, calibrator: BreadboardCalibrator, success: bool) -> dict:
+def read_image(path: Path) -> np.ndarray | None:
+    try:
+        data = np.fromfile(str(path), dtype=np.uint8)
+    except Exception:
+        data = np.array([], dtype=np.uint8)
+    if data.size > 0:
+        img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        if img is not None:
+            return img
+    return cv2.imread(str(path))
+
+
+def parse_corners(raw: str | None) -> np.ndarray | None:
+    if not raw:
+        return None
+    text = raw.strip()
+    parts = []
+    if ";" in text:
+        parts = [p.strip() for p in text.split(";") if p.strip()]
+    else:
+        parts = [p.strip() for p in text.split() if p.strip()]
+    if len(parts) != 4:
+        raise ValueError("corners must contain exactly 4 points")
+    pts: list[list[float]] = []
+    for part in parts:
+        if "," not in part:
+            raise ValueError("corner must be formatted as x,y")
+        xs, ys = part.split(",", 1)
+        pts.append([float(xs), float(ys)])
+    return np.asarray(pts, dtype=np.float32)
+
+
+def order_corners_clockwise(points: np.ndarray) -> np.ndarray:
+    pts = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+    if pts.shape[0] != 4:
+        raise ValueError("Need exactly 4 corner points")
+
+    center = pts.mean(axis=0)
+    angles = np.arctan2(pts[:, 1] - center[1], pts[:, 0] - center[0])
+    order = np.argsort(angles)
+    pts = pts[order]
+
+    area = float(cv2.contourArea(pts.reshape(-1, 1, 2)))
+    if area < 0:
+        pts = pts[::-1]
+
+    start = int(np.argmin((pts[:, 1] * 10000.0) + pts[:, 0]))
+    pts = np.roll(pts, -start, axis=0)
+    return pts.astype(np.float32)
+
+
+def _is_reasonable_refinement(raw: np.ndarray, refined: np.ndarray) -> bool:
+    raw_pts = np.asarray(raw, dtype=np.float32).reshape(-1, 2)
+    ref_pts = np.asarray(refined, dtype=np.float32).reshape(-1, 2)
+    if raw_pts.shape[0] != 4 or ref_pts.shape[0] != 4:
+        return False
+    raw_area = _quad_area(order_corners_clockwise(raw_pts))
+    ref_area = _quad_area(order_corners_clockwise(ref_pts))
+    if raw_area <= 1.0 or ref_area <= 1.0:
+        return False
+    ratio = ref_area / raw_area
+    if ratio < 0.6 or ratio > 1.6:
+        return False
+    move = np.linalg.norm(ref_pts - raw_pts, axis=1)
+    max_move = float(np.max(move))
+    if max_move > 180.0:
+        return False
+    return True
+
+
+def refine_corners_to_board(image: np.ndarray, points: np.ndarray) -> np.ndarray:
+    pts = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (0, 0, 160), (180, 50, 255))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=3)
+    kernel_e = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    mask = cv2.erode(mask, kernel_e, iterations=2)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return pts.astype(np.float32)
+    contour = max(contours, key=cv2.contourArea)
+    contour_pts = contour.reshape(-1, 2).astype(np.float32)
+    if contour_pts.shape[0] < 4:
+        return pts.astype(np.float32)
+    refined: list[list[float]] = []
+    for x, y in pts:
+        d = contour_pts - np.array([x, y], dtype=np.float32)
+        idx = int(np.argmin((d[:, 0] * d[:, 0]) + (d[:, 1] * d[:, 1])))
+        refined.append([float(contour_pts[idx, 0]), float(contour_pts[idx, 1])])
+    return np.asarray(refined, dtype=np.float32)
+
+
+def pick_corners_interactive(image: np.ndarray, *, title: str = "Pick corners") -> np.ndarray | None:
+    window = "labguardian_pick_corners"
+    points: list[tuple[int, int]] = []
+
+    def render() -> np.ndarray:
+        canvas = image.copy()
+        cv2.putText(
+            canvas,
+            "LMB: add point (4).  Backspace: undo.  R: reset.  Enter: confirm.  Esc: cancel.",
+            (10, 28),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 255, 255),
+            2,
+        )
+        cv2.putText(
+            canvas,
+            f"{title}  ({len(points)}/4)",
+            (10, 56),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2,
+        )
+        for idx, (x, y) in enumerate(points, start=1):
+            cv2.circle(canvas, (x, y), 6, (0, 0, 255), -1)
+            cv2.putText(
+                canvas,
+                str(idx),
+                (x + 8, y - 8),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 255),
+                2,
+            )
+        if len(points) == 4:
+            pts = np.asarray(points, dtype=np.int32).reshape(-1, 1, 2)
+            cv2.polylines(canvas, [pts], isClosed=True, color=(0, 255, 0), thickness=2)
+        return canvas
+
+    def on_mouse(event: int, x: int, y: int, flags: int, param: object) -> None:
+        if event != cv2.EVENT_LBUTTONDOWN:
+            return
+        if len(points) >= 4:
+            return
+        points.append((int(x), int(y)))
+
+    try:
+        cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+        cv2.setMouseCallback(window, on_mouse)
+    except cv2.error:
+        return pick_corners_matplotlib(image, title=title)
+
+    while True:
+        cv2.imshow(window, render())
+        key = int(cv2.waitKey(30) & 0xFF)
+
+        if key in (27, ord("q")):
+            cv2.destroyWindow(window)
+            return None
+        if key in (8, 127):
+            if points:
+                points.pop()
+            continue
+        if key in (ord("r"), ord("R")):
+            points.clear()
+            continue
+        if key in (10, 13):
+            if len(points) == 4:
+                cv2.destroyWindow(window)
+                return np.asarray(points, dtype=np.float32)
+            continue
+
+
+def pick_corners_matplotlib(image: np.ndarray, *, title: str = "Pick corners") -> np.ndarray | None:
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        raise RuntimeError(
+            "当前 OpenCV 不支持 GUI 窗口（你安装的是 opencv-python-headless）。"
+            "要用鼠标点四个角，请执行：pip uninstall opencv-python-headless && pip install opencv-python"
+            "；或安装 matplotlib 后再试。"
+        ) from exc
+
+    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    fig, ax = plt.subplots()
+    ax.imshow(rgb)
+    ax.set_axis_off()
+    ax.set_title(f"{title}\nClick 4 corners in order (any order is ok). Close window to cancel.")
+    pts = plt.ginput(4, timeout=0)
+    plt.close(fig)
+
+    if len(pts) != 4:
+        return None
+    return np.asarray([[float(x), float(y)] for x, y in pts], dtype=np.float32)
+
+
+def _quad_area(points: np.ndarray) -> float:
+    pts = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+    if pts.shape[0] != 4:
+        return 0.0
+    return float(abs(cv2.contourArea(pts.reshape(-1, 1, 2))))
+
+
+def draw_selected_corners(
+    canvas: np.ndarray,
+    corners_raw: np.ndarray,
+    corners_refined: np.ndarray | None,
+    corners_ordered: np.ndarray | None,
+) -> None:
+    raw = np.asarray(corners_raw, dtype=np.float32).reshape(-1, 2)
+    for idx, (x, y) in enumerate(raw[:4], start=1):
+        cv2.circle(canvas, (int(round(x)), int(round(y))), 6, (0, 0, 255), -1)
+        cv2.putText(
+            canvas,
+            f"raw{idx}",
+            (int(round(x)) + 8, int(round(y)) - 8),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (255, 255, 255),
+            2,
+        )
+
+    if corners_refined is not None:
+        refined = np.asarray(corners_refined, dtype=np.float32).reshape(-1, 2)
+        for idx, (x, y) in enumerate(refined[:4], start=1):
+            cv2.circle(canvas, (int(round(x)), int(round(y))), 6, (255, 0, 0), -1)
+            cv2.putText(
+                canvas,
+                f"ref{idx}",
+                (int(round(x)) + 8, int(round(y)) - 8),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 255),
+                2,
+            )
+
+    if corners_ordered is None:
+        return
+    ordered = np.asarray(corners_ordered, dtype=np.float32).reshape(-1, 2)
+    pts = ordered.astype(np.int32).reshape(-1, 1, 2)
+    cv2.polylines(canvas, [pts], isClosed=True, color=(0, 255, 0), thickness=2)
+    for idx, (x, y) in enumerate(ordered[:4], start=1):
+        cv2.circle(canvas, (int(round(x)), int(round(y))), 6, (0, 255, 0), -1)
+        cv2.putText(
+            canvas,
+            f"ord{idx}",
+            (int(round(x)) + 8, int(round(y)) - 8),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 0, 0),
+            2,
+        )
+
+
+def build_summary(
+    image_path: Path,
+    calibrator: BreadboardCalibrator,
+    success: bool,
+    *,
+    corners_raw: np.ndarray | None,
+    corners_refined: np.ndarray | None,
+    corners_ordered: np.ndarray | None,
+) -> dict:
     alignment = compute_alignment_metrics(calibrator)
     observed = summarize_indexed_holes(calibrator)
+    corners_raw_list = corners_raw.tolist() if corners_raw is not None else None
+    corners_refined_list = corners_refined.tolist() if corners_refined is not None else None
+    corners_ordered_list = corners_ordered.tolist() if corners_ordered is not None else None
     return {
         "image_path": str(image_path),
         "success": bool(success),
         "is_grid_ready": bool(calibrator.is_grid_ready),
+        "selected_corners_raw": corners_raw_list,
+        "selected_corners_refined": corners_refined_list,
+        "selected_corners_ordered": corners_ordered_list,
+        "selected_corners_area_px": _quad_area(corners_ordered) if corners_ordered is not None else None,
         "mode": "synthetic_fallback" if getattr(calibrator, "_synthetic_grid", False) else "visual",
         "has_perspective_matrix": calibrator._perspective_matrix is not None,  # type: ignore[attr-defined]
         "has_inverse_perspective": calibrator._inv_perspective is not None,  # type: ignore[attr-defined]
@@ -243,6 +565,24 @@ def _reliable_line_masks(calibrator: BreadboardCalibrator) -> tuple[np.ndarray, 
             np.zeros(0, dtype=bool),
         )
 
+    if not isinstance(observed_main, np.ndarray) or observed_main.ndim != 2:
+        return (
+            np.zeros(0, dtype=bool),
+            np.zeros(0, dtype=bool),
+            np.zeros(0, dtype=bool),
+            np.zeros(0, dtype=bool),
+            np.zeros(0, dtype=bool),
+        )
+
+    if not isinstance(valid_main, np.ndarray) or valid_main.ndim != 2:
+        return (
+            np.zeros(0, dtype=bool),
+            np.zeros(0, dtype=bool),
+            np.zeros(0, dtype=bool),
+            np.zeros(0, dtype=bool),
+            np.zeros(0, dtype=bool),
+        )
+
     row_mask = (observed_main.sum(axis=1) >= 4)
     col_mask = (observed_main.sum(axis=0) >= max(8, observed_main.shape[0] // 6))
     valid_point_mask = valid_main.astype(bool)
@@ -252,6 +592,8 @@ def _reliable_line_masks(calibrator: BreadboardCalibrator) -> tuple[np.ndarray, 
 
 
 def draw_anchor_grid_demo(canvas: np.ndarray, calibrator: BreadboardCalibrator) -> None:
+    if not bool(getattr(calibrator, "is_grid_ready", False)):
+        return
     if calibrator.row_coords is None or calibrator.col_coords is None:
         return
     row_mask, col_mask, valid_main_mask, top_mask, bot_mask = _reliable_line_masks(calibrator)
@@ -283,6 +625,10 @@ def draw_anchor_grid_demo(canvas: np.ndarray, calibrator: BreadboardCalibrator) 
     if getattr(calibrator, "_grid_matrix", None) is not None:
         grid = calibrator._grid_matrix  # type: ignore[attr-defined]
         observed_main = getattr(calibrator, "_observed_main_mask", None)
+        if not isinstance(valid_main_mask, np.ndarray) or valid_main_mask.ndim != 2 or valid_main_mask.shape[:2] != grid.shape[:2]:
+            valid_main_mask = np.ones(grid.shape[:2], dtype=bool)
+        if not isinstance(observed_main, np.ndarray) or observed_main.ndim != 2 or observed_main.shape[:2] != grid.shape[:2]:
+            observed_main = np.zeros(grid.shape[:2], dtype=bool)
         for r in range(grid.shape[0]):
             if r < len(row_mask) and not row_mask[r]:
                 continue
