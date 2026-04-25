@@ -102,7 +102,10 @@ class PinRoiDetector:
         try:
             from ultralytics import YOLO
 
-            self.model = YOLO(path)
+            if task == "unknown":
+                self.model = YOLO(path, task="pose")
+            else:
+                self.model = YOLO(path)
             self.model_path = path
             self.model_contract["loaded"] = True
             logger.info("[PinDetector] Loaded ROI pin model: %s", path)
