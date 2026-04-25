@@ -1,0 +1,203 @@
+{
+  "schema_version": "teaching_scene_v1",
+  "scene_id": "exp_first_order_rc",
+  "scene_name": "一阶 RC 电路的实验研究",
+  "course": "电子测量与电子电路实验I",
+  "source_materials": [
+    {
+      "title": "一阶RC电路的实验研究",
+      "path": "/Users/liusuan/Downloads/一阶RC电路的实验研究.pdf",
+      "source_type": "course_slide"
+    }
+  ],
+  "learning_goals": [
+    "理解一阶 RC 电路的暂态过程和时间常数 τ=RC。",
+    "掌握微分电路和积分电路的实验搭接与波形观察方法。",
+    "掌握函数信号源、示波器双通道、探头 X1/X10 和触发源的基本设置。",
+    "能根据波形判断 RC 参数、输出取样点或仪器设置是否正确。"
+  ],
+  "required_equipment": [
+    "函数信号源",
+    "双通道示波器",
+    "面包板",
+    "20kΩ 电阻",
+    "10kΩ 电阻",
+    "470pF 电容",
+    "0.1μF 电容",
+    "0.01μF 电容",
+    "导线"
+  ],
+  "circuit_principles": [
+    {
+      "topic": "时间常数",
+      "summary": "一阶 RC 电路的时间常数为 τ=RC。τ 越大，过渡过程曲线变化越慢，电容电压达到稳态需要的时间越长。"
+    },
+    {
+      "topic": "电容充放电",
+      "summary": "在阶跃激励下，电容电压按指数规律变化；当 t=τ 时，充电过程约达到最终值的 0.632，放电过程约降至初始值的 0.368。"
+    },
+    {
+      "topic": "微分电路",
+      "summary": "将脉冲电压加到 RC 电路，当 RC 远小于周期 T 时，输出可形成顶部尖锐的触发脉冲。课件中的微分测试使用 20kΩ 和 470pF 或 0.1μF。"
+    },
+    {
+      "topic": "积分电路",
+      "summary": "将脉冲电压加到 RC 电路，当 RC 远大于周期 T 时，输出接近积分波形。课件中的积分测试使用 10kΩ 和 0.01μF，并测电容上的输出。"
+    }
+  ],
+  "expected_circuits": [
+    {
+      "circuit_id": "rc_differentiator_test",
+      "description": "微分电路测试：20kΩ 电阻与电容组成 RC 网络，输入为 5kHz、VPP=2V、0V 到 2V 的正向方波。",
+      "components": [
+        "20kΩ resistor",
+        "470pF capacitor",
+        "0.1μF capacitor"
+      ],
+      "output_node": "resistor_voltage_or_differentiated_output",
+      "measurement_notes": [
+        "信号源和示波器黑夹子只能接电路参考地。",
+        "双通道同时观察输入和输出，两个通道 0 电平位置重合。",
+        "470pF 测试中输出通道可使用 X10 档，并按 X10 换算实际电压。"
+      ]
+    },
+    {
+      "circuit_id": "rc_integrator_test",
+      "description": "积分电路测试：10kΩ 电阻和 0.01μF 电容，输入为 20kHz 或 2kHz、VPP=2V 的正向方波，输出测电容上的电压。",
+      "components": [
+        "10kΩ resistor",
+        "0.01μF capacitor"
+      ],
+      "output_node": "capacitor_voltage",
+      "measurement_notes": [
+        "注意积分电路形式变化，输出应取电容两端。",
+        "输入耦合方式选择直流方式。",
+        "触发源选择输入方波所在通道。"
+      ]
+    }
+  ],
+  "expected_measurements": [
+    {
+      "target": "time_constant",
+      "method": "利用示波器游标测量输出曲线从最大值到 0.368Ui 所需时间。",
+      "expectation": "测得 τ 应接近理论值 RC。"
+    },
+    {
+      "target": "waveform_display",
+      "method": "调整水平灵敏度，使输入输出波形显示 2 个周期。",
+      "expectation": "两通道基线重合，波形完整且高度合适。"
+    },
+    {
+      "target": "probe_attenuation",
+      "method": "输出探头在 X10 档时，实际电压等于屏幕读数乘以 10。",
+      "expectation": "记录输出峰峰值时必须按探头倍率换算。"
+    }
+  ],
+  "common_faults": [
+    {
+      "fault_id": "scope_ground_not_reference_ground",
+      "error_tags": [
+        "scope_ground_or_short_risk",
+        "wrong_node_connection"
+      ],
+      "related_error_codes": [
+        "COMPONENT_SHORTED_SAME_NET",
+        "NODE_MISMATCH"
+      ],
+      "symptom": "波形异常、输出被拉到错误电位，严重时可能造成短路。",
+      "likely_reason": "信号源或示波器黑夹子没有接到电路参考地，或多个地夹接到了不同节点。",
+      "fix_steps": [
+        "先确认电路参考地节点。",
+        "函数信号源地线和示波器黑夹子都接到同一个参考地。",
+        "不要把示波器地夹夹到非地节点上。"
+      ],
+      "teaching_hint": "这是 RC 实验最重要的仪器安全规则之一，AI 助教应优先提醒。"
+    },
+    {
+      "fault_id": "wrong_output_node_for_integrator",
+      "error_tags": [
+        "wrong_node_connection",
+        "wrong_hole_connection"
+      ],
+      "related_error_codes": [
+        "NODE_MISMATCH",
+        "HOLE_MISMATCH"
+      ],
+      "symptom": "积分电路看不到预期的电容电压波形，输出像输入或相位关系不对。",
+      "likely_reason": "积分电路输出应该测电容上的电压，但探头接到了电阻或输入节点。",
+      "fix_steps": [
+        "对照电路图找出电容两端。",
+        "将输出通道探头接到电容输出节点，黑夹仍接参考地。",
+        "重新确认输入输出两通道 0 电平位置重合。"
+      ],
+      "teaching_hint": "这类错误可结合 netlist 中输出节点和参考电路节点解释。"
+    },
+    {
+      "fault_id": "capacitor_value_mismatch",
+      "error_tags": [
+        "component_value_mismatch"
+      ],
+      "related_error_codes": [],
+      "symptom": "波形变化速度与预期不符，微分脉冲过宽或积分效果不明显。",
+      "likely_reason": "电容型号选错，例如把 470pF、0.1μF、0.01μF 混淆，导致 τ=RC 改变。",
+      "fix_steps": [
+        "根据课件要求核对电容标号：471 对应 470pF，104 对应 0.1μF，103 对应 0.01μF。",
+        "重新计算 τ=RC，判断当前 RC 与输入周期 T 的关系。",
+        "换回实验要求的电容后重新观察波形。"
+      ],
+      "teaching_hint": "如果 CV 当前不能识别电容标号，可作为学生自查问题提出。"
+    },
+    {
+      "fault_id": "probe_x10_not_accounted",
+      "error_tags": [
+        "probe_mode_error"
+      ],
+      "related_error_codes": [],
+      "symptom": "记录的输出峰峰值比实际值小 10 倍，实验数据与波形不一致。",
+      "likely_reason": "输出探头设置为 X10，但读取电压时没有乘以 10。",
+      "fix_steps": [
+        "确认示波器探头物理拨档是 X1 还是 X10。",
+        "若为 X10，实际电压等于垂直灵敏度乘格数再乘 10。",
+        "记录数据时标注探头倍率。"
+      ],
+      "teaching_hint": "这是仪器设置知识，适合作为 RAG 补充而非视觉错误码。"
+    },
+    {
+      "fault_id": "wrong_signal_offset",
+      "error_tags": [
+        "waveform_mismatch"
+      ],
+      "related_error_codes": [],
+      "symptom": "输入方波不是 0V 到 2V 的正向方波，输出波形基准偏移。",
+      "likely_reason": "函数信号源只设置了 VPP=2V，但没有正确设置直流偏置 VDC。",
+      "fix_steps": [
+        "确认输入要求是高电平 2V、低电平 0V。",
+        "设置 VPP=2V，并设置合适 VDC 使方波整体上移。",
+        "用示波器输入通道确认输入波形后再看输出。"
+      ],
+      "teaching_hint": "这类错误需要结合示波器图像或学生数据，当前可由问答提示。"
+    }
+  ],
+  "rag_queries": [
+    "为什么我的 RC 波形不像微分电路？",
+    "为什么积分电路要测电容上的输出？",
+    "470pF 和 0.1μF 换了以后波形为什么差这么多？",
+    "示波器 X10 档为什么读数要乘以 10？",
+    "信号源和示波器的黑夹子为什么只能接参考地？",
+    "时间常数 τ 怎么从波形上读出来？"
+  ],
+  "project_mapping": {
+    "preferred_validator_codes": [
+      "NODE_MISMATCH",
+      "HOLE_MISMATCH",
+      "COMPONENT_SHORTED_SAME_NET",
+      "FLOATING_PIN"
+    ],
+    "preferred_rag_modes": [
+      "diagnose",
+      "guided_fix",
+      "measurement_explanation",
+      "principle_explanation"
+    ]
+  }
+}

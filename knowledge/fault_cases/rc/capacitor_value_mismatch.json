@@ -1,0 +1,40 @@
+{
+  "schema_version": "fault_case_v1",
+  "knowledge_id": "rc_capacitor_value_mismatch",
+  "scene_id": "exp_first_order_rc",
+  "fault_id": "capacitor_value_mismatch",
+  "error_tags": [
+    "component_value_mismatch"
+  ],
+  "related_error_codes": [],
+  "title": "电容标称值选错导致时间常数不符",
+  "trigger_conditions": [
+    "微分脉冲宽度明显不对",
+    "积分效果不明显",
+    "学生混淆 471、103、104 电容标号"
+  ],
+  "reference_text": "一阶 RC 的时间常数为 τ=RC。若把 470pF、0.01μF、0.1μF 混用，τ 会改变，微分或积分波形会与标准现象明显不同。",
+  "reference_images": [
+    "knowledge/reference_assets/rc/capacitor_code_471_103_104.png"
+  ],
+  "reference_waveforms": [
+    "knowledge/reference_assets/rc/rc_time_constant_comparison.png"
+  ],
+  "reference_schematics": [
+    "knowledge/reference_assets/rc/rc_component_value_reference.png"
+  ],
+  "fix_steps": [
+    "核对实验要求的电阻和电容组合。",
+    "识别电容标号：471 为 470pF，103 为 0.01μF，104 为 0.1μF。",
+    "重新计算 τ=RC。",
+    "换回正确电容后重新观察波形。"
+  ],
+  "student_answer_template": "波形变化快慢首先看 τ=RC。若电容标号选错，哪怕接线节点正确，波形也会和标准结果不同。",
+  "source_materials": [
+    {
+      "title": "一阶RC电路的实验研究",
+      "path": "/Users/liusuan/Downloads/一阶RC电路的实验研究.pdf",
+      "note": "课件分别使用 470pF、0.1μF 和 0.01μF 电容进行微分/积分测试。"
+    }
+  ]
+}

@@ -119,6 +119,18 @@ class Settings(BaseSettings):
     KB_STORAGE_DIR: str = str(PROJECT_ROOT / "artifacts" / "kb")
     KB_COLLECTION: str = "labguardian_kb"
     KB_DEFAULT_TOP_K: int = 6
+    TEACHING_KB_DIR: str = str(PROJECT_ROOT / "knowledge" / "teaching_scenes")
+    FAULT_CASE_KB_DIR: str = str(PROJECT_ROOT / "knowledge" / "fault_cases")
+
+    # ---- Local VLM (optional, edge deployment) ----
+    VLM_PROVIDER: str = "template"
+    VLM_BASE_URL: Optional[str] = None
+    VLM_MODEL: Optional[str] = None
+    VLM_TIMEOUT_S: float = 30.0
+    VLM_OPENVINO_MODEL_DIR: Optional[str] = None
+    VLM_OPENVINO_DEVICE: str = "CPU"
+    VLM_OPENVINO_CACHE_DIR: Optional[str] = None
+    VLM_MAX_NEW_TOKENS: int = 256
 
 
 settings = Settings()

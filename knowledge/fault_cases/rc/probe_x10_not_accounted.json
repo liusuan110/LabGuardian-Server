@@ -1,0 +1,39 @@
+{
+  "schema_version": "fault_case_v1",
+  "knowledge_id": "rc_probe_x10_not_accounted",
+  "scene_id": "exp_first_order_rc",
+  "fault_id": "probe_x10_not_accounted",
+  "error_tags": [
+    "probe_mode_error"
+  ],
+  "related_error_codes": [],
+  "title": "示波器探头 X1/X10 档位或读数换算错误",
+  "trigger_conditions": [
+    "输出峰峰值记录比实际小 10 倍",
+    "探头物理拨档与示波器通道设置不一致",
+    "学生没有按 X10 倍率换算输出电压"
+  ],
+  "reference_text": "探头拨到 X10 时，信号先衰减 10 倍再进入示波器。若示波器通道设置或人工读数没有考虑倍率，输出幅值记录会出现 10 倍误差。",
+  "reference_images": [
+    "knowledge/reference_assets/rc/probe_x1_x10_switch.png",
+    "knowledge/reference_assets/rc/scope_channel_attenuation_setting.png"
+  ],
+  "reference_waveforms": [
+    "knowledge/reference_assets/rc/rc_differentiator_x10_standard_waveform.png"
+  ],
+  "reference_schematics": [],
+  "fix_steps": [
+    "检查探头物理拨档是 X1 还是 X10。",
+    "检查示波器对应通道的探头衰减设置。",
+    "若探头为 X10，实际电压按垂直灵敏度、格数和 10 倍倍率换算。",
+    "在实验记录中标注探头倍率。"
+  ],
+  "student_answer_template": "如果探头在 X10 档，屏幕上的电压读数必须按 10 倍关系理解；否则峰峰值会出现 10 倍偏差。",
+  "source_materials": [
+    {
+      "title": "一阶RC电路的实验研究",
+      "path": "/Users/liusuan/Downloads/一阶RC电路的实验研究.pdf",
+      "note": "课件说明 X1 与 X10 档输入阻抗和电压换算不同。"
+    }
+  ]
+}

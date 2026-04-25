@@ -11,12 +11,24 @@ from typing import Any
 
 from app.schemas.angnt import AngntCitation, AngntEvidence
 from app.services.classroom_state import ClassroomState
+from app.services.error_tag_service import ErrorTagService
 from app.services.kb_service import KbService
+from app.services.mrag_service import MragService
+from app.services.teaching_kb_service import TeachingKbService
 
 
 class RagService:
-    def __init__(self, kb_service: KbService | None = None) -> None:
+    def __init__(
+        self,
+        kb_service: KbService | None = None,
+        teaching_kb_service: TeachingKbService | None = None,
+        error_tag_service: ErrorTagService | None = None,
+        mrag_service: MragService | None = None,
+    ) -> None:
         self._kb_service = kb_service
+        self._teaching_kb_service = teaching_kb_service
+        self._error_tag_service = error_tag_service
+        self._mrag_service = mrag_service
 
     def build_context(
         self,
@@ -35,6 +47,13 @@ class RagService:
 
         if station:
             diagnostics = station.get("diagnostics", [])
+            comparison_report = station.get("comparison_report", {}) or {}
+            error_codes = self._extract_error_codes(comparison_report)
+            error_tags = (
+                self._error_tag_service.extract_tags(comparison_report)
+                if self._error_tag_service
+                else []
+            )
             summary = (
                 f"risk={station.get('risk_level', 'safe')}, "
                 f"progress={station.get('progress', 0.0):.2f}, "
@@ -57,9 +76,28 @@ class RagService:
                         "risk_level": station.get("risk_level", "safe"),
                         "risk_reasons": station.get("risk_reasons", []),
                         "diagnostics": diagnostics[:top_k],
+                        "error_codes": error_codes[:top_k],
+                        "error_tags": error_tags[:top_k],
                     },
                 )
             )
+            if error_tags:
+                citations.append(
+                    AngntCitation(
+                        source_type="error_tags",
+                        source_id=f"{station_id}:rc_error_tags",
+                        title="一阶 RC 结构化错误标签",
+                        snippet="；".join(tag["error_tag"] for tag in error_tags[:top_k]),
+                    )
+                )
+                evidence.append(
+                    AngntEvidence(
+                        evidence_type="error_tags",
+                        source_id=f"{station_id}:rc_error_tags",
+                        summary="从 validator_report_v2 映射得到的一阶 RC 教学错误标签",
+                        payload={"error_tags": error_tags[:top_k]},
+                    )
+                )
 
             snapshot = station.get("circuit_snapshot", "")
             if snapshot:
@@ -79,6 +117,77 @@ class RagService:
                         payload={"circuit_snapshot": snapshot},
                     )
                 )
+
+            if self._teaching_kb_service:
+                error_tag_values = [tag["error_tag"] for tag in error_tags]
+                teaching_hits = self._teaching_kb_service.search(
+                    query=query,
+                    error_codes=error_codes,
+                    error_tags=error_tag_values,
+                    top_k=top_k,
+                )
+                knowledge_pack = self._build_mrag_pack(
+                    query=query,
+                    error_tag_values=error_tag_values,
+                    error_codes=error_codes,
+                    diagnostics=diagnostics,
+                    station=station,
+                    top_k=top_k,
+                )
+                for hit in teaching_hits:
+                    matching_faults = hit.get("matching_faults", [])
+                    snippets: list[str] = []
+                    if matching_faults:
+                        first_fault = matching_faults[0]
+                        snippets.append(str(first_fault.get("symptom", "")))
+                        snippets.append(str(first_fault.get("likely_reason", "")))
+                    else:
+                        goals = hit.get("learning_goals", [])
+                        if goals:
+                            snippets.append(str(goals[0]))
+                    snippet = "；".join(part for part in snippets if part)[:260]
+                    citations.append(
+                        AngntCitation(
+                            source_type="teaching_scene",
+                            source_id=str(hit.get("scene_id", "")),
+                            title=str(hit.get("scene_name") or "教学场景"),
+                            snippet=snippet,
+                        )
+                    )
+                    evidence.append(
+                        AngntEvidence(
+                            evidence_type="teaching_scene",
+                            source_id=str(hit.get("scene_id", "")),
+                            summary=str(hit.get("scene_name") or "教学场景"),
+                            payload={
+                                "course": hit.get("course", ""),
+                                "learning_goals": hit.get("learning_goals", [])[:3],
+                                "matching_faults": matching_faults[:3],
+                                "expected_measurements": hit.get("expected_measurements", [])[:3],
+                                "source_materials": hit.get("source_materials", []),
+                            },
+                        )
+                    )
+                if knowledge_pack.get("fault_cases"):
+                    citations.append(
+                        AngntCitation(
+                            source_type="fault_case_pack",
+                            source_id=f"{station_id}:exp_first_order_rc_fault_cases",
+                            title="一阶 RC 图文纠错知识包",
+                            snippet="；".join(
+                                str(case.get("title", ""))
+                                for case in knowledge_pack["fault_cases"][:top_k]
+                            )[:260],
+                        )
+                    )
+                    evidence.append(
+                        AngntEvidence(
+                            evidence_type="fault_case_pack",
+                            source_id=f"{station_id}:exp_first_order_rc_fault_cases",
+                            summary="一阶 RC 本地图文知识单元",
+                            payload=knowledge_pack,
+                        )
+                    )
 
         if reference:
             citations.append(
@@ -133,7 +242,65 @@ class RagService:
             "used_retrieval": used_retrieval,
         }
 
-    def answer_with_kb(self, *, query: str, top_k: int) -> tuple[str, list[AngntCitation], list[AngntEvidence], bool]:
+    def answer_with_kb(
+        self,
+        *,
+        query: str,
+        top_k: int,
+    ) -> tuple[str, list[AngntCitation], list[AngntEvidence], bool]:
         if not self._kb_service:
             return "未启用知识库。", [], [], False
         return self._kb_service.answer(query=query, top_k=top_k)
+
+    def _extract_error_codes(self, comparison_report: dict[str, Any]) -> list[str]:
+        codes: list[str] = []
+        buckets: list[Any] = list(comparison_report.get("items", []))
+        for key in (
+            "topology_errors",
+            "node_errors",
+            "hole_errors",
+            "polarity_errors",
+            "component_errors",
+        ):
+            value = comparison_report.get(key, [])
+            if isinstance(value, list):
+                buckets.extend(value)
+        for item in buckets:
+            if not isinstance(item, dict):
+                continue
+            code = item.get("error_code")
+            if isinstance(code, str) and code and code not in codes:
+                codes.append(code)
+        return codes
+
+    def _build_mrag_pack(
+        self,
+        *,
+        query: str,
+        error_tag_values: list[str],
+        error_codes: list[str],
+        diagnostics: list[Any],
+        station: dict[str, Any],
+        top_k: int,
+    ) -> dict[str, Any]:
+        if self._mrag_service:
+            return self._mrag_service.build_pack(
+                query=query,
+                scene_id="exp_first_order_rc",
+                error_tags=error_tag_values,
+                structured_context={
+                    "error_codes": error_codes[:top_k],
+                    "diagnostics": diagnostics[:top_k],
+                    "risk_level": station.get("risk_level", "safe"),
+                    "circuit_snapshot": station.get("circuit_snapshot", ""),
+                },
+                top_k=top_k,
+            )
+        if self._teaching_kb_service:
+            return self._teaching_kb_service.build_knowledge_pack(
+                query=query,
+                scene_id="exp_first_order_rc",
+                error_tags=error_tag_values,
+                top_k=top_k,
+            )
+        return {}

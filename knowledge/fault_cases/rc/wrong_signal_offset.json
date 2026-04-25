@@ -1,0 +1,38 @@
+{
+  "schema_version": "fault_case_v1",
+  "knowledge_id": "rc_wrong_signal_offset",
+  "scene_id": "exp_first_order_rc",
+  "fault_id": "wrong_signal_offset",
+  "error_tags": [
+    "waveform_mismatch"
+  ],
+  "related_error_codes": [],
+  "title": "输入方波直流偏置设置错误",
+  "trigger_conditions": [
+    "输入不是 0V 到 2V 的正向方波",
+    "波形整体上下偏移",
+    "输出波形基准与标准图不一致"
+  ],
+  "reference_text": "RC 实验要求输入为峰峰值 2V 的正向方波，即低电平 0V、高电平 2V。只设置 VPP 而没有设置合适 VDC，会导致输入波形偏离实验要求。",
+  "reference_images": [
+    "knowledge/reference_assets/rc/function_generator_offset_setting.png"
+  ],
+  "reference_waveforms": [
+    "knowledge/reference_assets/rc/rc_input_square_0_to_2v_standard.png"
+  ],
+  "reference_schematics": [],
+  "fix_steps": [
+    "先用示波器 CH1 观察输入方波。",
+    "设置信号源 VPP 为 2V。",
+    "设置直流偏置，使低电平为 0V、高电平为 2V。",
+    "确认输入波形正确后，再观察 RC 输出。"
+  ],
+  "student_answer_template": "先不要急着改电路。确认输入方波是否真的是 0V 到 2V；如果偏置不对，RC 输出一定会跟标准波形不一致。",
+  "source_materials": [
+    {
+      "title": "一阶RC电路的实验研究",
+      "path": "/Users/liusuan/Downloads/一阶RC电路的实验研究.pdf",
+      "note": "课件要求输入为 VPP=2V 的正向方波，并提醒注意设置 VDC。"
+    }
+  ]
+}

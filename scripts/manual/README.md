@@ -11,14 +11,18 @@
 
 ## Vision tools
 
-当前 `tools/vision/` 里的脚本按职责分四类:
+当前 `tools/vision/` 里的文件分成两类:
+
+- 可直接运行的入口脚本
+- 被入口脚本复用的辅助模块
+
+### 当前仍在使用的入口脚本
 
 - 正式链路调试:
   - `run_official_pipeline_debug.py`
   - 只调用正式 `run_pipeline()`
   - 适合演示、联调、核对当前主链输出
-- 数据准备:
-  - `labelme_pose_dataset_utils.py`
+- ROI / 数据集准备:
   - `mine_component_roi_priors.py`
   - `build_pose_roi_dataset.py`
 - 模型研究 / 实验:
@@ -28,6 +32,21 @@
 - 面包板网格诊断:
   - `debug_calibrator_grid.py`
   - 只诊断 calibrator, 不代表完整 pipeline 演示
+
+### 辅助模块
+
+- `labelme_pose_dataset_utils.py`
+  - 不是独立入口脚本
+  - 当前被 `mine_component_roi_priors.py` 和 `build_pose_roi_dataset.py` 复用
+
+### 当前整理结论
+
+- `tools/vision/` 目录里目前没有“高置信度可直接删除”的多余脚本
+- 但要注意区分:
+  - `run_official_pipeline_debug.py` 才是当前视觉主链调试入口
+  - `debug_full_image_pose.py` 是实验脚本, 只用于比较全图 pose 方案
+  - `debug_calibrator_grid.py` 只服务 calibrator 诊断
+  - `labelme_pose_dataset_utils.py` 是 helper, 不是一个给团队直接运行的主入口
 
 协作约定:
 

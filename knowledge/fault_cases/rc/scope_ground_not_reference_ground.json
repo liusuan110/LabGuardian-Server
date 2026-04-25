@@ -1,0 +1,44 @@
+{
+  "schema_version": "fault_case_v1",
+  "knowledge_id": "rc_scope_ground_not_reference_ground",
+  "scene_id": "exp_first_order_rc",
+  "fault_id": "scope_ground_not_reference_ground",
+  "error_tags": [
+    "scope_ground_or_short_risk",
+    "wrong_node_connection"
+  ],
+  "related_error_codes": [
+    "COMPONENT_SHORTED_SAME_NET",
+    "NODE_MISMATCH"
+  ],
+  "title": "示波器或信号源地线没有接到参考地",
+  "trigger_conditions": [
+    "输出波形被拉到异常电位",
+    "规则层提示节点错误或短路风险",
+    "学生把黑夹子接到了非参考地节点"
+  ],
+  "reference_text": "一阶 RC 实验中，函数信号源地线和示波器黑夹子都应接到电路参考地。示波器地夹通常与保护地相连，夹到非参考地节点可能改变电路连接，甚至造成短路。",
+  "reference_images": [
+    "knowledge/reference_assets/rc/scope_ground_reference_connection.png"
+  ],
+  "reference_waveforms": [
+    "knowledge/reference_assets/rc/rc_waveform_ground_error_example.png"
+  ],
+  "reference_schematics": [
+    "knowledge/reference_assets/rc/rc_reference_ground_schematic.png"
+  ],
+  "fix_steps": [
+    "先在参考电路中确认 GND 或参考地节点。",
+    "把函数信号源黑夹子接到参考地。",
+    "把示波器所有通道的黑夹子接到同一个参考地。",
+    "重新观察输入和输出波形，确认基线位置正常。"
+  ],
+  "student_answer_template": "优先检查黑夹子位置。若地线夹在非参考地节点，仪器会把该节点强行拉到地电位，导致 RC 电路连接关系改变。",
+  "source_materials": [
+    {
+      "title": "一阶RC电路的实验研究",
+      "path": "/Users/liusuan/Downloads/一阶RC电路的实验研究.pdf",
+      "note": "课件强调信号源和示波器黑夹子只能接电路参考地。"
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "schema_version": "fault_case_v1",
+  "knowledge_id": "rc_wrong_output_node_for_integrator",
+  "scene_id": "exp_first_order_rc",
+  "fault_id": "wrong_output_node_for_integrator",
+  "error_tags": [
+    "wrong_node_connection",
+    "wrong_hole_connection"
+  ],
+  "related_error_codes": [
+    "NODE_MISMATCH",
+    "HOLE_MISMATCH"
+  ],
+  "title": "积分电路输出节点接错",
+  "trigger_conditions": [
+    "积分波形不像预期",
+    "输出探头接在输入节点或电阻节点",
+    "规则层提示输出节点不匹配"
+  ],
+  "reference_text": "一阶 RC 积分电路测试要求测量电容上的输出电压。如果输出通道接到电阻端、输入端或错误孔位，示波器会显示错误波形。",
+  "reference_images": [
+    "knowledge/reference_assets/rc/integrator_correct_output_probe.png"
+  ],
+  "reference_waveforms": [
+    "knowledge/reference_assets/rc/rc_integrator_standard_waveform.png"
+  ],
+  "reference_schematics": [
+    "knowledge/reference_assets/rc/rc_integrator_output_node_schematic.png"
+  ],
+  "fix_steps": [
+    "先找到积分电路中的电容两端。",
+    "输出通道探头接到电容输出节点。",
+    "输出通道黑夹仍接参考地。",
+    "确认输入输出两个通道 0 电平位置重合后再保存波形。"
+  ],
+  "student_answer_template": "积分实验要看的是电容电压。当前波形不对时，先确认输出探头是不是接在电容输出节点，而不是接在电阻或输入节点。",
+  "source_materials": [
+    {
+      "title": "一阶RC电路的实验研究",
+      "path": "/Users/liusuan/Downloads/一阶RC电路的实验研究.pdf",
+      "note": "课件提示积分电路形式变化，积分电路测电容上的输出。"
+    }
+  ]
+}

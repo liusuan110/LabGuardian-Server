@@ -1,0 +1,66 @@
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.services.mrag_service import MragService  # noqa: E402
+from app.services.teaching_kb_service import TeachingKbService  # noqa: E402
+from app.services.vlm_service import VlmService  # noqa: E402
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Smoke test local OpenVINO VLM integration.")
+    parser.add_argument("--model-dir", required=True, help="OpenVINO VLM model directory.")
+    parser.add_argument("--device", default="CPU", help="OpenVINO device, e.g. CPU, GPU, AUTO.")
+    parser.add_argument("--image", default="", help="Current breadboard/scope image path.")
+    parser.add_argument("--reference-image", default="", help="Reference image or waveform path.")
+    parser.add_argument(
+        "--query",
+        default="示波器 X10 档为什么读数要乘以 10",
+        help="Student question for the RC experiment.",
+    )
+    parser.add_argument(
+        "--error-tag",
+        action="append",
+        default=["probe_mode_error"],
+        help="RC teaching error tag. Can be repeated.",
+    )
+    parser.add_argument("--max-new-tokens", type=int, default=256)
+    args = parser.parse_args()
+
+    mrag = MragService(teaching_kb_service=TeachingKbService())
+    pack = mrag.build_pack(
+        query=args.query,
+        error_tags=args.error_tag,
+        structured_context={"manual_smoke": True},
+    )
+    service = VlmService(
+        provider="openvino_genai",
+        openvino_model_dir=args.model_dir,
+        openvino_device=args.device,
+        max_new_tokens=args.max_new_tokens,
+    )
+    result = service.explain_rc_pack(
+        mrag_pack=pack,
+        user_query=args.query,
+        current_image=_normalize_optional_path(args.image),
+        reference_image=_normalize_optional_path(args.reference_image),
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result.get("status") == "completed" else 2
+
+
+def _normalize_optional_path(path: str) -> str | None:
+    if not path:
+        return None
+    return str(Path(path).expanduser())
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
