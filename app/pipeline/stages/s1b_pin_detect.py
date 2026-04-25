@@ -424,9 +424,7 @@ def _merge_predictions_by_view(
         item = merged[pin_id]
         scores = [score for score in item["score_by_view"].values() if score > 0]
         item["confidence"] = max(scores) if scores else 0.0
-        if any(source == "wire_color_trace" for source in item["source_by_view"].values()):
-            item["source"] = "wire_color_trace"
-        elif any(source == "model" for source in item["source_by_view"].values()):
+        if any(source == "model" for source in item["source_by_view"].values()):
             item["source"] = "model"
         elif any(source == "heuristic_fallback" for source in item["source_by_view"].values()):
             item["source"] = "heuristic_fallback"
