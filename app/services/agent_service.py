@@ -12,6 +12,13 @@ import time
 import uuid
 from typing import Any
 
+from app.agent.answering import (
+    build_diagnostic_citations,
+    build_diagnostic_evidence,
+)
+from app.agent.evidence import build_runtime_evidence_from_classroom
+from app.agent.graph import run_diagnostic_graph
+from app.agent.tools import ToolResult
 from app.schemas.angnt import (
     AngntAction,
     AngntAskRequest,
@@ -20,6 +27,7 @@ from app.schemas.angnt import (
     AngntJobStatusResponse,
 )
 from app.services.classroom_state import ClassroomState
+from app.services.error_tag_service import ErrorTagService
 from app.services.rag_service import RagService
 
 
@@ -44,8 +52,17 @@ class AgentService:
             )
 
         try:
-            result = self._run_job(job_id=job_id, request=request, classroom=classroom, created_at=created_at)
-            response = AngntJobStatusResponse(job_id=job_id, status=AngntJobState.COMPLETED, result=result)
+            result = self._run_job(
+                job_id=job_id,
+                request=request,
+                classroom=classroom,
+                created_at=created_at,
+            )
+            response = AngntJobStatusResponse(
+                job_id=job_id,
+                status=AngntJobState.COMPLETED,
+                result=result,
+            )
         except Exception as exc:
             response = AngntJobStatusResponse(
                 job_id=job_id,
@@ -57,7 +74,12 @@ class AgentService:
         with self._lock:
             self._jobs[job_id] = response
 
-        return AngntJobStatusResponse(job_id=job_id, status=response.status, result=None, error=response.error)
+        return AngntJobStatusResponse(
+            job_id=job_id,
+            status=response.status,
+            result=None,
+            error=response.error,
+        )
 
     def get_status(self, job_id: str) -> AngntJobStatusResponse:
         with self._lock:
@@ -79,6 +101,14 @@ class AgentService:
         classroom: ClassroomState,
         created_at: float,
     ) -> AngntJobResult:
+        if request.mode == "diagnostic_agent":
+            return self._run_diagnostic_agent_job(
+                job_id=job_id,
+                request=request,
+                classroom=classroom,
+                created_at=created_at,
+            )
+
         base_context = self._rag_service.build_context(
             classroom=classroom,
             station_id=request.station_id,
@@ -122,6 +152,61 @@ class AgentService:
             evidence=evidence,
             actions=actions,
             used_retrieval=used_retrieval,
+            created_at=created_at,
+        )
+
+    def _run_diagnostic_agent_job(
+        self,
+        *,
+        job_id: str,
+        request: AngntAskRequest,
+        classroom: ClassroomState,
+        created_at: float,
+    ) -> AngntJobResult:
+        stations = classroom.get_all_stations()
+        evidence_contract = build_runtime_evidence_from_classroom(
+            station_id=request.station_id,
+            stations=stations,
+            error_tag_service=ErrorTagService(),
+        )
+        graph_state = run_diagnostic_graph(
+            evidence=evidence_contract,
+            query=request.query,
+            top_k=request.top_k,
+        )
+        context_pack = graph_state.context_pack
+        if context_pack is None:
+            raise RuntimeError("diagnostic graph did not produce context_pack")
+        tool_results = [
+            ToolResult.model_validate(item)
+            for item in graph_state.tool_results
+        ]
+        verification = graph_state.verification_report
+        verification_passed = bool(verification and verification.passed)
+        verification_issues = verification.issues if verification else ["verification missing"]
+
+        return AngntJobResult(
+            job_id=job_id,
+            station_id=request.station_id,
+            mode=request.mode,
+            answer=graph_state.final_answer,
+            citations=build_diagnostic_citations(
+                evidence=evidence_contract,
+                context_pack=context_pack,
+                tool_results=tool_results,
+            ),
+            evidence=build_diagnostic_evidence(
+                evidence=evidence_contract,
+                context_pack=context_pack,
+                tool_results=tool_results,
+                verification_passed=verification_passed,
+                verification_issues=verification_issues,
+            ),
+            actions=self._build_actions(
+                risk_level=evidence_contract.risk_level,
+                diagnostics=evidence_contract.diagnostics,
+            ),
+            used_retrieval=bool(tool_results),
             created_at=created_at,
         )
 

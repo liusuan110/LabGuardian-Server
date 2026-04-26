@@ -18,11 +18,20 @@ app/agent/context_pack.py
 
 app/agent/tools.py
   第一批白盒工具骨架：netlist_trace_tool、board_schema_lookup_tool、
-  fault_case_lookup_tool。
+  fault_case_lookup_tool、safety_rule_lookup_tool。
+
+app/agent/tool_runner.py
+  根据 ContextPack allowed_tools 顺序执行 deterministic tools。
+
+app/agent/answering.py
+  生成 template draft answer，并提供 verifier 失败后的规则化 repair。
 
 app/agent/verification.py
   第一版 Reflection Node 规则校验器，强制检查 error_code、evidence_ref
   和 danger 安全提示。
+
+app/agent/graph.py
+  第一版 LangGraph 状态机壳子，不接 LLM，只跑白盒状态流转。
 ```
 
 ## Data Flow
@@ -35,18 +44,20 @@ ClassroomState station
 -> deterministic tools
 -> draft answer
 -> verify_draft_answer()
+-> repair_answer?
+-> final_answer
 ```
 
-第一版完全规则化，便于测试和论文消融。后续 LangGraph 只需要把这些函数包装成
-node：
+第一版完全规则化，便于测试和论文消融。当前 LangGraph 壳子已经落地为：
 
 ```text
 START
--> build_runtime_evidence
 -> classify_error
 -> build_context_pack
--> tool_loop / answer_generation
+-> run_tools
+-> generate_draft
 -> verify_answer
+-> repair_answer?
 -> final_answer
 END
 ```
@@ -74,21 +85,31 @@ PIN_MISSING / MULTIPLE_DISCONNECTED_SUBGRAPHS -> incomplete_circuit
 
 这对应后续论文中的 Reflection / Critic Node，而不是由大模型自由选择调用的 tool。
 
-## Next Step
+## Current Integration
 
-下一阶段再接入 `AgentService`，建议新增 `mode="diagnostic_agent"`：
+当前已接入 `AgentService mode="diagnostic_agent"`：
 
 ```text
 AgentService.submit()
 -> build_runtime_evidence_from_classroom()
--> build_context_pack()
--> deterministic tool calls
--> template draft answer
--> verify_draft_answer()
+-> run_diagnostic_graph()
+-> classify_error
+-> build_context_pack
+-> run_tools
+-> generate_draft
+-> verify_answer / repair_answer
 -> AngntJobResult
 ```
 
-LangGraph 和 LLM 适配器应在这条白盒链路稳定后再接入。
+LangGraph 已经只承担编排职责，不重新判断事实。LLM 适配器和 OpenVINO chat model
+后续应继续保持可选，不影响离线 template 诊断闭环。
+
+## Next Step
+
+1. 增加 graph metrics：节点耗时、context facts count、tool call count。
+2. 为 verifier 失败后进入 `repair_answer` 的分支补 golden tests。
+3. 在 feature flag 后接入可选 LLM `generate_draft` node。
+4. 增加 `datasheet_lookup_tool` 本地 fallback，再进入外部文档检索。
 
 ## Roadmap Link
 

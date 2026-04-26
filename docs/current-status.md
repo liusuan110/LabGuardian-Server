@@ -78,6 +78,9 @@ RAG、PCM Agent、VLM 和前端指导都应消费这条主链输出，不应绕�
 - `evidence.py`: `ClassroomState` station -> `RuntimeEvidence`
 - `context_pack.py`: error code / error tag -> error family -> `ContextPack`
 - `tools.py`: deterministic tool skeleton
+- `tool_runner.py`: deterministic tools 统一执行入口
+- `graph.py`: LangGraph `DiagnosticState` 白盒状态机壳子
+- `answering.py`: template answer / repair answer 生成
 - `verification.py`: Reflection / verifier node
 
 当前已支持的 error family：
@@ -113,6 +116,8 @@ Agent 设计详见：
 
 - `tests/pipeline/` 阶段合同与集成回归
 - `tests/test_agent_pcm_contracts.py`
+- `tests/test_agent_graph.py`
+- `tests/test_agent_service_diagnostic.py`
 - `tests/test_board_schema_default.py`
 - `tests/test_pipeline_schema_defaults.py`
 - `tests/test_mrag_service.py`
@@ -143,10 +148,11 @@ Agent 设计详见：
 
 ### PCM Agent / LangGraph
 
-- 将 `RuntimeEvidence -> ContextPack -> deterministic tools -> verifier` 接入
-  `AgentService`，建议新增 `mode="diagnostic_agent"`
-- 将当前白盒链路包装为 LangGraph state machine
+- `RuntimeEvidence -> ContextPack -> deterministic tools -> template answer -> verifier`
+  已接入 `AgentService mode="diagnostic_agent"`
+- 当前白盒链路已包装为 `app/agent/graph.py` LangGraph state machine
 - 将 `answer_verifier` 保持为强制 Reflection Node，而不是可选 tool
+- 增加 graph / agent metrics 和 verifier repair 分支 golden tests
 - 后续再接 OpenAI-compatible / OpenVINO `BaseChatModel` 适配器
 
 ### Edge / Paper

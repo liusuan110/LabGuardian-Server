@@ -34,6 +34,11 @@ class FaultCaseLookupInput(BaseModel):
     top_k: int = Field(default=3, ge=1, le=10)
 
 
+class SafetyRuleLookupInput(BaseModel):
+    risk_level: str = "unknown"
+    error_family: str = "unknown"
+
+
 def netlist_trace_tool(
     evidence: RuntimeEvidence,
     args: NetlistTraceInput,
@@ -149,3 +154,22 @@ def fault_case_lookup_tool(
         },
     )
 
+
+def safety_rule_lookup_tool(args: SafetyRuleLookupInput) -> ToolResult:
+    rules: list[str] = []
+    if args.risk_level == "danger" or args.error_family == "short_circuit":
+        rules.extend(
+            [
+                "先断开电源，再移动导线或元件。",
+                "检查电源轨 VCC/GND 是否被同一元件或导线直接连通。",
+                "复查限流元件，避免 LED 或电源输出直接短路。",
+            ]
+        )
+    else:
+        rules.append("保持低压限流条件下逐项复查连接。")
+
+    return ToolResult(
+        tool_name="safety_rule_lookup_tool",
+        summary="；".join(rules),
+        payload={"rules": rules},
+    )

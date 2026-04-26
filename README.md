@@ -37,6 +37,7 @@ LabGuardian 的服务器端负责把视觉识别结果转换成可验证、可�
   - `ContextPack`
   - error family 路由
   - deterministic tools
+  - LangGraph state machine shell
   - Reflection / verifier node
 - 已补一组最小 regression fixture 与 smoke tests
 
@@ -444,7 +445,7 @@ python3 -m pytest
 - S1 / S1.5 / S2 的 JSON 契约优先保持稳定，模型训练完成后尽量只替换推理内核
 - fallback 必须显式标记来源，不要伪装成真实模型输出
 - Agent / VLM 只消费结构化证据，不绕开 validator 重新判断事实
-- PCM Agent 第一版优先保持规则化；LangGraph、LLM 和 OpenVINO adapter 在白盒链路稳定后接入
+- PCM Agent 第一版优先保持规则化；LangGraph 壳子已接入，LLM 和 OpenVINO adapter 后续作为可选节点接入
 - 新增手工脚本放 `scripts/manual/tools/`
 - 新增回归样例优先补到 `tests/fixtures/` 和 `tests/manual/smoke/`
 - 阶段级回归优先补到 `tests/pipeline/`
@@ -453,9 +454,9 @@ python3 -m pytest
 ## 下一步开发重点
 
 - [app/services/agent_service.py](app/services/agent_service.py)
-  - 新增 `mode="diagnostic_agent"`，接入 `RuntimeEvidence -> ContextPack -> verifier`
+  - 已接入 `mode="diagnostic_agent"`，当前通过 LangGraph 壳子编排白盒链路
 - [app/agent/](app/agent)
-  - 把白盒 PCM 链路包装成 LangGraph state machine
+  - 下一步补 graph metrics、更多 golden tests 和可选 LLM node
 - [app/services/rag_service.py](app/services/rag_service.py)
   - 与 PCM context pack 对齐 runtime / teaching / KB 三路检索
 - [app/pipeline/stages/s2_mapping.py](app/pipeline/stages/s2_mapping.py)

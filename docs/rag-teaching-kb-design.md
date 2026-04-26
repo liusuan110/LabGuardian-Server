@@ -248,14 +248,14 @@ VLM_MAX_NEW_TOKENS=256
 
 近期：
 
-1. 将 `ContextPack` 接入 `AgentService mode="diagnostic_agent"`。
-2. 让回答优先使用 `RuntimeEvidence + fault_case`，再补充 PDF/datasheet。
-3. 给 `fault_cases/rc/*.json` 补真实参考图、标准波形图和接线图。
-4. 增加 `datasheet_lookup_tool`，但保持本地 fallback。
+1. 给 `diagnostic_agent` 的 LangGraph 链路补 graph / agent metrics。
+2. 给 `fault_cases/rc/*.json` 补真实参考图、标准波形图和接线图。
+3. 增加 `datasheet_lookup_tool`，但保持本地 fallback。
+4. 增加更多 agent golden tests，覆盖 short circuit、node mismatch 和 measurement error。
 
 中期：
 
-1. 将白盒 PCM 链路包装成 LangGraph state machine。
-2. 将 verifier 固化为 Reflection Node。
-3. 引入 OpenAI-compatible / OpenVINO 模型适配器。
-4. 建立 PCM vs no-PCM、tool vs no-tool、verifier vs no-verifier 消融实验。
+1. 在 feature flag 后接入可选 LLM `generate_draft` node。
+2. 引入 OpenAI-compatible / OpenVINO 模型适配器。
+3. 建立 PCM vs no-PCM、tool vs no-tool、verifier vs no-verifier 消融实验。
+4. 将 fault cases、datasheet 和 PDF 证据统一进入可引用 ContextPack。

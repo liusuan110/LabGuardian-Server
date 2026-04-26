@@ -82,11 +82,11 @@ LabGuardian 不把事实判断交给大模型。
 - `netlist_trace_tool`
 - `board_schema_lookup_tool`
 - `fault_case_lookup_tool`
+- `safety_rule_lookup_tool`
 
 下一步工具：
 
 - `datasheet_lookup_tool`
-- `safety_rule_lookup_tool`
 - `heatmap_overlay_tool`
 - `answer_template_tool`
 
@@ -98,9 +98,9 @@ LabGuardian 不把事实判断交给大模型。
 
 ## Phase 4: AgentService Integration
 
-状态：未接入。
+状态：已完成第一版。
 
-建议新增：
+已新增：
 
 ```text
 mode="diagnostic_agent"
@@ -111,43 +111,65 @@ mode="diagnostic_agent"
 ```text
 AgentService.submit()
 -> build_runtime_evidence_from_classroom()
--> build_context_pack()
--> call deterministic tools
+-> run_diagnostic_graph()
+-> classify_error
+-> build_context_pack
+-> run deterministic tools
 -> build template draft answer
--> verify_draft_answer()
+-> verify / repair
 -> AngntJobResult
 ```
 
 验收标准：
 
-- 不配置 LLM 时也能完成诊断回答。
-- `danger` 风险回答必须包含安全提示。
-- 回答必须包含 error code 或 evidence ref。
+- 不配置 LLM 时也能完成诊断回答。已完成。
+- `danger` 风险回答必须包含安全提示。已完成。
+- 回答必须包含 error code 或 evidence ref。已完成。
+- 输出 `runtime_evidence / context_pack / tool_results / verification_report` evidence。已完成。
+- template answer 生成逻辑已拆到 `app/agent/answering.py`。
+
+下一步：
+
+- 为 short_circuit / wiring_mismatch 各补更多 golden tests。
+- 增加 agent metrics 字段。
+- 将 graph node 级状态、耗时和工具调用数写入 metrics。
 
 ## Phase 5: LangGraph State Machine
 
-状态：计划中。
+状态：已完成第一版白盒壳子。
 
 第一版图：
 
 ```text
 START
--> build_runtime_evidence
 -> classify_error
 -> build_context_pack
--> select_tools
 -> run_tools
 -> generate_draft
 -> verify_answer
+-> repair_answer?
 -> final_answer
 END
 ```
+
+当前实现：
+
+- `app/agent/graph.py`: LangGraph `DiagnosticState` 编排。
+- `app/agent/tool_runner.py`: deterministic tools 统一执行入口。
+- `AgentService mode="diagnostic_agent"` 已改为调用 `run_diagnostic_graph()`。
+- `tests/test_agent_graph.py` 已覆盖 short circuit 和空 station 两条状态流转。
 
 重要约束：
 
 - `verify_answer` 是强制 Reflection Node。
 - `classify_error` 第一版保持规则化。
 - LLM 只在 `generate_draft` 或后续 `repair_answer` 参与。
+
+下一步：
+
+- 给图节点增加可观测 metrics：node latency、tool count、context facts count。
+- 增加 verifier 失败后进入 `repair_answer` 的显式 golden case。
+- 在 feature flag 后接入可选 LLM `generate_draft` node，默认仍走 template。
 
 ## Phase 6: Model Adapter
 
@@ -219,10 +241,9 @@ app/llm/openvino_chat_model.py
 
 ## Near-Term Checklist
 
-1. 接入 `AgentService mode="diagnostic_agent"`。
-2. 为 short_circuit / wiring_mismatch 各补 2 个 agent golden tests。
-3. 增加 `datasheet_lookup_tool` 的本地 fallback。
-4. 设计 LangGraph state object 与 node wrappers。
-5. 增加 agent metrics 字段。
-6. 写 ONNX export 和 parity 脚本。
-7. 为论文实验准备 30-50 个固定案例。
+1. 为 short_circuit / wiring_mismatch 各补 2 个 agent golden tests。
+2. 增加 `datasheet_lookup_tool` 的本地 fallback。
+3. 增加 graph / agent metrics 字段。
+4. 给 `repair_answer` 分支补失败-修复回归样例。
+5. 写 ONNX export 和 parity 脚本。
+6. 为论文实验准备 30-50 个固定案例。

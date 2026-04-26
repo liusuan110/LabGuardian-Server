@@ -69,6 +69,8 @@ class PipelineService:
                 "risk_level": result.risk_level,
                 "risk_reasons": result.risk_reasons,
                 "circuit_snapshot": s3.get("circuit_description", ""),
+                "netlist_v2": s3.get("netlist_v2", {}),
+                "runtime_metadata": result.runtime_metadata,
                 "missing_components": s4.get("missing", []),
                 "match_level": s4.get("match_level", ""),
                 "detector_ok": "ok",

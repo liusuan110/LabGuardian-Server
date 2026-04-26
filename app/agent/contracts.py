@@ -91,9 +91,10 @@ class ContextPack(BaseModel):
 
 
 class DiagnosticState(BaseModel):
-    """Future LangGraph state object; currently used by deterministic tests."""
+    """LangGraph state object for deterministic PCM diagnostic flow."""
 
     query: str = ""
+    top_k: int = 5
     runtime_evidence: RuntimeEvidence
     error_family: ErrorFamily = "unknown"
     context_pack: ContextPack | None = None
@@ -112,4 +113,3 @@ class VerificationReport(BaseModel):
 
 
 DiagnosticState.model_rebuild()
-

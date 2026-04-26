@@ -377,6 +377,7 @@ component_id + pin_name + hole_id
 - `app/services/guidance_service.py`
 - `app/services/rag_service.py`
 - `app/services/agent_service.py`
+- `app/agent/graph.py`
 - `app/agent/contracts.py`
 - `app/agent/context_pack.py`
 - `app/agent/tools.py`
@@ -402,8 +403,8 @@ ClassroomState station
 -> verify_draft_answer()
 ```
 
-下一步接入 `AgentService mode="diagnostic_agent"`，再把同一条白盒链路包装为
-LangGraph state machine。详细计划见：
+这条白盒链路已接入 `AgentService mode="diagnostic_agent"`，并由
+`app/agent/graph.py` 包装成 LangGraph state machine。详细计划见：
 
 - [pcm-agent-architecture.md](pcm-agent-architecture.md)
 - [development-roadmap.md](development-roadmap.md)
@@ -419,7 +420,7 @@ LangGraph state machine。详细计划见：
 5. `agent` 只消费结构化证据，不绕开 validator/risk 直接“猜答案”。
 6. `S1 / S1.5 / S2` 的 JSON 合同优先保持稳定，模型训练完成后尽量只替换推理内核。
 7. fallback 必须显式标记来源，不伪装成真实模型输出。
-8. LangGraph / LLM / OpenVINO adapter 在白盒 PCM 链路稳定后接入。
+8. LangGraph 壳子保持规则化可测；LLM / OpenVINO adapter 后续以可选节点接入。
 
 ## Collaboration Notes
 
@@ -449,6 +450,7 @@ LangGraph state machine。详细计划见：
 - side recall candidates 目前还没有完全接成“缺失实例补全”
 - 面包板 pixel -> hole_id 的网格化细节由 `calibrator.py` 继续独立优化
 - 比赛板实物若与默认 schema 有差异, 还需要补正式 schema JSON
-- `AgentService` 尚未接入 `mode="diagnostic_agent"`
-- LangGraph state machine、LLM adapter、OpenVINO chat model 仍在计划阶段
+- `AgentService mode="diagnostic_agent"` 已接入第一版 LangGraph template 诊断闭环，
+  answer builder 已拆到 `app/agent/answering.py`
+- LLM adapter、OpenVINO chat model 仍在计划阶段
 - ONNX / INT8 / edge benchmark 脚本仍待建设

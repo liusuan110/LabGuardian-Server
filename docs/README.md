@@ -32,7 +32,7 @@
 ## Agent / RAG / VLM
 
 - [pcm-agent-architecture.md](pcm-agent-architecture.md)  
-  `RuntimeEvidence -> ContextPack -> deterministic tools -> verifier` 的 PCM Agent 设计。
+  `RuntimeEvidence -> ContextPack -> deterministic tools -> LangGraph verifier` 的 PCM Agent 设计。
 
 - [rag-teaching-kb-design.md](rag-teaching-kb-design.md)  
   一阶 RC 教学知识库、M-RAG pack、VLM 解释边界和后续检索计划。
