@@ -84,3 +84,13 @@ LP/LN/RP/RN 1-31  -> *_SEG1
 LP/LN/RP/RN 32-63 -> *_SEG2
 ```
 
+## Future Work
+
+下一阶段 edge 工作重点：
+
+- 拆分 `server-dev`、`edge-cpu`、`edge-openvino` 三类镜像。
+- 导出 S1 / S1.5 ONNX，并建立 PT vs ONNX parity test。
+- 增加 INT8 视觉量化实验。
+- 记录 stage latency、p50 / p90、peak RSS、model version、board schema id。
+- 将 `ContextPack` 的 pushed facts count、tool count、verifier result 写入 Agent
+  benchmark。

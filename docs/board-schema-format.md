@@ -113,11 +113,14 @@
 - `rail_bot+ -> RP`
 - `rail_bot- -> RN`
 
-## Recommended Next Step
+## Future Work
 
-下一阶段建议把完整比赛板型正式写进 JSON：
+默认 schema 已经覆盖当前 63 行双电源轨比赛板假设。后续工作不再是简单“补完整
+JSON”，而是把实物校验、版本化和 edge 部署绑定起来：
 
-- 全部主区孔位
-- 电源轨分段
-- 面包板物理不连续段
-- 轨道标签到 `VCC / GND` 的映射
+- 用实物板确认电源轨物理分段是否确实为 `1-31 / 32-63`。
+- 若比赛板存在不同批次或不同型号，新增独立 schema JSON，不覆盖
+  `breadboard_legacy_v1`。
+- 将正式板型的 `schema_id` 写入 `runtime_metadata` 和论文实验配置。
+- 为每个 board profile 增加 smoke test，至少覆盖主区、左右侧、电源轨分段和历史
+  `rail_top+ / rail_bot-` 兼容坐标。

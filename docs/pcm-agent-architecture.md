@@ -1,6 +1,6 @@
 # PCM Diagnostic Agent Architecture
 
-本阶段先落地不依赖大模型的 PCM 基建。它的目标不是替代视觉、拓扑或
+本阶段已经落地不依赖大模型的 PCM 基建。它的目标不是替代视觉、拓扑或
 validator，而是把确定性事实转成后续 LangGraph / ReAct 能稳定消费的最小上下文。
 
 ## Current Modules
@@ -90,3 +90,8 @@ AgentService.submit()
 
 LangGraph 和 LLM 适配器应在这条白盒链路稳定后再接入。
 
+## Roadmap Link
+
+完整工程计划和论文实验路线见：
+
+- [development-roadmap.md](development-roadmap.md)

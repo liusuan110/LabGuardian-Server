@@ -53,15 +53,18 @@ knowledge/
 
 当前 JSON 格式可以直接被 Python 标准库加载，不额外引入 YAML 依赖。
 
-## M-RAG 知识包
+## M-RAG / PCM 知识包
 
-阶段 3 增加了 `MragService`，它会把当前一阶 RC 场景、错误标签、错误知识单元、参考图路径和修复步骤整理为 `mrag_pack_v1`。
+`MragService` 会把当前一阶 RC 场景、错误标签、错误知识单元、参考图路径和修复步骤整理为 `mrag_pack_v1`。
 
-这个知识包是后续前端展示和 VLM 双图对比的输入边界。当前阶段只生成结构化数据，不调用 VLM。
+`app/agent/context_pack.py` 会进一步根据 `RuntimeEvidence` 构建 `ContextPack`，
+决定当前问题应该推送哪些教学知识和工具。
+
+这个知识包是前端展示、PCM Agent 和 VLM 双图对比的输入边界。VLM 只做解释，不接管事实识别。
 
 ## 轻量 VLM 接入
 
-阶段 4 增加了 `VlmService`。它消费 `mrag_pack_v1`，并可附带当前实拍图和参考图路径。
+`VlmService` 消费 `mrag_pack_v1`，并可附带当前实拍图和参考图路径。
 
 默认 `VLM_PROVIDER=template`，只返回基于知识包的模板解释；板端模型服务就绪后，再切换到 `openai_compatible`。
 

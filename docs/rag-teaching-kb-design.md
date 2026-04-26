@@ -1,6 +1,18 @@
-# RAG 教学知识库设计
+# RAG / PCM 教学知识库设计
 
 本项目里的 RAG 应定位为“实验调试助教”，而不是通用电子百科问答。
+
+当前架构已经从单纯 RAG 继续推进到 PCM：
+
+```text
+validator_report_v2 / netlist_v2
+-> RuntimeEvidence
+-> ContextPack
+-> teaching / fault / KB retrieval
+-> verifier
+```
+
+RAG 的职责是补充教学知识和引用来源；PCM 的职责是按错误类型选择最小上下文和工具。
 
 阶段 1 和阶段 2 只围绕一阶 RC 实验展开，来源资料为：
 
@@ -19,13 +31,14 @@
 image -> components[].pins[] -> netlist_v2 -> validator_report_v2
 ```
 
-因此 RAG 检索顺序应是：
+因此检索和上下文推送顺序应是：
 
-1. 当前实验场景。
-2. 当前 `validator_report_v2` 错误码和证据。
-3. 一阶 RC 错误知识单元。
-4. 面包板和仪器测量规则。
-5. 原始 PDF 或 datasheet 片段。
+1. 当前 `RuntimeEvidence`。
+2. 当前 `ContextPack` 中的 error family、allowed tools 和 pushed facts。
+3. 一阶 RC 教学场景。
+4. 一阶 RC 错误知识单元。
+5. 面包板和仪器测量规则。
+6. 原始 PDF 或 datasheet 片段。
 
 ## 知识类型
 
@@ -101,16 +114,19 @@ datasheet_chunk
 - 来自 `fault_case` 的图文纠错知识。
 - 来自 PDF/datasheet 的原文引用。
 
-## 后续实施步骤
+## 当前已实现
 
-1. 给 `fault_cases/rc/*.json` 补真实参考图、标准波形图和接线图。
-2. 将一阶 RC PDF 作为补充资料进入向量库。
-3. 增加 `guided_fix` 模式，优先使用结构化知识包回答。
-4. 接入轻量 VLM，只做“当前图 vs 参考图”的解释，不接管主识别。
+- `TeachingKbService`: 规则化教学场景与 fault case 检索。
+- `MragService`: 生成 `mrag_pack_v1`。
+- `VlmService`: template / openai-compatible / openvino-genai 解释边界。
+- `app/agent/evidence.py`: station -> `RuntimeEvidence`。
+- `app/agent/context_pack.py`: error code / tag -> `ContextPack`。
+- `app/agent/tools.py`: fault case、board schema、netlist trace 工具骨架。
+- `app/agent/verification.py`: Reflection / verifier node 第一版。
 
-## 阶段 3：M-RAG 知识包
+## M-RAG 知识包
 
-阶段 3 新增 `app/services/mrag_service.py`，它不负责读取原始文件，而是把
+`app/services/mrag_service.py` 不负责读取原始文件，而是把
 `TeachingKbService` 检索到的场景和错误知识单元整理成稳定结构：
 
 ```json
@@ -139,24 +155,24 @@ datasheet_chunk
 }
 ```
 
-这样下一阶段 VLM 只需要消费一个知识包：
+这样 VLM 和前端都只需要消费一个知识包：
 
 - `structured_context` 来自视觉/网表/规则层。
 - `fault_cases` 来自本地教学知识库。
 - `references.images / references.waveforms / references.schematics` 是后续双图对比的参考资产路径。
 - `fix_steps` 可直接给前端展示。
 
-当前阶段不让 VLM 参与识别，也不引入大模型推理。
+当前仍不让 VLM 参与识别，也不让大模型重判事实。
 
-## 阶段 4：轻量 VLM 解释边界
+## 轻量 VLM 解释边界
 
-阶段 4 新增 `app/services/vlm_service.py`。它只负责解释，不负责检测、孔位定位、网表恢复。
+`app/services/vlm_service.py` 只负责解释，不负责检测、孔位定位、网表恢复。
 
 输入边界：
 
 ```json
 {
-  "mrag_pack": "阶段 3 生成的 mrag_pack_v1",
+  "mrag_pack": "MragService 生成的 mrag_pack_v1",
   "current_image": "当前面包板图或示波器图，可为空",
   "reference_image": "参考图或标准波形图，可为空",
   "user_query": "学生问题"
@@ -227,3 +243,19 @@ VLM_MAX_NEW_TOKENS=256
 ```
 
 如果输出 `provider=template_fallback` 和 `status=openvino_call_failed`，说明服务层已兜底，但模型目录、OpenVINO 依赖或设备配置仍需检查。
+
+## Future Plan
+
+近期：
+
+1. 将 `ContextPack` 接入 `AgentService mode="diagnostic_agent"`。
+2. 让回答优先使用 `RuntimeEvidence + fault_case`，再补充 PDF/datasheet。
+3. 给 `fault_cases/rc/*.json` 补真实参考图、标准波形图和接线图。
+4. 增加 `datasheet_lookup_tool`，但保持本地 fallback。
+
+中期：
+
+1. 将白盒 PCM 链路包装成 LangGraph state machine。
+2. 将 verifier 固化为 Reflection Node。
+3. 引入 OpenAI-compatible / OpenVINO 模型适配器。
+4. 建立 PCM vs no-PCM、tool vs no-tool、verifier vs no-verifier 消融实验。

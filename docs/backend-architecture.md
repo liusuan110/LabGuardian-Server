@@ -13,9 +13,12 @@
 - 视觉链已经固定为 `S1 -> S1.5 -> S2 -> S3 -> S4`
 - 当前模型清单和推荐权重统一维护在 `docs/vision-model-inventory.md`
 - `topology_input.py` 已切换为只接受结构化 `components[].pins[]`
-- 新 `netlist_v2 + validator_report_v2` 链路已经可以作为后续 guidance / RAG / agent 的正式基础
+- 新 `netlist_v2 + validator_report_v2` 链路已经是 guidance / RAG / PCM Agent 的事实基础
 - `circuit.py` / `validator.py` 的主逻辑已切换到 `ComponentInstance`
 - `ic_models.py` / `polarity.py` 已切换到 `ComponentInstance` 语义
+- `app/agent/` 已落地 PCM 第一版白盒基建：
+  `RuntimeEvidence -> ContextPack -> deterministic tools -> verifier`
+- edge 第一轮收口已完成：统一模型路径、默认 `imgsz=960`、`runtime_metadata`
 
 ## Stage-Oriented Workflow
 
@@ -225,25 +228,32 @@ component_id + pin_name + hole_id
 - `pipeline` 只输出事实，不负责教学话术
 - `pipeline` 输出必须可序列化、可版本化、可回放
 
-## Recommended Layout
+## Current Layout
 
 ```text
 app/
+├── agent/
+│   ├── contracts.py
+│   ├── context_pack.py
+│   ├── evidence.py
+│   ├── tools.py
+│   └── verification.py
 ├── api/
 │   └── v1/
 │       ├── angnt.py
 │       ├── classroom.py
+│       ├── kb.py
 │       ├── pipeline.py
 │       └── websocket.py
 ├── core/
 │   ├── config.py
 │   ├── celery_app.py
-│   ├── deps.py
-│   ├── auth.py
-│   └── observability.py
+│   └── deps.py
 ├── domain/
+│   ├── board_schema.py
 │   ├── circuit.py
 │   ├── ic_models.py
+│   ├── netlist_models.py
 │   ├── polarity.py
 │   ├── risk.py
 │   └── validator.py
@@ -262,12 +272,12 @@ app/
     └── tasks.py
 ```
 
-## RAG / Agent Placement
+## RAG / PCM Agent Placement
 
 ### Why not put RAG inside `pipeline`
 
 - `pipeline` 负责识别与分析事实
-- RAG / agent 负责“如何解释事实、引用什么资料、是否触发动作”
+- RAG / PCM Agent 负责“如何解释事实、引用什么资料、是否触发动作”
 - 两者生命周期、资源消耗和可替换性不同
 
 ### Recommended Flow
@@ -277,10 +287,13 @@ flowchart TD
   A["Client / Teacher UI"] --> B["API Layer<br/>pipeline.py / classroom.py / angnt.py"]
   B --> C["Services Layer<br/>pipeline_service / guidance_service / rag_service / agent_service"]
   C --> D["Domain Layer<br/>validator / risk / circuit / board_schema"]
+  C --> H["Agent Layer<br/>RuntimeEvidence / ContextPack / tools / verifier"]
   C --> E["Pipeline Layer<br/>detect -> pin detect -> mapping -> topology -> validate"]
   C --> F["Infra<br/>Redis / DB / Vector Store / Celery"]
   E --> D
   D --> C
+  D --> H
+  H --> C
   C --> G["Outputs<br/>guidance / citations / audit / classroom state"]
 ```
 
@@ -355,7 +368,7 @@ component_id + pin_name + hole_id
 - `app/domain/circuit.py`
 - `app/domain/board_schema.py`
 
-### 改 validator / guidance / agent
+### 改 validator / guidance / PCM Agent
 
 优先看:
 
@@ -364,46 +377,36 @@ component_id + pin_name + hole_id
 - `app/services/guidance_service.py`
 - `app/services/rag_service.py`
 - `app/services/agent_service.py`
+- `app/agent/contracts.py`
+- `app/agent/context_pack.py`
+- `app/agent/tools.py`
 
-## Formal Agent Landing Design
+## PCM Agent Landing Design
 
-### `angnt` input
+当前设计原则：
 
-- 用户问题
-- `PipelineResult`
-- `topology_graph`
-- `netlist`
-- `diagnostics`
-- `risk_level` / `risk_reasons`
-- 可选课堂上下文
+- 事实由 pipeline / domain / validator 产生。
+- Agent 只消费结构化证据，不重新判断元件、孔位、节点或网表。
+- PCM 负责按错误类型推送最小上下文和允许工具。
+- Verifier 是强制 Reflection Node，不是由模型自由选择调用的 tool。
 
-### `services/rag_service.py`
+### Current deterministic flow
 
-职责:
+```text
+ClassroomState station
+-> RuntimeEvidence
+-> classify_error_family()
+-> ContextPack
+-> deterministic tools
+-> draft answer
+-> verify_draft_answer()
+```
 
-- 检索知识库
-- 拼接最小上下文
-- 输出 citations
-- 控制缓存与成本
+下一步接入 `AgentService mode="diagnostic_agent"`，再把同一条白盒链路包装为
+LangGraph state machine。详细计划见：
 
-### `services/agent_service.py`
-
-职责:
-
-- 判断是否需要检索
-- 组织 ReAct / tool call 轨迹
-- 将领域证据转换成可读指导
-- 决定是否调用 `guidance_service` 下发动作
-
-### `domain/evidence.py`
-
-建议统一的证据结构:
-
-- `evidence_type`: topology / netlist / risk_rule / kb_chunk / classroom_event
-- `source_id`
-- `version`
-- `payload`
-- `confidence`
+- [pcm-agent-architecture.md](pcm-agent-architecture.md)
+- [development-roadmap.md](development-roadmap.md)
 
 ## Boundary Rules
 
@@ -414,10 +417,9 @@ component_id + pin_name + hole_id
 3. `domain` 不 import FastAPI、Celery、Redis。
 4. `pipeline` 不直接生成教师话术或 citation。
 5. `agent` 只消费结构化证据，不绕开 validator/risk 直接“猜答案”。
-
 6. `S1 / S1.5 / S2` 的 JSON 合同优先保持稳定，模型训练完成后尽量只替换推理内核。
-
 7. fallback 必须显式标记来源，不伪装成真实模型输出。
+8. LangGraph / LLM / OpenVINO adapter 在白盒 PCM 链路稳定后接入。
 
 ## Collaboration Notes
 
@@ -435,7 +437,7 @@ component_id + pin_name + hole_id
   - 重点维护 `app/pipeline/topology_input.py`、`app/domain/circuit.py`
   - 避免把 board 规则写回视觉阶段
 - 检错 / 指导 / agent 团队
-  - 重点维护 `app/domain/validator.py`、`app/services/*`
+  - 重点维护 `app/domain/validator.py`、`app/services/*`、`app/agent/*`
   - 新解释逻辑优先基于 `validator_report_v2`
 
 ## Current Gaps
@@ -447,3 +449,6 @@ component_id + pin_name + hole_id
 - side recall candidates 目前还没有完全接成“缺失实例补全”
 - 面包板 pixel -> hole_id 的网格化细节由 `calibrator.py` 继续独立优化
 - 比赛板实物若与默认 schema 有差异, 还需要补正式 schema JSON
+- `AgentService` 尚未接入 `mode="diagnostic_agent"`
+- LangGraph state machine、LLM adapter、OpenVINO chat model 仍在计划阶段
+- ONNX / INT8 / edge benchmark 脚本仍待建设

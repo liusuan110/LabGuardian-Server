@@ -6,7 +6,7 @@ LabGuardian 的服务器端负责把视觉识别结果转换成可验证、可�
 
 - `component_id + pin_name + hole_id -> electrical_node_id -> electrical_net_id -> netlist_v2`
 
-后续比赛、RAG、agent、指导下发都会优先基于新链路继续演进。
+后续比赛、RAG、PCM Agent、指导下发和论文实验都会优先基于这条事实链继续演进。
 
 基座模板：
 - [fastapi/full-stack-fastapi-template](https://github.com/fastapi/full-stack-fastapi-template)
@@ -31,13 +31,22 @@ LabGuardian 的服务器端负责把视觉识别结果转换成可验证、可�
 - `circuit.py` 内部主逻辑已切到 `ComponentInstance + pins[]`
 - `ic_models.py / polarity.py` 已切到新语义，不再依赖旧内部组件对象
 - `validator_report_v2` 已支持结构化 `error_code + suggested_action + evidence_refs`
+- 模型路径、默认 `imgsz=960`、board schema 分段和 `runtime_metadata` 已完成第一轮 edge 收口
+- `app/agent/` 已落地 PCM Agent 第一版白盒基建：
+  - `RuntimeEvidence`
+  - `ContextPack`
+  - error family 路由
+  - deterministic tools
+  - Reflection / verifier node
 - 已补一组最小 regression fixture 与 smoke tests
 
 建议先读这几份文档：
 
 - [README.md](README.md)
-- [backend-architecture.md](docs/backend-architecture.md)
+- [docs/README.md](docs/README.md)
 - [current-status.md](docs/current-status.md)
+- [development-roadmap.md](docs/development-roadmap.md)
+- [backend-architecture.md](docs/backend-architecture.md)
 - [vision-model-inventory.md](docs/vision-model-inventory.md)
 - [board-schema-format.md](docs/board-schema-format.md)
 - [edge-deployment.md](docs/edge-deployment.md)
@@ -55,6 +64,9 @@ LabGuardian 的服务器端负责把视觉识别结果转换成可验证、可�
 │ Services                                                    │
 │ pipeline_service  guidance_service  rag_service             │
 │ agent_service    version_service   classroom_state          │
+├──────────────────────────────────────────────────────────────┤
+│ Agent / Knowledge                                           │
+│ RuntimeEvidence  ContextPack  tools  verifier  MRAG/VLM     │
 ├──────────────────────────────────────────────────────────────┤
 │ Domain                                                      │
 │ board_schema  circuit  netlist_models  validator            │
@@ -258,12 +270,15 @@ component_id + pin_name + hole_id
 - [app/services/version_service.py](app/services/version_service.py)
 - [app/services/rag_service.py](app/services/rag_service.py)
 - [app/services/agent_service.py](app/services/agent_service.py)
+- [app/agent/contracts.py](app/agent/contracts.py)
+- [app/agent/context_pack.py](app/agent/context_pack.py)
+- [app/agent/tools.py](app/agent/tools.py)
 
 职责:
 
 - 更新课堂态、缩略图、指导历史
 - 暴露 `/version`
-- 为后续 RAG / agent 保留结构化证据入口
+- 将 pipeline 事实转成 RAG / PCM Agent 可消费的最小证据
 
 ### 4. 面向前端 / agent 的最终结果
 
@@ -272,6 +287,9 @@ component_id + pin_name + hole_id
 - `PipelineResult`
 - `netlist_v2`
 - `validator_report_v2`
+- `runtime_metadata`
+- `RuntimeEvidence`
+- `ContextPack`
 
 这些结构是后续前端联调、指导下发、RAG / agent 的共同基础。
 
@@ -331,8 +349,15 @@ app/
 ├── api/v1/
 │   ├── angnt.py
 │   ├── classroom.py
+│   ├── kb.py
 │   ├── pipeline.py
 │   └── websocket.py
+├── agent/
+│   ├── contracts.py
+│   ├── context_pack.py
+│   ├── evidence.py
+│   ├── tools.py
+│   └── verification.py
 ├── domain/
 │   ├── board_schema.py
 │   ├── circuit.py
@@ -355,6 +380,12 @@ docs/
 ├── backend-architecture.md
 ├── board-schema-format.md
 ├── current-status.md
+├── development-roadmap.md
+├── edge-deployment.md
+├── pcm-agent-architecture.md
+├── rag-teaching-kb-design.md
+├── vision-model-inventory.md
+├── vision-stage-contracts.md
 └── validator-error-codes.md
 
 scripts/manual/
@@ -400,6 +431,9 @@ python3 tests/manual/smoke/test_validator_error_codes.py
 
 # pipeline 合同与阶段级回归
 python3 -m pytest tests/pipeline
+
+# 全量自动测试
+python3 -m pytest
 ```
 
 ## 团队协作约定
@@ -409,35 +443,24 @@ python3 -m pytest tests/pipeline
 - 不再为旧 `pin1_logic/pin2_logic` 新增兼容入口
 - S1 / S1.5 / S2 的 JSON 契约优先保持稳定，模型训练完成后尽量只替换推理内核
 - fallback 必须显式标记来源，不要伪装成真实模型输出
+- Agent / VLM 只消费结构化证据，不绕开 validator 重新判断事实
+- PCM Agent 第一版优先保持规则化；LangGraph、LLM 和 OpenVINO adapter 在白盒链路稳定后接入
 - 新增手工脚本放 `scripts/manual/tools/`
 - 新增回归样例优先补到 `tests/fixtures/` 和 `tests/manual/smoke/`
 - 阶段级回归优先补到 `tests/pipeline/`
 - PCB / AOI 相关代码已彻底移除，后续不要再向仓库重新引入平行子系统
 
-## 近期最值得关注的文件
+## 下一步开发重点
 
-- [s2_mapping.py](app/pipeline/stages/s2_mapping.py)
-  - S2 从 pin 预测结果到 `hole_id` / `components[].pins[]` 的核心迁移点
-- [s1b_pin_detect.py](app/pipeline/stages/s1b_pin_detect.py)
-  - 组件 ROI pin 检测阶段骨架
-- [pin_model.py](app/pipeline/vision/pin_model.py)
-  - 第二个视觉模型的接入位置
-- [topology_input.py](app/pipeline/topology_input.py)
-  - 结构化 `components[].pins[]` 到 analyzer 的统一入口
-- [circuit.py](app/domain/circuit.py)
-  - `board_schema` + `netlist_v2` 核心落点
-- [validator.py](app/domain/validator.py)
-  - compare / diagnose / error code / guidance 证据入口
-
-## 迁移对照表
-
-| 原文件/目录 | 目标位置 | 当前状态 |
-|---|---|---|
-| `teacher/server.py` | `app/api/v1/classroom.py` | 已拆成 API 路由 |
-| `teacher/classroom.py` | `app/services/classroom_state.py` | 已保留状态层 |
-| `shared/models.py` | `app/schemas/*` | 已拆到 schema 层 |
-| `shared/risk.py` | `app/domain/risk.py` | 已迁移 |
-| `src_v2/vision/image_analyzer.py` | `app/pipeline/orchestrator.py` | 已拆成四阶段 |
-| `src_v2/vision/*` | `app/pipeline/vision/*` | 继续复用 |
-| `src_v2/logic/circuit.py` | `app/domain/circuit.py` | 已切到 `ComponentInstance + netlist_v2` 主语义 |
-| `src_v2/logic/validator.py` | `app/domain/validator.py` | 已切到 `labguardian_ref_v4 + validator_report_v2` |
+- [app/services/agent_service.py](app/services/agent_service.py)
+  - 新增 `mode="diagnostic_agent"`，接入 `RuntimeEvidence -> ContextPack -> verifier`
+- [app/agent/](app/agent)
+  - 把白盒 PCM 链路包装成 LangGraph state machine
+- [app/services/rag_service.py](app/services/rag_service.py)
+  - 与 PCM context pack 对齐 runtime / teaching / KB 三路检索
+- [app/pipeline/stages/s2_mapping.py](app/pipeline/stages/s2_mapping.py)
+  - 继续增强多视图证据和 ambiguity 元数据
+- [app/pipeline/vision/calibrator.py](app/pipeline/vision/calibrator.py)
+  - 继续优化实物板网格拟合和 pixel -> hole candidates
+- [docs/development-roadmap.md](docs/development-roadmap.md)
+  - 后续计划、论文实验和 edge benchmark 的总入口
