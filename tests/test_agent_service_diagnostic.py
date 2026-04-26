@@ -53,10 +53,17 @@ def test_diagnostic_agent_mode_builds_template_answer_and_verifies() -> None:
     assert "context_pack" in evidence_types
     assert "tool_results" in evidence_types
     assert "verification_report" in evidence_types
+    assert "graph_metrics" in evidence_types
     verification = next(
         item for item in status.result.evidence if item.evidence_type == "verification_report"
     )
     assert verification.payload["passed"] is True
+    graph_metrics = next(
+        item for item in status.result.evidence if item.evidence_type == "graph_metrics"
+    )
+    metric_names = [item["node_name"] for item in graph_metrics.payload["metrics"]]
+    assert "run_tools" in metric_names
+    assert "verify_answer" in metric_names
 
 
 def test_diagnostic_agent_mode_works_without_station_state() -> None:
@@ -76,4 +83,3 @@ def test_diagnostic_agent_mode_works_without_station_state() -> None:
     assert status.result is not None
     assert status.result.answer
     assert status.result.evidence[0].payload["station_id"] == "missing"
-

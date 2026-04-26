@@ -23,6 +23,10 @@ from .circuit import (
     POLARIZED_TYPES,
     norm_component_type,
 )
+from .highlight_protocol import (
+    build_highlight_protocol,
+    build_highlight_targets_for_diagnostic,
+)
 from .netlist_models import ComponentInstance, PinAssignment
 
 logger = logging.getLogger(__name__)
@@ -433,6 +437,10 @@ class CircuitValidator:
                             current_component_id=curr_comp.component_id,
                             expected=ref_pol,
                             actual=curr_pol,
+                            context={
+                                "component_type": norm_component_type(ref_comp.component_type),
+                                "current_component_bbox": curr_comp.metadata.get("bbox"),
+                            },
                         )
                     )
                 elif ref_pol in ("forward", "reverse") and curr_pol == "unknown":
@@ -446,6 +454,10 @@ class CircuitValidator:
                             current_component_id=curr_comp.component_id,
                             expected=ref_pol,
                             actual=curr_pol,
+                            context={
+                                "component_type": norm_component_type(ref_comp.component_type),
+                                "current_component_bbox": curr_comp.metadata.get("bbox"),
+                            },
                         )
                     )
 
@@ -776,7 +788,18 @@ class CircuitValidator:
                             component_id=comp.component_id,
                             expected="series_resistor_present",
                             actual="series_resistor_missing",
-                            context={"component_type": ctype, "net_a": n1, "net_b": n2},
+                            context={
+                                "component_type": ctype,
+                                "net_a": n1,
+                                "net_b": n2,
+                                "current_node_id": [n1, n2],
+                                "current_hole_id": [pin.hole_id for pin, _node in pin_nodes],
+                                "current_observation_refs": _observation_refs_for_pins(
+                                    comp.component_id,
+                                    [pin for pin, _node in pin_nodes],
+                                ),
+                                "current_component_bbox": comp.metadata.get("bbox"),
+                            },
                         )
                     )
 
@@ -790,7 +813,20 @@ class CircuitValidator:
                         component_id=comp.component_id,
                         expected="known_polarity",
                         actual="unknown",
-                        context={"component_type": ctype},
+                        context={
+                            "component_type": ctype,
+                            "current_hole_id": [pin.hole_id for pin in comp.pins],
+                            "current_node_id": [
+                                pin.electrical_node_id
+                                or analyzer.board_schema.resolve_hole_to_node(pin.hole_id)
+                                for pin in comp.pins
+                            ],
+                            "current_observation_refs": _observation_refs_for_pins(
+                                comp.component_id,
+                                comp.pins,
+                            ),
+                            "current_component_bbox": comp.metadata.get("bbox"),
+                        },
                     )
                 )
 
@@ -812,7 +848,18 @@ class CircuitValidator:
                             component_id=comp.component_id,
                             expected="different_conductive_groups",
                             actual=n1,
-                            context={"component_type": ctype, "net_a": n1, "net_b": n2},
+                            context={
+                                "component_type": ctype,
+                                "net_a": n1,
+                                "net_b": n2,
+                                "current_node_id": n1,
+                                "current_hole_id": [pin.hole_id for pin, _node in pin_nodes[:2]],
+                                "current_observation_refs": _observation_refs_for_pins(
+                                    comp.component_id,
+                                    [pin for pin, _node in pin_nodes[:2]],
+                                ),
+                                "current_component_bbox": comp.metadata.get("bbox"),
+                            },
                         )
                     )
 
@@ -831,7 +878,18 @@ class CircuitValidator:
                             severity="warning",
                             component_id=comp.component_id,
                             actual=node,
-                            context={"pin_name": pin.pin_name, "hole_id": pin.hole_id},
+                            context={
+                                "pin_name": pin.pin_name,
+                                "current_pin_name": pin.pin_name,
+                                "hole_id": pin.hole_id,
+                                "current_hole_id": pin.hole_id,
+                                "current_node_id": node,
+                                "current_observation_refs": _observation_refs_for_pin(
+                                    comp.component_id,
+                                    pin,
+                                ),
+                                "current_component_bbox": comp.metadata.get("bbox"),
+                            },
                         )
                     )
                     break
@@ -930,6 +988,61 @@ def _component_match_cost(ref_comp: ComponentInstance, curr_comp: ComponentInsta
     return cost
 
 
+def _pin_evidence_context(
+    *,
+    ref_pin: PinAssignment | None,
+    curr_pin: PinAssignment | None,
+    curr_comp: ComponentInstance,
+    pin_name: str,
+) -> Dict:
+    context: Dict = {
+        "current_pin_name": pin_name,
+        "current_component_bbox": curr_comp.metadata.get("bbox"),
+    }
+    if ref_pin is not None:
+        context["target_hole_id"] = ref_pin.hole_id
+        context["target_node_id"] = ref_pin.electrical_node_id
+    if curr_pin is not None:
+        context["current_hole_id"] = curr_pin.hole_id
+        context["current_node_id"] = curr_pin.electrical_node_id
+        context["current_observation_refs"] = _observation_refs_for_pin(
+            curr_comp.component_id,
+            curr_pin,
+        )
+        context["candidate_hole_ids"] = curr_pin.metadata.get("candidate_hole_ids", [])
+        context["candidate_node_ids"] = curr_pin.metadata.get("candidate_node_ids", [])
+    return context
+
+
+def _observation_refs_for_pins(
+    component_id: str,
+    pins: List[PinAssignment],
+) -> List[Dict]:
+    refs: List[Dict] = []
+    for pin in pins:
+        refs.extend(_observation_refs_for_pin(component_id, pin))
+    return refs
+
+
+def _observation_refs_for_pin(component_id: str, pin: PinAssignment) -> List[Dict]:
+    refs: List[Dict] = []
+    for idx, observation in enumerate(pin.observations or []):
+        keypoint = observation.keypoint
+        refs.append(
+            {
+                "kind": "pin_keypoint_ref",
+                "ref_id": f"pin_keypoint:{component_id}:{pin.pin_name}:{observation.view_id}:{idx}",
+                "component_id": component_id,
+                "pin_name": pin.pin_name,
+                "view_id": observation.view_id,
+                "keypoint": list(keypoint) if keypoint is not None else None,
+                "visibility": observation.visibility,
+                "confidence": observation.confidence,
+            }
+        )
+    return refs
+
+
 def _compare_component_pins(ref_comp: ComponentInstance, curr_comp: ComponentInstance) -> Dict:
     pin_mismatches: List[str] = []
     hole_mismatches: List[str] = []
@@ -963,6 +1076,18 @@ def _compare_component_pins(ref_comp: ComponentInstance, curr_comp: ComponentIns
                     current_component_id=curr_comp.component_id,
                     expected=group,
                     actual=sorted(curr_pin_map.keys()),
+                    context={
+                        "pin_group": list(group),
+                        "target_hole_id": [
+                            ref_pin_map[name].hole_id for name in group if name in ref_pin_map
+                        ],
+                        "target_node_id": [
+                            ref_pin_map[name].electrical_node_id
+                            for name in group
+                            if name in ref_pin_map
+                        ],
+                        "current_component_bbox": curr_comp.metadata.get("bbox"),
+                    },
                 )
             )
             handled_pin_names.update(group)
@@ -985,7 +1110,19 @@ def _compare_component_pins(ref_comp: ComponentInstance, curr_comp: ComponentIns
                     current_component_id=curr_comp.component_id,
                     expected=ref_nodes,
                     actual=curr_nodes,
-                    context={"pin_group": list(group)},
+                    context={
+                        "pin_group": list(group),
+                        "current_pin_name": list(group),
+                        "target_node_id": ref_nodes,
+                        "current_node_id": curr_nodes,
+                        "target_hole_id": ref_holes,
+                        "current_hole_id": curr_holes,
+                        "current_observation_refs": _observation_refs_for_pins(
+                            curr_comp.component_id,
+                            curr_group_pins,
+                        ),
+                        "current_component_bbox": curr_comp.metadata.get("bbox"),
+                    },
                 )
             )
         elif ref_holes != curr_holes:
@@ -1001,7 +1138,19 @@ def _compare_component_pins(ref_comp: ComponentInstance, curr_comp: ComponentIns
                     current_component_id=curr_comp.component_id,
                     expected=ref_holes,
                     actual=curr_holes,
-                    context={"pin_group": list(group)},
+                    context={
+                        "pin_group": list(group),
+                        "current_pin_name": list(group),
+                        "target_node_id": ref_nodes,
+                        "current_node_id": curr_nodes,
+                        "target_hole_id": ref_holes,
+                        "current_hole_id": curr_holes,
+                        "current_observation_refs": _observation_refs_for_pins(
+                            curr_comp.component_id,
+                            curr_group_pins,
+                        ),
+                        "current_component_bbox": curr_comp.metadata.get("bbox"),
+                    },
                 )
             )
         else:
@@ -1024,6 +1173,13 @@ def _compare_component_pins(ref_comp: ComponentInstance, curr_comp: ComponentIns
                     component_id=ref_comp.component_id,
                     current_component_id=curr_comp.component_id,
                     pin_name=pin_name,
+                    expected=ref_pin.hole_id,
+                    context=_pin_evidence_context(
+                        ref_pin=ref_pin,
+                        curr_pin=None,
+                        curr_comp=curr_comp,
+                        pin_name=pin_name,
+                    ),
                 )
             )
             continue
@@ -1043,6 +1199,12 @@ def _compare_component_pins(ref_comp: ComponentInstance, curr_comp: ComponentIns
                     pin_name=pin_name,
                     expected=ref_node,
                     actual=curr_node,
+                    context=_pin_evidence_context(
+                        ref_pin=ref_pin,
+                        curr_pin=curr_pin,
+                        curr_comp=curr_comp,
+                        pin_name=pin_name,
+                    ),
                 )
             )
             continue
@@ -1060,6 +1222,12 @@ def _compare_component_pins(ref_comp: ComponentInstance, curr_comp: ComponentIns
                     pin_name=pin_name,
                     expected=ref_pin.hole_id,
                     actual=curr_pin.hole_id,
+                    context=_pin_evidence_context(
+                        ref_pin=ref_pin,
+                        curr_pin=curr_pin,
+                        curr_comp=curr_comp,
+                        pin_name=pin_name,
+                    ),
                 )
             )
             continue
@@ -1076,7 +1244,15 @@ def _compare_component_pins(ref_comp: ComponentInstance, curr_comp: ComponentIns
                     message=message,
                     severity="error",
                     component_id=curr_comp.component_id,
+                    current_component_id=curr_comp.component_id,
                     pin_name=pin_name,
+                    actual=curr_pin_map[pin_name].hole_id,
+                    context=_pin_evidence_context(
+                        ref_pin=None,
+                        curr_pin=curr_pin_map[pin_name],
+                        curr_comp=curr_comp,
+                        pin_name=pin_name,
+                    ),
                 )
             )
 
@@ -1216,6 +1392,13 @@ def _make_diagnostic(
         actual=actual,
         context=context,
     )
+    location = _diagnostic_location(
+        error_code=error_code,
+        pin_name=pin_name,
+        expected=expected,
+        actual=actual,
+        context=context,
+    )
 
     item = {
         "error_code": error_code,
@@ -1231,17 +1414,74 @@ def _make_diagnostic(
         item["current_component_id"] = current_component_id
     if pin_name is not None:
         item["pin_name"] = pin_name
+    item.update(location)
     if expected is not None:
         item["expected"] = expected
     if actual is not None:
         item["actual"] = actual
     if context:
         item["context"] = context
+    highlight_targets = build_highlight_targets_for_diagnostic(item)
+    if highlight_targets:
+        item["highlight_targets"] = highlight_targets
     return item
+
+
+def _diagnostic_location(
+    *,
+    error_code: str,
+    pin_name: str | None,
+    expected,
+    actual,
+    context: Dict | None,
+) -> Dict:
+    context = context or {}
+    location: Dict = {}
+
+    current_pin_name = context.get("current_pin_name") or pin_name or context.get("pin_name")
+    if current_pin_name:
+        location["current_pin_name"] = current_pin_name
+
+    current_hole_id = context.get("current_hole_id")
+    if current_hole_id is None and error_code in ("HOLE_MISMATCH", "PIN_EXTRA"):
+        current_hole_id = actual
+    if current_hole_id is None and "hole_id" in context:
+        current_hole_id = context["hole_id"]
+    if current_hole_id is not None:
+        location["current_hole_id"] = current_hole_id
+
+    target_hole_id = context.get("target_hole_id")
+    if target_hole_id is None and error_code in ("HOLE_MISMATCH", "PIN_MISSING"):
+        target_hole_id = expected
+    if target_hole_id is not None:
+        location["target_hole_id"] = target_hole_id
+
+    current_node_id = context.get("current_node_id")
+    if current_node_id is None and error_code in (
+        "NODE_MISMATCH",
+        "COMPONENT_SHORTED_SAME_NET",
+        "FLOATING_PIN",
+    ):
+        current_node_id = actual
+    if current_node_id is not None:
+        location["current_node_id"] = current_node_id
+
+    target_node_id = context.get("target_node_id")
+    if target_node_id is None and error_code == "NODE_MISMATCH":
+        target_node_id = expected
+    if target_node_id is not None:
+        location["target_node_id"] = target_node_id
+
+    observation_refs = context.get("current_observation_refs") or []
+    if observation_refs:
+        location["current_observation_refs"] = observation_refs
+
+    return location
 
 
 def _finalize_report(result: Dict):
     report = result.setdefault("report", {})
+    highlight_protocol = build_highlight_protocol(report.get("items", []))
     summary = {
         "topology_error_count": len(report.get("topology_errors", [])),
         "node_error_count": len(report.get("node_errors", [])),
@@ -1249,8 +1489,10 @@ def _finalize_report(result: Dict):
         "polarity_error_count": len(report.get("polarity_errors", [])),
         "component_error_count": len(report.get("component_errors", [])),
         "total_error_count": len(report.get("items", [])),
+        "highlight_target_count": len(highlight_protocol["targets"]),
     }
     report["summary"] = summary
+    report["highlight_protocol"] = highlight_protocol
 
 
 def _suggested_action_for_diagnostic(
@@ -1310,11 +1552,25 @@ def _build_evidence_refs(
     - KB citation ref
     """
     refs: List[Dict] = []
+    context = context or {}
 
     if component_id is not None:
         refs.append({"kind": "reference_component", "component_id": component_id})
     if current_component_id is not None and current_component_id != component_id:
         refs.append({"kind": "current_component", "component_id": current_component_id})
+    elif current_component_id is not None:
+        refs.append({"kind": "current_component", "component_id": current_component_id})
+
+    if context.get("current_component_bbox") is not None:
+        refs.append(
+            {
+                "kind": "component_bbox_ref",
+                "ref_id": f"component_bbox:{current_component_id or component_id}",
+                "component_id": current_component_id or component_id,
+                "bbox": context["current_component_bbox"],
+            }
+        )
+
     if pin_name is not None:
         refs.append(
             {
@@ -1324,17 +1580,50 @@ def _build_evidence_refs(
             }
         )
 
+    for observation_ref in context.get("current_observation_refs", []) or []:
+        refs.append(dict(observation_ref))
+
     if error_code in ("HOLE_MISMATCH", "PIN_MISSING", "PIN_EXTRA"):
         if expected is not None:
             refs.append({"kind": "expected_hole", "value": expected})
         if actual is not None:
             refs.append({"kind": "actual_hole", "value": actual})
 
+    current_hole_id = context.get("current_hole_id")
+    target_hole_id = context.get("target_hole_id")
+    if current_hole_id is not None or target_hole_id is not None:
+        refs.append(
+            {
+                "kind": "hole_candidate_ref",
+                "ref_id": f"hole_candidate:{current_component_id or component_id}:{pin_name or 'component'}",
+                "component_id": current_component_id or component_id,
+                "pin_name": context.get("current_pin_name") or pin_name,
+                "current_hole_id": current_hole_id,
+                "target_hole_id": target_hole_id,
+                "candidate_hole_ids": context.get("candidate_hole_ids", []),
+            }
+        )
+
     if error_code in ("NODE_MISMATCH", "COMPONENT_SHORTED_SAME_NET"):
         if expected is not None:
             refs.append({"kind": "expected_node", "value": expected})
         if actual is not None:
             refs.append({"kind": "actual_node", "value": actual})
+
+    current_node_id = context.get("current_node_id")
+    target_node_id = context.get("target_node_id")
+    if current_node_id is not None or target_node_id is not None:
+        refs.append(
+            {
+                "kind": "node_trace_ref",
+                "ref_id": f"node_trace:{current_component_id or component_id}:{pin_name or 'component'}",
+                "component_id": current_component_id or component_id,
+                "pin_name": context.get("current_pin_name") or pin_name,
+                "current_node_id": current_node_id,
+                "target_node_id": target_node_id,
+                "candidate_node_ids": context.get("candidate_node_ids", []),
+            }
+        )
 
     if error_code in ("POLARITY_REVERSED", "POLARITY_UNKNOWN"):
         if expected is not None:
@@ -1343,7 +1632,7 @@ def _build_evidence_refs(
             refs.append({"kind": "actual_polarity", "value": actual})
 
     if error_code in ("COMPONENT_MISSING", "COMPONENT_EXTRA", "COMPONENT_INSTANCE_MISSING"):
-        component_type = (context or {}).get("component_type")
+        component_type = context.get("component_type")
         if component_type:
             refs.append({"kind": "component_type", "value": component_type})
 
@@ -1360,12 +1649,19 @@ def _build_evidence_refs(
         if actual is not None:
             refs.append({"kind": "matched_component_count", "value": actual})
 
-    if context:
-        if "pin_group" in context:
-            refs.append({"kind": "pin_group", "value": context["pin_group"]})
-        if "graph_node_id" in context:
-            refs.append({"kind": "graph_node", "value": context["graph_node_id"]})
+    if "pin_group" in context:
+        refs.append({"kind": "pin_group", "value": context["pin_group"]})
+    if "graph_node_id" in context:
+        refs.append({"kind": "graph_node", "value": context["graph_node_id"]})
 
+    refs.append(
+        {
+            "kind": "validator_rule_ref",
+            "ref_id": f"validator_rule:{error_code}",
+            "error_code": error_code,
+            "category": category,
+        }
+    )
     refs.append({"kind": "diagnostic_code", "value": error_code})
     refs.append({"kind": "diagnostic_category", "value": category})
     return refs

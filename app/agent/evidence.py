@@ -80,12 +80,12 @@ def _finding_from_item(item: dict[str, Any], index: int) -> DiagnosticFinding:
         error_code=code,
         severity=str(item.get("severity") or "warning"),
         component_id=str(
-            item.get("component_id")
-            or item.get("current_component_id")
+            item.get("current_component_id")
+            or item.get("component_id")
             or item.get("expected")
             or ""
         ),
-        pin_name=str(item.get("pin_name") or ""),
+        pin_name=str(item.get("current_pin_name") or item.get("pin_name") or ""),
         expected=item.get("expected"),
         actual=item.get("actual"),
         suggested_action=str(item.get("suggested_action") or ""),
@@ -105,12 +105,30 @@ def _refs_from_item(item: dict[str, Any], index: int, error_code: str) -> list[E
                         ref_id=str(raw_ref.get("ref_id") or f"{error_code}:{index}:{ref_idx}"),
                         source=str(raw_ref.get("source") or "validator_report_v2"),
                         component_id=str(
-                            raw_ref.get("component_id") or item.get("component_id") or ""
+                            raw_ref.get("component_id")
+                            or item.get("current_component_id")
+                            or item.get("component_id")
+                            or ""
                         ),
-                        pin_name=str(raw_ref.get("pin_name") or item.get("pin_name") or ""),
-                        hole_id=str(raw_ref.get("hole_id") or ""),
-                        electrical_node_id=str(raw_ref.get("electrical_node_id") or ""),
-                        summary=str(raw_ref.get("summary") or error_code),
+                        pin_name=str(
+                            raw_ref.get("pin_name")
+                            or item.get("current_pin_name")
+                            or item.get("pin_name")
+                            or ""
+                        ),
+                        hole_id=_scalar_ref_value(
+                            raw_ref.get("hole_id")
+                            or raw_ref.get("current_hole_id")
+                            or raw_ref.get("target_hole_id")
+                            or item.get("current_hole_id")
+                        ),
+                        electrical_node_id=_scalar_ref_value(
+                            raw_ref.get("electrical_node_id")
+                            or raw_ref.get("current_node_id")
+                            or raw_ref.get("target_node_id")
+                            or item.get("current_node_id")
+                        ),
+                        summary=str(raw_ref.get("summary") or raw_ref.get("kind") or error_code),
                         payload=dict(raw_ref),
                     )
                 )
@@ -118,8 +136,12 @@ def _refs_from_item(item: dict[str, Any], index: int, error_code: str) -> list[E
                 refs.append(
                     EvidenceRef(
                         ref_id=str(raw_ref),
-                        component_id=str(item.get("component_id") or ""),
-                        pin_name=str(item.get("pin_name") or ""),
+                        component_id=str(
+                            item.get("current_component_id")
+                            or item.get("component_id")
+                            or ""
+                        ),
+                        pin_name=str(item.get("current_pin_name") or item.get("pin_name") or ""),
                         summary=error_code,
                     )
                 )
@@ -127,18 +149,28 @@ def _refs_from_item(item: dict[str, Any], index: int, error_code: str) -> list[E
     if refs:
         return refs
 
-    component_id = str(item.get("component_id") or item.get("current_component_id") or "")
-    pin_name = str(item.get("pin_name") or "")
+    component_id = str(item.get("current_component_id") or item.get("component_id") or "")
+    pin_name = str(item.get("current_pin_name") or item.get("pin_name") or "")
     ref_id = ":".join(part for part in (error_code or "finding", component_id, pin_name) if part)
     return [
         EvidenceRef(
             ref_id=ref_id or f"finding:{index}",
             component_id=component_id,
             pin_name=pin_name,
+            hole_id=_scalar_ref_value(item.get("current_hole_id")),
+            electrical_node_id=_scalar_ref_value(item.get("current_node_id")),
             summary=str(item.get("suggested_action") or error_code or "validator finding"),
             payload=dict(item),
         )
     ]
+
+
+def _scalar_ref_value(value: Any) -> str:
+    if isinstance(value, list):
+        return str(value[0]) if value else ""
+    if value is None:
+        return ""
+    return str(value)
 
 
 def _iter_report_items(comparison_report: dict[str, Any]) -> list[dict[str, Any]]:

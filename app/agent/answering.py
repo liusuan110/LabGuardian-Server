@@ -129,8 +129,9 @@ def build_diagnostic_evidence(
     tool_results: list[ToolResult],
     verification_passed: bool,
     verification_issues: list[str],
+    graph_metrics: list[dict] | None = None,
 ) -> list[AngntEvidence]:
-    return [
+    items = [
         AngntEvidence(
             evidence_type="runtime_evidence",
             source_id=evidence.station_id,
@@ -159,6 +160,26 @@ def build_diagnostic_evidence(
             },
         ),
     ]
+    if graph_metrics:
+        items.append(
+            AngntEvidence(
+                evidence_type="graph_metrics",
+                source_id=f"{evidence.station_id}:langgraph",
+                summary="PCM LangGraph 节点级指标",
+                payload={"metrics": graph_metrics},
+            )
+        )
+    highlight_protocol = evidence.validator_report_v2.get("highlight_protocol", {})
+    if highlight_protocol.get("targets"):
+        items.append(
+            AngntEvidence(
+                evidence_type="highlight_protocol",
+                source_id=f"{evidence.station_id}:highlight_protocol",
+                summary="前端高亮协议",
+                payload=highlight_protocol,
+            )
+        )
+    return items
 
 
 def diagnostic_conclusion(

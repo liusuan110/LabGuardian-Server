@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from app.agent.contracts import AllowedTool, ContextPack, ErrorFamily, RuntimeEvidence
+import json
+import math
+
+from app.agent.contracts import (
+    AllowedTool,
+    ContextPack,
+    ContextPackMetrics,
+    ErrorFamily,
+    RuntimeEvidence,
+)
 
 ERROR_CODE_TO_FAMILY: dict[str, ErrorFamily] = {
     "COMPONENT_SHORTED_SAME_NET": "short_circuit",
@@ -32,7 +41,7 @@ def classify_error_family(evidence: RuntimeEvidence) -> ErrorFamily:
 
 def build_context_pack(evidence: RuntimeEvidence, *, query: str = "") -> ContextPack:
     family = classify_error_family(evidence)
-    return ContextPack(
+    pack = ContextPack(
         pack_id=f"pcm_{family}_v1",
         error_family=family,
         risk_level=evidence.risk_level,
@@ -44,6 +53,30 @@ def build_context_pack(evidence: RuntimeEvidence, *, query: str = "") -> Context
             "不得重新猜测元件、孔位、节点或网表事实。",
         ],
         evidence_refs=evidence.evidence_refs,
+    )
+    pack.metrics = estimate_context_pack_metrics(pack)
+    return pack
+
+
+def estimate_context_pack_metrics(pack: ContextPack) -> ContextPackMetrics:
+    payload = {
+        "pack_id": pack.pack_id,
+        "error_family": pack.error_family,
+        "risk_level": pack.risk_level,
+        "pushed_facts": pack.pushed_facts,
+        "allowed_tools": [tool.model_dump() for tool in pack.allowed_tools],
+        "prompt_rules": pack.prompt_rules,
+        "citation_requirements": pack.citation_requirements,
+        "evidence_refs": [ref.model_dump() for ref in pack.evidence_refs],
+    }
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    char_count = len(serialized)
+    return ContextPackMetrics(
+        pushed_facts_count=len(pack.pushed_facts),
+        allowed_tool_count=len(pack.allowed_tools),
+        evidence_ref_count=len(pack.evidence_refs),
+        char_count=char_count,
+        estimated_tokens=max(1, math.ceil(char_count / 4)),
     )
 
 
@@ -133,6 +166,20 @@ def _allowed_tools_for_family(family: ErrorFamily) -> list[AllowedTool]:
             AllowedTool(
                 name="datasheet_lookup_tool",
                 reason="查找极性元件引脚或封装规则。",
+                required=True,
+            ),
+            *common,
+        ]
+    if family == "missing_protection":
+        return [
+            AllowedTool(
+                name="datasheet_lookup_tool",
+                reason="查找 LED、二极管或保护器件的基础安全规则。",
+                required=True,
+            ),
+            AllowedTool(
+                name="safety_rule_lookup_tool",
+                reason="推送限流和低压复查规则。",
             ),
             *common,
         ]
@@ -151,4 +198,3 @@ def _prompt_rules_for_family(family: ErrorFamily) -> list[str]:
     if family == "polarity_error":
         rules.append("必须说明需要核对正负极或器件引脚方向。")
     return rules
-

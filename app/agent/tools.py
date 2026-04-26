@@ -39,6 +39,52 @@ class SafetyRuleLookupInput(BaseModel):
     error_family: str = "unknown"
 
 
+class DatasheetLookupInput(BaseModel):
+    component_type: str = ""
+    component_id: str = ""
+    query: str = ""
+    error_family: str = "unknown"
+
+
+LOCAL_DATASHEET_FALLBACKS: dict[str, dict[str, Any]] = {
+    "led": {
+        "component_type": "LED",
+        "package": "two_pin_polarized",
+        "pin_rules": ["anode 接高电位侧", "cathode 接低电位侧"],
+        "safety_rules": ["必须串联限流电阻", "调试时优先使用低压限流电源"],
+        "notes": "LED 为极性器件，反接通常不亮，缺少限流可能导致器件损坏。",
+    },
+    "diode": {
+        "component_type": "Diode",
+        "package": "two_pin_polarized",
+        "pin_rules": ["anode 到 cathode 为正向导通方向", "cathode 通常由色环或标记识别"],
+        "safety_rules": ["确认方向后再通电", "避免直接跨接电源轨"],
+        "notes": "二极管方向错误会改变支路导通状态。",
+    },
+    "capacitorelectrolytic": {
+        "component_type": "CapacitorElectrolytic",
+        "package": "two_pin_polarized",
+        "pin_rules": ["positive 接较高电位", "negative 接较低电位或 GND"],
+        "safety_rules": ["通电前确认极性", "反接电解电容存在发热或损坏风险"],
+        "notes": "电解电容是极性器件，长脚通常为正极，外壳负极侧常有标记。",
+    },
+    "resistor": {
+        "component_type": "Resistor",
+        "package": "two_pin_non_polarized",
+        "pin_rules": ["两个引脚无极性", "应跨接到两个不同导通节点"],
+        "safety_rules": ["避免两脚落在同一导通组造成元件被短接"],
+        "notes": "电阻常用于限流、分压和反馈网络。",
+    },
+    "transistor": {
+        "component_type": "Transistor",
+        "package": "three_pin_polarized",
+        "pin_rules": ["核对 base / collector / emitter 引脚顺序", "不同封装引脚序可能不同"],
+        "safety_rules": ["先查封装方向，再接入电路", "避免把电源直接接到错误引脚"],
+        "notes": "三极管引脚顺序强依赖具体型号和封装。",
+    },
+}
+
+
 def netlist_trace_tool(
     evidence: RuntimeEvidence,
     args: NetlistTraceInput,
@@ -155,6 +201,39 @@ def fault_case_lookup_tool(
     )
 
 
+def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
+    key = _datasheet_key(args.component_type or args.component_id or args.query)
+    fallback = LOCAL_DATASHEET_FALLBACKS.get(key)
+    if fallback is None:
+        fallback = {
+            "component_type": args.component_type or "unknown",
+            "package": "local_fallback_unknown",
+            "pin_rules": ["本地 fallback 未收录该器件，请以实物丝印和课程参考电路为准。"],
+            "safety_rules": ["通电前先确认器件方向、限流条件和电源轨连接。"],
+            "notes": "未访问外部 datasheet，仅返回本地保守规则。",
+        }
+
+    return ToolResult(
+        tool_name="datasheet_lookup_tool",
+        summary=(
+            f"本地 datasheet fallback: {fallback['component_type']} / "
+            f"{fallback['package']}。"
+        ),
+        payload={
+            "provider": "local_fallback",
+            "component_id": args.component_id,
+            "component_type": fallback["component_type"],
+            "package": fallback["package"],
+            "pin_rules": fallback["pin_rules"],
+            "safety_rules": fallback["safety_rules"],
+            "notes": fallback["notes"],
+            "matched_key": key if key in LOCAL_DATASHEET_FALLBACKS else "",
+            "query": args.query,
+            "error_family": args.error_family,
+        },
+    )
+
+
 def safety_rule_lookup_tool(args: SafetyRuleLookupInput) -> ToolResult:
     rules: list[str] = []
     if args.risk_level == "danger" or args.error_family == "short_circuit":
@@ -173,3 +252,18 @@ def safety_rule_lookup_tool(args: SafetyRuleLookupInput) -> ToolResult:
         summary="；".join(rules),
         payload={"rules": rules},
     )
+
+
+def _datasheet_key(value: str) -> str:
+    normalized = str(value or "").replace("_", "").replace("-", "").replace(" ", "").lower()
+    if "electrolytic" in normalized or normalized.startswith("ce"):
+        return "capacitorelectrolytic"
+    if "led" in normalized:
+        return "led"
+    if "diode" in normalized:
+        return "diode"
+    if "resistor" in normalized or normalized.startswith("r"):
+        return "resistor"
+    if "transistor" in normalized or normalized.startswith("q"):
+        return "transistor"
+    return normalized

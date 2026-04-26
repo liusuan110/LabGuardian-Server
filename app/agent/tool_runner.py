@@ -3,11 +3,13 @@ from __future__ import annotations
 from app.agent.contracts import ContextPack, RuntimeEvidence
 from app.agent.tools import (
     BoardSchemaLookupInput,
+    DatasheetLookupInput,
     FaultCaseLookupInput,
     NetlistTraceInput,
     SafetyRuleLookupInput,
     ToolResult,
     board_schema_lookup_tool,
+    datasheet_lookup_tool,
     fault_case_lookup_tool,
     netlist_trace_tool,
     safety_rule_lookup_tool,
@@ -50,6 +52,18 @@ def run_diagnostic_tools(
             )
         )
 
+    if "datasheet_lookup_tool" in tool_names:
+        results.append(
+            datasheet_lookup_tool(
+                DatasheetLookupInput(
+                    component_id=first_finding.component_id if first_finding else "",
+                    component_type=_component_type_from_evidence(evidence),
+                    query=query,
+                    error_family=context_pack.error_family,
+                )
+            )
+        )
+
     if "safety_rule_lookup_tool" in tool_names:
         results.append(
             safety_rule_lookup_tool(
@@ -61,6 +75,22 @@ def run_diagnostic_tools(
         )
 
     return results
+
+
+def _component_type_from_evidence(evidence: RuntimeEvidence) -> str:
+    first_finding = evidence.findings[0] if evidence.findings else None
+    component_id = first_finding.component_id if first_finding else ""
+    for component in evidence.netlist_v2.get("components", []):
+        if not isinstance(component, dict):
+            continue
+        if component_id and component.get("component_id") != component_id:
+            continue
+        return str(component.get("component_type") or component.get("type") or "")
+    for finding in evidence.findings:
+        component_type = finding.payload.get("component_type")
+        if component_type:
+            return str(component_type)
+    return ""
 
 
 def _board_lookup_input_from_evidence(evidence: RuntimeEvidence) -> BoardSchemaLookupInput:
@@ -82,4 +112,3 @@ def _board_lookup_input_from_evidence(evidence: RuntimeEvidence) -> BoardSchemaL
                 return BoardSchemaLookupInput(node_id=expected)
             return BoardSchemaLookupInput(hole_id=expected)
     return BoardSchemaLookupInput()
-

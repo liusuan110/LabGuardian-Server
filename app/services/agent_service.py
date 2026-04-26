@@ -201,6 +201,9 @@ class AgentService:
                 tool_results=tool_results,
                 verification_passed=verification_passed,
                 verification_issues=verification_issues,
+                graph_metrics=[
+                    metric.model_dump() for metric in graph_state.graph_metrics
+                ],
             ),
             actions=self._build_actions(
                 risk_level=evidence_contract.risk_level,

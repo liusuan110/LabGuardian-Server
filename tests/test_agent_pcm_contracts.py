@@ -2,9 +2,11 @@ from app.agent.context_pack import build_context_pack, classify_error_family
 from app.agent.evidence import build_runtime_evidence_from_station
 from app.agent.tools import (
     BoardSchemaLookupInput,
+    DatasheetLookupInput,
     FaultCaseLookupInput,
     NetlistTraceInput,
     board_schema_lookup_tool,
+    datasheet_lookup_tool,
     fault_case_lookup_tool,
     netlist_trace_tool,
 )
@@ -66,6 +68,11 @@ def test_context_pack_routes_short_circuit_to_required_tools() -> None:
     assert "netlist_trace_tool" in required_tools
     assert "safety_rule_lookup_tool" in required_tools
     assert any("断电" in rule for rule in pack.prompt_rules)
+    assert pack.metrics is not None
+    assert pack.metrics.pushed_facts_count == len(pack.pushed_facts)
+    assert pack.metrics.allowed_tool_count == len(pack.allowed_tools)
+    assert pack.metrics.char_count > 0
+    assert pack.metrics.estimated_tokens > 0
 
 
 def test_context_pack_routes_node_mismatch_to_board_lookup() -> None:
@@ -92,6 +99,30 @@ def test_context_pack_routes_node_mismatch_to_board_lookup() -> None:
     assert "board_schema_lookup_tool" in required_tools
 
 
+def test_context_pack_routes_polarity_error_to_datasheet_lookup() -> None:
+    evidence = build_runtime_evidence_from_station(
+        station_id="S06",
+        station={
+            "risk_level": "warning",
+            "comparison_report": {
+                "items": [
+                    {
+                        "error_code": "POLARITY_REVERSED",
+                        "component_id": "D1",
+                        "component_type": "LED",
+                    }
+                ]
+            },
+        },
+    )
+
+    pack = build_context_pack(evidence)
+    required_tools = {tool.name for tool in pack.allowed_tools if tool.required}
+
+    assert pack.error_family == "polarity_error"
+    assert "datasheet_lookup_tool" in required_tools
+
+
 def test_board_schema_lookup_tool_explains_rail_segments() -> None:
     result = board_schema_lookup_tool(BoardSchemaLookupInput(hole_id="LP32"))
 
@@ -107,6 +138,17 @@ def test_fault_case_lookup_tool_uses_teaching_kb() -> None:
     assert result.payload["fault_cases"]
     knowledge_ids = {case["knowledge_id"] for case in result.payload["fault_cases"]}
     assert "rc_wrong_output_node_for_integrator" in knowledge_ids
+
+
+def test_datasheet_lookup_tool_uses_local_fallback() -> None:
+    result = datasheet_lookup_tool(
+        DatasheetLookupInput(component_type="LED", component_id="D1")
+    )
+
+    assert result.tool_name == "datasheet_lookup_tool"
+    assert result.payload["provider"] == "local_fallback"
+    assert result.payload["component_type"] == "LED"
+    assert any("限流" in rule for rule in result.payload["safety_rules"])
 
 
 def test_netlist_trace_tool_reads_runtime_netlist() -> None:

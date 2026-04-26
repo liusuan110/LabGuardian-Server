@@ -77,6 +77,16 @@ class AllowedTool(BaseModel):
     required: bool = False
 
 
+class ContextPackMetrics(BaseModel):
+    """Lightweight context size estimates for PCM ablation and edge metrics."""
+
+    pushed_facts_count: int = 0
+    allowed_tool_count: int = 0
+    evidence_ref_count: int = 0
+    char_count: int = 0
+    estimated_tokens: int = 0
+
+
 class ContextPack(BaseModel):
     """Push-Based Context Management payload for one diagnostic turn."""
 
@@ -88,6 +98,24 @@ class ContextPack(BaseModel):
     prompt_rules: list[str] = Field(default_factory=list)
     citation_requirements: list[str] = Field(default_factory=list)
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    metrics: ContextPackMetrics | None = None
+
+
+class VerificationReport(BaseModel):
+    """Rule-based critic result before an answer is shown to users."""
+
+    passed: bool
+    issues: list[str] = Field(default_factory=list)
+    required_rewrite_hint: str = ""
+
+
+class GraphNodeMetric(BaseModel):
+    """Per-node telemetry emitted by the PCM LangGraph shell."""
+
+    node_name: str
+    duration_ms: float = 0.0
+    status: str = "ok"
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class DiagnosticState(BaseModel):
@@ -102,14 +130,7 @@ class DiagnosticState(BaseModel):
     draft_answer: str = ""
     verification_report: VerificationReport | None = None
     final_answer: str = ""
-
-
-class VerificationReport(BaseModel):
-    """Rule-based critic result before an answer is shown to users."""
-
-    passed: bool
-    issues: list[str] = Field(default_factory=list)
-    required_rewrite_hint: str = ""
+    graph_metrics: list[GraphNodeMetric] = Field(default_factory=list)
 
 
 DiagnosticState.model_rebuild()
