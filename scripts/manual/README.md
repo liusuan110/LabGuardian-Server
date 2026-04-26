@@ -55,3 +55,14 @@
 - 面包板网格化实现当前由队友继续推进，`debug_calibrator_grid.py` 只作为可视化/诊断入口保留。
 - 新的 pin pose 模型评估优先输出到 `/tmp/...`，不要把一次性可视化结果提交进仓库。
 - 模型资产清单统一维护在 `docs/vision-model-inventory.md`。
+
+## VLM tools
+
+- `tools/vlm/smoke_openvino_vlm.py`
+  - 默认按 `GPU` 设备跑 `openvino_genai`
+  - 用一阶 RC 的本地 MRAG 包做最小解释 smoke
+  - 输出设备列表、时延和 `vlm_explanation_v1` 结果
+- `tools/vlm/smoke_lang_vlm_integration.py`
+  - 默认按 `GPU` 设备跑 `diagnostic_agent + MRAG + openvino_genai`
+  - 内置 `short_circuit / floating / wrong_hole` 三个教学场景
+  - 适合板端联调 LangGraph 白盒诊断和 VLM 解释闭环
