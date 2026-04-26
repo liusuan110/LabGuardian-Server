@@ -10,8 +10,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from app.core.config import settings
 from app.pipeline.stages.s1_detect import run_detect
@@ -34,11 +35,11 @@ class PipelineContext:
 
     detector: ComponentDetector = field(default=None)  # type: ignore[assignment]
     pin_detector: PinRoiDetector = field(default=None)  # type: ignore[assignment]
-    reference_circuit: Optional[Dict[str, Any] | str] = None
+    reference_circuit: dict[str, Any] | str | None = None
     conf: float = 0.25
     iou: float = 0.5
-    imgsz: int = 1280
-    roi_rect: Optional[tuple] = None
+    imgsz: int = 960
+    roi_rect: tuple | None = None
 
     def ensure_resources(self) -> None:
         if self.detector is None:
@@ -75,14 +76,14 @@ def get_shared_context() -> PipelineContext:
 
 
 def run_pipeline(
-    images_b64: List[str],
-    reference_circuit: Dict[str, Any] | str | None = None,
-    rail_assignments: Dict[str, str] | None = None,
+    images_b64: list[str],
+    reference_circuit: dict[str, Any] | str | None = None,
+    rail_assignments: dict[str, str] | None = None,
     conf: float | None = None,
     iou: float | None = None,
     imgsz: int | None = None,
     progress_cb: ProgressCallback | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """执行完整的 4 阶段流水线
 
     Args:
@@ -114,7 +115,7 @@ def run_pipeline(
         rows=settings.BREADBOARD_ROWS,
         cols_per_side=settings.BREADBOARD_COLS_PER_SIDE,
     )
-    stages: Dict[str, Any] = {}
+    stages: dict[str, Any] = {}
     eff_conf = ctx.conf if conf is None else conf
     eff_iou = ctx.iou if iou is None else iou
     eff_imgsz = ctx.imgsz if imgsz is None else imgsz
@@ -147,7 +148,11 @@ def run_pipeline(
         supplemental_detections=s1.get("supplemental_detections"),
     )
     stages["pin_detect"] = s15
-    logger.info("S1.5 pin detect: %d components (%.0fms)", len(s15["components"]), s15["duration_ms"])
+    logger.info(
+        "S1.5 pin detect: %d components (%.0fms)",
+        len(s15["components"]),
+        s15["duration_ms"],
+    )
     _notify("pin_detect", 1.0)
 
     # ── S2: pin -> hole 映射 ──
@@ -180,9 +185,12 @@ def run_pipeline(
 
     # ── S4: 检错 ──
     _notify("validate", 0.0)
+    effective_reference = (
+        reference_circuit if reference_circuit is not None else ctx.reference_circuit
+    )
     s4 = run_validate(
         s3["topology_graph"],
-        reference_circuit=reference_circuit if reference_circuit is not None else ctx.reference_circuit,
+        reference_circuit=effective_reference,
         components=s2["components"],
     )
     stages["validate"] = s4
@@ -193,4 +201,28 @@ def run_pipeline(
     return {
         "stages": stages,
         "total_duration_ms": total_ms,
+        "runtime_metadata": _build_runtime_metadata(
+            conf=eff_conf,
+            iou=eff_iou,
+            imgsz=eff_imgsz,
+        ),
+    }
+
+
+def _build_runtime_metadata(*, conf: float, iou: float, imgsz: int) -> dict[str, Any]:
+    return {
+        "code_version": settings.CODE_VERSION,
+        "model_version": settings.MODEL_VERSION,
+        "kb_version": settings.KB_VERSION,
+        "rule_version": settings.RULE_VERSION,
+        "model_root": settings.LABGUARDIAN_MODEL_ROOT,
+        "component_model_path": settings.YOLO_MODEL_PATH,
+        "pin_model_path": settings.PIN_MODEL_PATH,
+        "yolo_device": settings.YOLO_DEVICE,
+        "pin_model_device": settings.PIN_MODEL_DEVICE,
+        "conf": conf,
+        "iou": iou,
+        "imgsz": imgsz,
+        "board_rows": settings.BREADBOARD_ROWS,
+        "board_cols_per_side": settings.BREADBOARD_COLS_PER_SIDE,
     }

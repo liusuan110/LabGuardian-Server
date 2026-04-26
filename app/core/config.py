@@ -8,23 +8,36 @@ LabGuardian Server — 全局配置 (Pydantic Settings)
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 项目根目录 (LabGuardian-Server/)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 TRAIN_DEMO_DIR = PROJECT_ROOT / "train_demo"
+DEFAULT_MODEL_ROOT_CANDIDATES = (
+    Path("/opt/labguardian/models"),
+    Path("/app/models"),
+    PROJECT_ROOT / "models",
+)
 
 
-def _first_existing_path(*candidates: Path) -> Optional[str]:
+def _first_existing_path(*candidates: Path) -> str | None:
     for candidate in candidates:
         if candidate.exists():
             return str(candidate)
     return None
 
 
-def _prefer_existing_path(current: Optional[str], fallback: Optional[str]) -> Optional[str]:
+def _resolve_model_path(value: str | None) -> str | None:
+    if not value:
+        return None
+    path = Path(value)
+    if path.is_absolute():
+        return str(path)
+    return str(PROJECT_ROOT / path)
+
+
+def _prefer_existing_path(current: str | None, fallback: str | None) -> str | None:
     if current:
         try:
             if Path(current).exists():
@@ -34,7 +47,7 @@ def _prefer_existing_path(current: Optional[str], fallback: Optional[str]) -> Op
     return fallback
 
 
-def _normalize_runtime_device(requested: Optional[str], default: str = "cpu") -> str:
+def _normalize_runtime_device(requested: str | None, default: str = "cpu") -> str:
     value = str(requested or default).strip()
     if not value:
         return default
@@ -50,10 +63,23 @@ def _normalize_runtime_device(requested: Optional[str], default: str = "cpu") ->
     return "cpu"
 
 
+DEFAULT_MODEL_ROOT = _first_existing_path(*DEFAULT_MODEL_ROOT_CANDIDATES)
+MODEL_ROOT = Path(DEFAULT_MODEL_ROOT) if DEFAULT_MODEL_ROOT else PROJECT_ROOT / "models"
+
 DEFAULT_COMPONENT_MODEL_PATH = _first_existing_path(
+    MODEL_ROOT / "component" / "best.pt",
+    MODEL_ROOT / "component_detector" / "best.pt",
+    MODEL_ROOT / "detect_components" / "best.pt",
+    MODEL_ROOT / "detect_components" / "weights" / "best.pt",
     TRAIN_DEMO_DIR / "detect_components" / "weights" / "best.pt",
 )
 DEFAULT_PIN_MODEL_PATH = _first_existing_path(
+    MODEL_ROOT / "pin" / "best.pt",
+    MODEL_ROOT / "pin_detector" / "best.pt",
+    MODEL_ROOT / "pose_roi_context_v12" / "best.pt",
+    MODEL_ROOT / "pose_roi_context_v12" / "weights" / "best.pt",
+    MODEL_ROOT / "models" / "best.pt",
+    MODEL_ROOT / "models" / "weights" / "best.pt",
     TRAIN_DEMO_DIR / "models" / "weights" / "best.pt",
     TRAIN_DEMO_DIR / "pose_roi_context_v12" / "weights" / "best.pt",
     TRAIN_DEMO_DIR / "pose_components" / "weights" / "best.pt",
@@ -86,14 +112,17 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
 
     # ---- YOLO ----
-    YOLO_MODEL_PATH: str = DEFAULT_COMPONENT_MODEL_PATH or str(TRAIN_DEMO_DIR / "detect_components" / "weights" / "best.pt")
+    LABGUARDIAN_MODEL_ROOT: str = DEFAULT_MODEL_ROOT or str(MODEL_ROOT)
+    YOLO_MODEL_PATH: str = DEFAULT_COMPONENT_MODEL_PATH or str(
+        TRAIN_DEMO_DIR / "detect_components" / "weights" / "best.pt"
+    )
     # 当前视觉主路径使用 YOLO-Detect。OBB 仅保留兼容位，不参与默认主流程。
-    YOLO_OBB_MODEL_PATH: Optional[str] = None
+    YOLO_OBB_MODEL_PATH: str | None = None
     YOLO_CONF_THRESHOLD: float = 0.25
     YOLO_IOU_THRESHOLD: float = 0.5
     YOLO_IMGSZ: int = 960
     YOLO_DEVICE: str = "cpu"
-    PIN_MODEL_PATH: Optional[str] = DEFAULT_PIN_MODEL_PATH
+    PIN_MODEL_PATH: str | None = DEFAULT_PIN_MODEL_PATH
     PIN_MODEL_DEVICE: str = "cpu"
 
     # ---- 面包板校准 ----
@@ -102,17 +131,17 @@ class Settings(BaseSettings):
     ROI_PADDING: int = 30
 
     # ---- Pipeline ----
-    PIPELINE_HIGH_RES_IMGSZ: int = 1280
+    PIPELINE_HIGH_RES_IMGSZ: int = 960
     PIN_CANDIDATE_K: int = 5
-    REFERENCE_CIRCUIT_PATH: Optional[str] = None
+    REFERENCE_CIRCUIT_PATH: str | None = None
 
     # ---- 课堂 ----
     STATION_ONLINE_TIMEOUT: float = 10.0
 
     # ---- LLM (可选) ----
-    LLM_API_KEY: Optional[str] = None
-    LLM_BASE_URL: Optional[str] = None
-    LLM_MODEL: Optional[str] = None
+    LLM_API_KEY: str | None = None
+    LLM_BASE_URL: str | None = None
+    LLM_MODEL: str | None = None
     LLM_EMBEDDING_MODEL: str = "text-embedding-3-small"
 
     # ---- Knowledge Base (Datasheet RAG) ----
@@ -124,18 +153,42 @@ class Settings(BaseSettings):
 
     # ---- Local VLM (optional, edge deployment) ----
     VLM_PROVIDER: str = "template"
-    VLM_BASE_URL: Optional[str] = None
-    VLM_MODEL: Optional[str] = None
+    VLM_BASE_URL: str | None = None
+    VLM_MODEL: str | None = None
     VLM_TIMEOUT_S: float = 30.0
-    VLM_OPENVINO_MODEL_DIR: Optional[str] = None
+    VLM_OPENVINO_MODEL_DIR: str | None = None
     VLM_OPENVINO_DEVICE: str = "CPU"
-    VLM_OPENVINO_CACHE_DIR: Optional[str] = None
+    VLM_OPENVINO_CACHE_DIR: str | None = None
     VLM_MAX_NEW_TOKENS: int = 256
 
 
 settings = Settings()
-settings.YOLO_MODEL_PATH = _prefer_existing_path(settings.YOLO_MODEL_PATH, DEFAULT_COMPONENT_MODEL_PATH) or settings.YOLO_MODEL_PATH
-settings.PIN_MODEL_PATH = _prefer_existing_path(settings.PIN_MODEL_PATH, DEFAULT_PIN_MODEL_PATH)
+model_root = Path(settings.LABGUARDIAN_MODEL_ROOT)
+component_candidates = (
+    model_root / "component" / "best.pt",
+    model_root / "component_detector" / "best.pt",
+    model_root / "detect_components" / "best.pt",
+    model_root / "detect_components" / "weights" / "best.pt",
+)
+pin_candidates = (
+    model_root / "pin" / "best.pt",
+    model_root / "pin_detector" / "best.pt",
+    model_root / "pose_roi_context_v12" / "best.pt",
+    model_root / "pose_roi_context_v12" / "weights" / "best.pt",
+    model_root / "models" / "best.pt",
+    model_root / "models" / "weights" / "best.pt",
+)
+settings.YOLO_MODEL_PATH = (
+    _prefer_existing_path(_resolve_model_path(settings.YOLO_MODEL_PATH), None)
+    or _first_existing_path(*component_candidates)
+    or DEFAULT_COMPONENT_MODEL_PATH
+    or settings.YOLO_MODEL_PATH
+)
+settings.PIN_MODEL_PATH = (
+    _prefer_existing_path(_resolve_model_path(settings.PIN_MODEL_PATH), None)
+    or _first_existing_path(*pin_candidates)
+    or DEFAULT_PIN_MODEL_PATH
+)
 settings.YOLO_DEVICE = _normalize_runtime_device(settings.YOLO_DEVICE)
 settings.PIN_MODEL_DEVICE = _normalize_runtime_device(settings.PIN_MODEL_DEVICE)
 settings.REFERENCE_CIRCUIT_PATH = _prefer_existing_path(settings.REFERENCE_CIRCUIT_PATH, None)

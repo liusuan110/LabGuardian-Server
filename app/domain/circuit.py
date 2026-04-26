@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
 
 import networkx as nx
 
@@ -83,7 +82,14 @@ class PinRole(Enum):
 POLARIZED_TYPES = {"LED", "Diode", "CapacitorElectrolytic"}
 THREE_PIN_TYPES = {"Transistor", "Potentiometer"}
 CAPACITOR_TYPES = {"Capacitor", "CapacitorCeramic", "CapacitorElectrolytic"}
-NON_POLAR_TYPES = {"Resistor", "Wire", "Capacitor", "CapacitorCeramic", "Transistor", "Potentiometer"}
+NON_POLAR_TYPES = {
+    "Resistor",
+    "Wire",
+    "Capacitor",
+    "CapacitorCeramic",
+    "Transistor",
+    "Potentiometer",
+}
 IC_TYPES = {"IC"}
 POTENTIOMETER_TYPES = {"Potentiometer"}
 POWER_KEYWORDS = {"VCC", "GND", "POWER", "BATTERY"}
@@ -103,8 +109,8 @@ class UnionFind:
     """
 
     def __init__(self):
-        self._parent: Dict[str, str] = {}
-        self._rank: Dict[str, int] = {}
+        self._parent: dict[str, str] = {}
+        self._rank: dict[str, int] = {}
 
     def find(self, x: str) -> str:
         """查找根节点 (带路径压缩)"""
@@ -131,9 +137,9 @@ class UnionFind:
         """判断两个元素是否在同一集合"""
         return self.find(a) == self.find(b)
 
-    def groups(self) -> Dict[str, set]:
+    def groups(self) -> dict[str, set]:
         """返回所有连通分组 {root: {members}}"""
-        result: Dict[str, set] = {}
+        result: dict[str, set] = {}
         for x in self._parent:
             root = self.find(x)
             result.setdefault(root, set()).add(x)
@@ -154,23 +160,23 @@ class CircuitAnalyzer:
 
     def __init__(
         self,
-        rail_track_rows: Optional[Dict[str, tuple]] = None,
+        rail_track_rows: dict[str, tuple] | None = None,
         board_schema: BoardSchema | None = None,
     ):
         # 二分图: 左集 U = 元件节点, 右集 V = 网络节点 (等电位点)
         # 参考: circuit_recognizer + NetworkX 二分图建模
         self.graph = nx.Graph()
         self._uf = UnionFind()  # 并查集: Wire 增量合并等电位网络
-        self.component_instances: List[ComponentInstance] = []
-        self.power_nets: Dict[str, str] = {}
-        self._name_counters: Dict[str, int] = {}
+        self.component_instances: list[ComponentInstance] = []
+        self.power_nets: dict[str, str] = {}
+        self._name_counters: dict[str, int] = {}
         self._rail_track_rows = rail_track_rows or {}
         self.board_schema = board_schema or BoardSchema.default_breadboard()
-        self._row_to_rail: Dict[int, str] = {}
+        self._row_to_rail: dict[int, str] = {}
         for track_id, rows in self._rail_track_rows.items():
             for r in rows:
                 self._row_to_rail[r] = track_id
-        self.rail_assignments: Dict[str, str] = {}
+        self.rail_assignments: dict[str, str] = {}
 
     def reset(self):
         self.graph.clear()
@@ -188,7 +194,7 @@ class CircuitAnalyzer:
     def add_component_instance(self, comp: ComponentInstance):
         """接收组件中心化输入，并直接注册到图和并查集中。"""
         component_id = comp.component_id or self._auto_name(comp.component_type)
-        normalized_pins: List[PinAssignment] = []
+        normalized_pins: list[PinAssignment] = []
         for pin in comp.pins:
             hole_id = self.board_schema.normalize_hole_id(pin.hole_id)
             normalized_pins.append(
@@ -196,7 +202,10 @@ class CircuitAnalyzer:
                     pin_id=pin.pin_id,
                     pin_name=pin.pin_name,
                     hole_id=hole_id,
-                    electrical_node_id=pin.electrical_node_id or self.board_schema.resolve_hole_to_node(hole_id),
+                    electrical_node_id=(
+                        pin.electrical_node_id
+                        or self.board_schema.resolve_hole_to_node(hole_id)
+                    ),
                     electrical_net_id=pin.electrical_net_id,
                     observations=list(pin.observations or []),
                     confidence=pin.confidence,
@@ -227,7 +236,7 @@ class CircuitAnalyzer:
         if not pin_nodes:
             return
 
-        net_names: List[str] = []
+        net_names: list[str] = []
         for _pin, node_id in pin_nodes:
             net_names.append(node_id)
             if not self.graph.has_node(node_id):
@@ -259,15 +268,15 @@ class CircuitAnalyzer:
         if ctype == "Wire" and len(net_names) >= 2:
             self._uf.union(net_names[0], net_names[1])
 
-    def _instance_pin_nodes(self, comp: ComponentInstance) -> List[Tuple[PinAssignment, str]]:
+    def _instance_pin_nodes(self, comp: ComponentInstance) -> list[tuple[PinAssignment, str]]:
         """返回组件每个 pin 对应的 electrical node。"""
-        pin_nodes: List[Tuple[PinAssignment, str]] = []
+        pin_nodes: list[tuple[PinAssignment, str]] = []
         for pin in comp.pins:
             node_id = pin.electrical_node_id or self.board_schema.resolve_hole_to_node(pin.hole_id)
             pin_nodes.append((pin, node_id))
         return pin_nodes
 
-    def _get_node_name(self, loc: Tuple[str, str]) -> str:
+    def _get_node_name(self, loc: tuple[str, str]) -> str:
         """面包板导通规则映射"""
         hole_id = self.board_schema.logic_loc_to_hole_id(loc)
         node_name = self.board_schema.resolve_hole_to_node(hole_id)
@@ -322,19 +331,19 @@ class CircuitAnalyzer:
 
         # 从 Union-Find 获取合并后的等电位网络组
         all_nets = {n for n, d in self.graph.nodes(data=True) if d.get("kind") == "net"}
-        net_groups: Dict[str, set] = {}
+        net_groups: dict[str, set] = {}
         for net_name in all_nets:
             root = self._uf.find(net_name)
             net_groups.setdefault(root, set()).add(net_name)
 
         # 为每组分配 net ID, net_name → net_id 映射
-        node_to_net: Dict[str, str] = {}
+        node_to_net: dict[str, str] = {}
         topo = nx.Graph()
         for i, (root, members) in enumerate(net_groups.items()):
             net_id = f"N{i}"
             for m in members:
                 node_to_net[m] = net_id
-            attrs: Dict = {"kind": "net"}
+            attrs: dict = {"kind": "net"}
             for m in members:
                 if m in self.power_nets:
                     attrs["power"] = self.power_nets[m]
@@ -349,8 +358,8 @@ class CircuitAnalyzer:
                 continue
 
             pin_nodes = self._instance_pin_nodes(comp)
-            net_ids: List[str] = []
-            net_roles: Dict[str, str] = {}
+            net_ids: list[str] = []
+            net_roles: dict[str, str] = {}
             for pin, node_id in pin_nodes:
                 net_id = node_to_net.get(self._uf.find(node_id))
                 if net_id is None:
@@ -388,13 +397,13 @@ class CircuitAnalyzer:
 
         # 从 Union-Find 获取合并后的等电位网络组
         all_nets = {n for n, d in self.graph.nodes(data=True) if d.get("kind") == "net"}
-        uf_groups: Dict[str, set] = {}
+        uf_groups: dict[str, set] = {}
         for net_name in all_nets:
             root = self._uf.find(net_name)
             uf_groups.setdefault(root, set()).add(net_name)
         connected_groups = list(uf_groups.values())
 
-        node_to_net: Dict[str, str] = {}
+        node_to_net: dict[str, str] = {}
         for idx, group in enumerate(connected_groups):
             net_id = f"Net_{idx + 1}"
             for n in group:
@@ -408,7 +417,7 @@ class CircuitAnalyzer:
         desc += "元件连接:\n"
         for comp in self.component_instances:
             ctype = self._norm_type(comp.component_type)
-            pin_texts: List[str] = []
+            pin_texts: list[str] = []
             for pin, node_id in self._instance_pin_nodes(comp):
                 net_id = node_to_net.get(self._uf.find(node_id), "?")
                 pin_texts.append(f"{pin.pin_name}={pin.hole_id}({net_id})")
@@ -461,7 +470,7 @@ class CircuitAnalyzer:
 
         return desc
 
-    def _quick_check_issues(self) -> List[str]:
+    def _quick_check_issues(self) -> list[str]:
         """快速问题检测 — 使用 Union-Find 感知 Wire 合并后的等电位关系"""
         issues = []
         has_led = False
@@ -489,7 +498,9 @@ class CircuitAnalyzer:
             if len(pin_nodes) >= 2:
                 roots = {self._uf.find(node_id) for _, node_id in pin_nodes}
                 if len(roots) == 1 and ctype != "Wire":
-                    issues.append(f"{comp.component_id} ({ctype}) 两引脚在同一导通组, 可能短路或未跨行")
+                    issues.append(
+                        f"{comp.component_id} ({ctype}) 两引脚在同一导通组, 可能短路或未跨行"
+                    )
 
         if has_led and not has_resistor_near_led:
             issues.append("LED 未检测到相邻限流电阻, 可能缺少限流保护")
@@ -513,11 +524,22 @@ class CircuitAnalyzer:
             self.power_nets["PWR_MINUS"] = "GND"
 
     @staticmethod
-    def _parse_rail_label(label: str) -> Optional[str]:
+    def _parse_rail_label(label: str) -> str | None:
         if not label:
             return None
         u = label.strip().upper()
-        if any(kw in u for kw in ("VCC", "VDD", "V+", "+5", "+3.3", "+12", "正电源", "正极", "电源正")):
+        positive_keywords = (
+            "VCC",
+            "VDD",
+            "V+",
+            "+5",
+            "+3.3",
+            "+12",
+            "正电源",
+            "正极",
+            "电源正",
+        )
+        if any(kw in u for kw in positive_keywords):
             return "VCC"
         if u.startswith("+") and any(c.isdigit() for c in u):
             return "VCC"
@@ -539,19 +561,19 @@ class CircuitAnalyzer:
         roots = {self._uf.find(n) for n in all_nets}
         return len(roots)
 
-    def export_netlist_v2(self, scene_id: str = "runtime_scene") -> Dict:
+    def export_netlist_v2(self, scene_id: str = "runtime_scene") -> dict:
         """导出保留 hole_id / pin_name / electrical_net 的新网表格式。"""
         self._identify_power_nets()
         all_nets = {n for n, d in self.graph.nodes(data=True) if d.get("kind") == "net"}
-        uf_groups: Dict[str, set] = {}
+        uf_groups: dict[str, set] = {}
         for net_name in all_nets:
             root = self._uf.find(net_name)
             uf_groups.setdefault(root, set()).add(net_name)
 
-        node_to_net_id: Dict[str, str] = {}
-        nets: List[ElectricalNet] = []
-        member_holes_by_net: Dict[str, set] = {}
-        member_nodes_by_net: Dict[str, set] = {}
+        node_to_net_id: dict[str, str] = {}
+        nets: list[ElectricalNet] = []
+        member_holes_by_net: dict[str, set] = {}
+        member_nodes_by_net: dict[str, set] = {}
 
         instances = self.component_instances
         for idx, (root, members) in enumerate(uf_groups.items()):
@@ -561,12 +583,15 @@ class CircuitAnalyzer:
             member_holes_by_net[net_id] = set()
             member_nodes_by_net[net_id] = set(members)
 
-        exported_components: List[ComponentInstance] = []
-        node_index: Dict[str, List[str]] = {}
+        exported_components: list[ComponentInstance] = []
+        node_index: dict[str, list[str]] = {}
         for comp in instances:
-            exported_pins: List[PinAssignment] = []
+            exported_pins: list[PinAssignment] = []
             for pin in comp.pins:
-                node_id = pin.electrical_node_id or self.board_schema.resolve_hole_to_node(pin.hole_id)
+                node_id = (
+                    pin.electrical_node_id
+                    or self.board_schema.resolve_hole_to_node(pin.hole_id)
+                )
                 net_id = node_to_net_id.get(self._uf.find(node_id))
                 if net_id:
                     member_holes_by_net.setdefault(net_id, set()).add(pin.hole_id)
@@ -635,12 +660,12 @@ class CircuitAnalyzer:
         """
         self._identify_power_nets()
         all_nets = {n for n, d in self.graph.nodes(data=True) if d.get("kind") == "net"}
-        uf_groups: Dict[str, set] = {}
+        uf_groups: dict[str, set] = {}
         for net_name in all_nets:
             root = self._uf.find(net_name)
             uf_groups.setdefault(root, set()).add(net_name)
 
-        root_to_id: Dict[str, str] = {}
+        root_to_id: dict[str, str] = {}
         net_idx = 1
         for root, members in uf_groups.items():
             power_name = None
@@ -693,7 +718,13 @@ class CircuitAnalyzer:
     def to_node_link_data(self) -> dict:
         """将拓扑图序列化为 node-link JSON 格式"""
         topo = self.build_topology_graph()
-        return nx.node_link_data(topo)
+        try:
+            payload = nx.node_link_data(topo, edges="links")
+        except TypeError:
+            payload = nx.node_link_data(topo)
+        if "links" not in payload and "edges" in payload:
+            payload["links"] = payload["edges"]
+        return payload
 
     def component_count(self) -> int:
         """返回元件总数"""

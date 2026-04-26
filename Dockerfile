@@ -8,7 +8,8 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir -e ".[dev]"
+ARG INSTALL_EXTRAS=dev
+RUN pip install --no-cache-dir -e ".[${INSTALL_EXTRAS}]"
 
 COPY . .
 

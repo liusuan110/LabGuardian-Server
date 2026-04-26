@@ -14,6 +14,10 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
+    environment:
+      LABGUARDIAN_MODEL_ROOT: /app/models
+      YOLO_MODEL_PATH: /app/models/component/best.pt
+      PIN_MODEL_PATH: /app/models/pin/best.pt
     depends_on:
       redis:
         condition: service_healthy
@@ -24,6 +28,10 @@ services:
     build: .
     command: celery -A app.core.celery_app:celery_app worker -Q pipeline -c 1 --loglevel=info
     env_file: .env
+    environment:
+      LABGUARDIAN_MODEL_ROOT: /app/models
+      YOLO_MODEL_PATH: /app/models/component/best.pt
+      PIN_MODEL_PATH: /app/models/pin/best.pt
     depends_on:
       redis:
         condition: service_healthy
