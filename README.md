@@ -41,6 +41,7 @@ LabGuardian 的服务器端负责把视觉识别结果转换成可验证、可�
 - [vision-model-inventory.md](docs/vision-model-inventory.md)
 - [board-schema-format.md](docs/board-schema-format.md)
 - [edge-deployment.md](docs/edge-deployment.md)
+- [pcm-agent-architecture.md](docs/pcm-agent-architecture.md)
 - [vision-stage-contracts.md](docs/vision-stage-contracts.md)
 - [validator-error-codes.md](docs/validator-error-codes.md)
 
