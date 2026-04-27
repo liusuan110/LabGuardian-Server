@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -45,6 +45,10 @@ class Connection:
     color: tuple[int, int, int]
     points_warp: list[list[float]]
     points_image: list[list[float]]
+    axis: str = ""
+    member_ids: list[str] = field(default_factory=list)
+    member_count: int = 0
+    adjacent_pairs: list[list[str]] = field(default_factory=list)
 
 
 def odd_size(value: float, minimum: int = 3, maximum: int | None = None) -> int:
@@ -552,6 +556,110 @@ def build_connections(model: GridModel, inverse_matrix: np.ndarray, main_columns
     return connections
 
 
+def annotate_connectivity(
+    holes: list[dict[str, object]],
+    connections: list[Connection],
+) -> tuple[list[dict[str, object]], list[Connection]]:
+    row_order = {
+        "A": 0,
+        "B": 1,
+        "C": 2,
+        "D": 3,
+        "E": 4,
+        "F": 5,
+        "G": 6,
+        "H": 7,
+        "I": 8,
+        "J": 9,
+        "top_pos": 10,
+        "top_neg": 11,
+        "bottom_pos": 12,
+        "bottom_neg": 13,
+    }
+    connection_meta: dict[str, dict[str, object]] = {}
+
+    upper_groups: dict[int, list[dict[str, object]]] = {}
+    lower_groups: dict[int, list[dict[str, object]]] = {}
+    rail_groups: dict[str, list[dict[str, object]]] = {}
+
+    for hole in holes:
+        section = str(hole["section"])
+        if section == "terminal_upper":
+            upper_groups.setdefault(int(hole["column"]), []).append(hole)
+        elif section == "terminal_lower":
+            lower_groups.setdefault(int(hole["column"]), []).append(hole)
+        elif section == "power_rail":
+            rail_groups.setdefault(str(hole["row"]), []).append(hole)
+
+    def register_group(
+        name: str,
+        connection_type: str,
+        axis: str,
+        members: list[dict[str, object]],
+    ) -> None:
+        member_ids = [str(member["id"]) for member in members]
+        connection_meta[name] = {
+            "name": name,
+            "connection_type": connection_type,
+            "axis": axis,
+            "member_ids": member_ids,
+            "member_count": len(member_ids),
+            "adjacent_pairs": [[member_ids[index], member_ids[index + 1]] for index in range(len(member_ids) - 1)],
+        }
+
+    for column, members in sorted(upper_groups.items()):
+        ordered = sorted(members, key=lambda item: row_order[str(item["row"])])
+        register_group(f"terminal_upper_col_{column:02d}", "vertical_terminal_strip", "vertical", ordered)
+
+    for column, members in sorted(lower_groups.items()):
+        ordered = sorted(members, key=lambda item: row_order[str(item["row"])])
+        register_group(f"terminal_lower_col_{column:02d}", "vertical_terminal_strip", "vertical", ordered)
+
+    for row_name, members in sorted(rail_groups.items(), key=lambda item: row_order.get(item[0], 999)):
+        ordered = sorted(members, key=lambda item: int(item["column"]))
+        register_group(f"power_rail_{row_name}", "horizontal_power_rail", "horizontal", ordered)
+
+    hole_lookup = {str(hole["id"]): hole for hole in holes}
+    for meta in connection_meta.values():
+        member_ids = list(meta["member_ids"])
+        member_count = int(meta["member_count"])
+        for index, hole_id in enumerate(member_ids):
+            adjacent_ids: list[str] = []
+            if index > 0:
+                adjacent_ids.append(member_ids[index - 1])
+            if index + 1 < member_count:
+                adjacent_ids.append(member_ids[index + 1])
+            hole = hole_lookup[hole_id]
+            hole["connection_name"] = str(meta["name"])
+            hole["connection_type"] = str(meta["connection_type"])
+            hole["connection_axis"] = str(meta["axis"])
+            hole["connection_index"] = index
+            hole["connection_member_count"] = member_count
+            hole["adjacent_connected_ids"] = adjacent_ids
+
+    enriched_connections: list[Connection] = []
+    for connection in connections:
+        meta = connection_meta.get(connection.name)
+        if meta is None:
+            enriched_connections.append(connection)
+            continue
+        enriched_connections.append(
+            Connection(
+                name=connection.name,
+                connection_type=connection.connection_type,
+                color=connection.color,
+                points_warp=connection.points_warp,
+                points_image=connection.points_image,
+                axis=str(meta["axis"]),
+                member_ids=list(meta["member_ids"]),
+                member_count=int(meta["member_count"]),
+                adjacent_pairs=[list(pair) for pair in meta["adjacent_pairs"]],
+            )
+        )
+
+    return holes, enriched_connections
+
+
 def draw_quad(image: np.ndarray, quad: np.ndarray) -> np.ndarray:
     annotated = image.copy()
     pts = order_points(quad).astype(np.int32)
@@ -628,11 +736,45 @@ def write_csv(path: Path, holes: list[dict[str, object]]) -> None:
         "x_image",
         "y_image",
         "visible_score",
+        "connection_name",
+        "connection_type",
+        "connection_axis",
+        "connection_index",
+        "connection_member_count",
+        "adjacent_connected_ids",
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(holes)
+        for hole in holes:
+            row = {key: hole.get(key) for key in fieldnames}
+            row["adjacent_connected_ids"] = ";".join(str(value) for value in hole.get("adjacent_connected_ids", []))
+            writer.writerow(row)
+
+
+def write_connections_csv(path: Path, connections: list[Connection]) -> None:
+    fieldnames = [
+        "name",
+        "connection_type",
+        "axis",
+        "member_count",
+        "member_ids",
+        "adjacent_pairs",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for connection in connections:
+            writer.writerow(
+                {
+                    "name": connection.name,
+                    "connection_type": connection.connection_type,
+                    "axis": connection.axis,
+                    "member_count": connection.member_count,
+                    "member_ids": ";".join(connection.member_ids),
+                    "adjacent_pairs": ";".join(f"{start}<->{end}" for start, end in connection.adjacent_pairs),
+                }
+            )
 
 
 def process_image(image_path: Path, out_dir: Path, prefix: str, draw_labels: bool = False, main_columns: int = 63) -> dict[str, object]:
@@ -648,6 +790,7 @@ def process_image(image_path: Path, out_dir: Path, prefix: str, draw_labels: boo
     holes = build_holes(model, inverse_matrix, score_map, main_columns)
     regions = build_regions(model, inverse_matrix, (warped.shape[1], warped.shape[0]), main_columns)
     connections = build_connections(model, inverse_matrix, main_columns)
+    holes, connections = annotate_connectivity(holes, connections)
 
     paths = {
         "corners": out_dir / f"{prefix}_corners.png",
@@ -657,6 +800,7 @@ def process_image(image_path: Path, out_dir: Path, prefix: str, draw_labels: boo
         "connectivity_warped": out_dir / f"{prefix}_connectivity_warped.png",
         "connectivity_original": out_dir / f"{prefix}_connectivity_original.png",
         "csv": out_dir / f"{prefix}_holes.csv",
+        "connections_csv": out_dir / f"{prefix}_connections.csv",
         "json": out_dir / f"{prefix}_holes.json",
     }
 
@@ -667,6 +811,7 @@ def process_image(image_path: Path, out_dir: Path, prefix: str, draw_labels: boo
     cv2.imwrite(str(paths["connectivity_warped"]), draw_region_and_connection_overlay(warped, holes, regions, connections, "warp", draw_labels))
     cv2.imwrite(str(paths["connectivity_original"]), draw_region_and_connection_overlay(image, holes, regions, connections, "image", draw_labels))
     write_csv(paths["csv"], holes)
+    write_connections_csv(paths["connections_csv"], connections)
 
     metadata = {
         "image": str(image_path),
