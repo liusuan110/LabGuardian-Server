@@ -26,6 +26,10 @@ def build_diagnostic_template_answer(
         f"错误码：{error_codes}。",
         f"证据：{ref_text}。",
     ]
+    if context_pack.history_summary:
+        lines.append(f"上下文：{context_pack.history_summary}。")
+    elif context_pack.history_facts:
+        lines.append(f"上下文：{'；'.join(context_pack.history_facts[:3])}。")
     if tool_summary:
         lines.append(f"工具结果：{tool_summary}。")
     if evidence.risk_level == "danger":
@@ -143,6 +147,15 @@ def build_diagnostic_evidence(
             source_id=context_pack.pack_id,
             summary="按错误类型推送的上下文和工具",
             payload=context_pack.model_dump(),
+        ),
+        AngntEvidence(
+            evidence_type="context_timeline",
+            source_id=f"{evidence.station_id}:context_timeline",
+            summary=context_pack.history_summary or "暂无历史上下文",
+            payload={
+                "history_facts": context_pack.history_facts,
+                "history_summary": context_pack.history_summary,
+            },
         ),
         AngntEvidence(
             evidence_type="tool_results",

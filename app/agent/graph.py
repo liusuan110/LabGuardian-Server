@@ -98,6 +98,12 @@ def _build_context_pack_node(state: DiagnosticState) -> dict:
                 "allowed_tool_count": len(pack.allowed_tools),
                 "context_char_count": pack.metrics.char_count if pack.metrics else 0,
                 "estimated_tokens": pack.metrics.estimated_tokens if pack.metrics else 0,
+                "history_facts_count": (
+                    pack.metrics.history_facts_count if pack.metrics else 0
+                ),
+                "history_estimated_tokens": (
+                    pack.metrics.history_estimated_tokens if pack.metrics else 0
+                ),
             },
         ),
     }

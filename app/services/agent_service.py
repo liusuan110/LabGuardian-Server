@@ -10,6 +10,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.agent.answering import (
@@ -30,6 +31,20 @@ from app.services.classroom_state import ClassroomState
 from app.services.error_tag_service import ErrorTagService
 from app.services.rag_service import RagService
 
+AGENT_MEMORY_LIMIT = 5
+RISK_ORDER = {"unknown": 0, "safe": 0, "warning": 1, "danger": 2}
+
+
+@dataclass
+class AgentMemoryRecord:
+    query: str
+    risk_level: str
+    error_codes: list[str]
+    error_family: str
+    suggested_actions: list[str] = field(default_factory=list)
+    highlight_targets: list[dict[str, Any]] = field(default_factory=list)
+    created_at: float = 0.0
+
 
 class AgentService:
     """负责 angnt 作业受理、状态管理与最小回答生成."""
@@ -38,6 +53,7 @@ class AgentService:
         self._rag_service = rag_service
         self._lock = threading.Lock()
         self._jobs: dict[str, AngntJobStatusResponse] = {}
+        self._station_memory: dict[str, list[AgentMemoryRecord]] = {}
 
     def submit(self, request: AngntAskRequest, classroom: ClassroomState) -> AngntJobStatusResponse:
         job_id = str(uuid.uuid4())
@@ -169,6 +185,13 @@ class AgentService:
             stations=stations,
             error_tag_service=ErrorTagService(),
         )
+        history_records = self._get_station_memory(request.station_id)
+        history_facts, history_summary = self._build_context_timeline(
+            current_evidence=evidence_contract,
+            history_records=history_records,
+        )
+        evidence_contract.history_facts = history_facts
+        evidence_contract.history_summary = history_summary
         graph_state = run_diagnostic_graph(
             evidence=evidence_contract,
             query=request.query,
@@ -184,8 +207,11 @@ class AgentService:
         verification = graph_state.verification_report
         verification_passed = bool(verification and verification.passed)
         verification_issues = verification.issues if verification else ["verification missing"]
-
-        return AngntJobResult(
+        actions = self._build_actions(
+            risk_level=evidence_contract.risk_level,
+            diagnostics=evidence_contract.diagnostics,
+        )
+        result = AngntJobResult(
             job_id=job_id,
             station_id=request.station_id,
             mode=request.mode,
@@ -205,13 +231,113 @@ class AgentService:
                     metric.model_dump() for metric in graph_state.graph_metrics
                 ],
             ),
-            actions=self._build_actions(
-                risk_level=evidence_contract.risk_level,
-                diagnostics=evidence_contract.diagnostics,
-            ),
+            actions=actions,
             used_retrieval=bool(tool_results),
             created_at=created_at,
         )
+        self._append_station_memory(
+            station_id=request.station_id,
+            record=AgentMemoryRecord(
+                query=request.query,
+                risk_level=evidence_contract.risk_level,
+                error_codes=list(evidence_contract.error_codes),
+                error_family=context_pack.error_family,
+                suggested_actions=self._suggested_actions(
+                    evidence=evidence_contract,
+                    actions=actions,
+                ),
+                highlight_targets=_highlight_targets_from_report(
+                    evidence_contract.validator_report_v2,
+                ),
+                created_at=created_at,
+            ),
+        )
+        return result
+
+    def _get_station_memory(self, station_id: str) -> list[AgentMemoryRecord]:
+        with self._lock:
+            return list(self._station_memory.get(station_id, []))
+
+    def _append_station_memory(self, *, station_id: str, record: AgentMemoryRecord) -> None:
+        with self._lock:
+            records = [*self._station_memory.get(station_id, []), record]
+            self._station_memory[station_id] = records[-AGENT_MEMORY_LIMIT:]
+
+    def _build_context_timeline(
+        self,
+        *,
+        current_evidence,
+        history_records: list[AgentMemoryRecord],
+    ) -> tuple[list[str], str]:
+        if not history_records:
+            return [], ""
+
+        previous = history_records[-1]
+        facts = [
+            f"previous_error_codes={','.join(previous.error_codes) or 'none'}",
+            f"previous_error_family={previous.error_family}",
+            f"previous_risk_level={previous.risk_level}",
+        ]
+        current_codes = list(current_evidence.error_codes)
+        previous_codes = list(previous.error_codes)
+        summary_parts: list[str] = []
+
+        if current_codes and current_codes == previous_codes:
+            code_text = "、".join(current_codes)
+            facts.append(f"repeated_error_codes={','.join(current_codes)}")
+            summary_parts.append(f"这个问题仍然存在，上一轮也检测到 {code_text}")
+        elif current_codes and previous_codes and current_codes != previous_codes:
+            facts.append(
+                "error_codes_changed="
+                + ",".join(previous_codes)
+                + "->"
+                + ",".join(current_codes)
+            )
+            summary_parts.append(
+                f"当前主要问题已从 {'、'.join(previous_codes)} 变为 {'、'.join(current_codes)}"
+            )
+        elif current_codes and not previous_codes:
+            facts.append("error_codes_new=" + ",".join(current_codes))
+            summary_parts.append(f"当前新出现 {'、'.join(current_codes)}")
+
+        previous_risk = RISK_ORDER.get(previous.risk_level, 0)
+        current_risk = RISK_ORDER.get(current_evidence.risk_level, 0)
+        if current_risk < previous_risk:
+            facts.append(f"risk_level_decreased={previous.risk_level}->{current_evidence.risk_level}")
+            summary_parts.append(
+                f"风险等级从 {previous.risk_level} 下降到 "
+                f"{current_evidence.risk_level}，比上一轮有所改善，但仍需检查当前问题"
+            )
+        elif current_risk > previous_risk:
+            facts.append(f"risk_level_increased={previous.risk_level}->{current_evidence.risk_level}")
+            summary_parts.append(
+                f"风险等级从 {previous.risk_level} 上升到 "
+                f"{current_evidence.risk_level}，需要优先复查"
+            )
+        else:
+            facts.append(f"risk_level_unchanged={current_evidence.risk_level}")
+
+        if previous.suggested_actions and current_codes:
+            facts.append("previous_suggested_actions=" + " | ".join(previous.suggested_actions[:3]))
+            if current_codes == previous_codes:
+                summary_parts.append("学生可能已经尝试修改，但上一轮建议对应的问题仍未消除")
+
+        facts.append(f"history_record_count={len(history_records)}")
+        summary = "；".join(summary_parts)
+        return facts[:8], summary
+
+    def _suggested_actions(
+        self,
+        *,
+        evidence,
+        actions: list[AngntAction],
+    ) -> list[str]:
+        suggestions: list[str] = []
+        for finding in evidence.findings:
+            if finding.suggested_action:
+                suggestions.append(finding.suggested_action)
+        suggestions.extend(action.detail for action in actions if action.detail)
+        return _dedupe(suggestions)[:5]
 
     def _build_answer(
         self,
@@ -268,3 +394,19 @@ class AgentService:
                 )
             )
         return actions
+
+
+def _highlight_targets_from_report(report: dict[str, Any]) -> list[dict[str, Any]]:
+    protocol = report.get("highlight_protocol", {})
+    targets = protocol.get("targets", [])
+    if isinstance(targets, list):
+        return [target for target in targets if isinstance(target, dict)]
+    return []
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        if value and value not in result:
+            result.append(value)
+    return result

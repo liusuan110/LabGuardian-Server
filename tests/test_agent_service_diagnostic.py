@@ -5,6 +5,51 @@ from app.services.error_tag_service import ErrorTagService
 from app.services.rag_service import RagService
 
 
+def _submit_diagnostic(
+    service: AgentService,
+    classroom: ClassroomState,
+    *,
+    station_id: str = "S01",
+    query: str = "现在怎么办",
+):
+    accepted = service.submit(
+        AngntAskRequest(
+            station_id=station_id,
+            query=query,
+            mode="diagnostic_agent",
+        ),
+        classroom,
+    )
+    status = service.get_status(accepted.job_id)
+    assert status.result is not None
+    return status.result
+
+
+def _station_payload(
+    *,
+    station_id: str = "S01",
+    risk_level: str,
+    error_code: str,
+    component_id: str = "R1",
+) -> dict:
+    return {
+        "station_id": station_id,
+        "risk_level": risk_level,
+        "diagnostics": [f"{component_id} {error_code}"],
+        "risk_reasons": [error_code],
+        "comparison_report": {
+            "items": [
+                {
+                    "error_code": error_code,
+                    "severity": "danger" if risk_level == "danger" else "warning",
+                    "component_id": component_id,
+                    "suggested_action": f"按 {error_code} 修复 {component_id}",
+                }
+            ]
+        },
+    }
+
+
 def test_diagnostic_agent_mode_builds_template_answer_and_verifies() -> None:
     classroom = ClassroomState()
     classroom.update_station(
@@ -83,3 +128,105 @@ def test_diagnostic_agent_mode_works_without_station_state() -> None:
     assert status.result is not None
     assert status.result.answer
     assert status.result.evidence[0].payload["station_id"] == "missing"
+
+
+def test_diagnostic_agent_uses_history_for_repeated_error() -> None:
+    classroom = ClassroomState()
+    service = AgentService(rag_service=RagService(error_tag_service=ErrorTagService()))
+    classroom.update_station(
+        _station_payload(
+            risk_level="danger",
+            error_code="COMPONENT_SHORTED_SAME_NET",
+        )
+    )
+    _submit_diagnostic(service, classroom, query="第一次诊断")
+
+    classroom.update_station(
+        _station_payload(
+            risk_level="danger",
+            error_code="COMPONENT_SHORTED_SAME_NET",
+        )
+    )
+    result = _submit_diagnostic(service, classroom, query="第二次诊断")
+
+    assert "这个问题仍然存在" in result.answer
+    assert "上一轮也检测到" in result.answer
+    timeline = next(item for item in result.evidence if item.evidence_type == "context_timeline")
+    assert any(
+        "repeated_error_codes=COMPONENT_SHORTED_SAME_NET" in fact
+        for fact in timeline.payload["history_facts"]
+    )
+
+
+def test_diagnostic_agent_mentions_risk_decrease() -> None:
+    classroom = ClassroomState()
+    service = AgentService(rag_service=RagService(error_tag_service=ErrorTagService()))
+    classroom.update_station(
+        _station_payload(
+            risk_level="danger",
+            error_code="COMPONENT_SHORTED_SAME_NET",
+        )
+    )
+    _submit_diagnostic(service, classroom)
+
+    classroom.update_station(
+        _station_payload(
+            risk_level="warning",
+            error_code="NODE_MISMATCH",
+            component_id="C1",
+        )
+    )
+    result = _submit_diagnostic(service, classroom)
+
+    assert "比上一轮有所改善" in result.answer
+    timeline = next(item for item in result.evidence if item.evidence_type == "context_timeline")
+    assert any(
+        "risk_level_decreased=danger->warning" in fact
+        for fact in timeline.payload["history_facts"]
+    )
+
+
+def test_diagnostic_agent_history_facts_record_error_change() -> None:
+    classroom = ClassroomState()
+    service = AgentService(rag_service=RagService(error_tag_service=ErrorTagService()))
+    classroom.update_station(
+        _station_payload(
+            risk_level="warning",
+            error_code="NODE_MISMATCH",
+            component_id="C1",
+        )
+    )
+    _submit_diagnostic(service, classroom)
+
+    classroom.update_station(
+        _station_payload(
+            risk_level="warning",
+            error_code="POLARITY_REVERSED",
+            component_id="D1",
+        )
+    )
+    result = _submit_diagnostic(service, classroom)
+
+    timeline = next(item for item in result.evidence if item.evidence_type == "context_timeline")
+    assert any(
+        "error_codes_changed=NODE_MISMATCH->POLARITY_REVERSED" in fact
+        for fact in timeline.payload["history_facts"]
+    )
+    assert "当前主要问题已从 NODE_MISMATCH 变为 POLARITY_REVERSED" in result.answer
+
+
+def test_diagnostic_agent_memory_keeps_last_five_records() -> None:
+    classroom = ClassroomState()
+    service = AgentService(rag_service=RagService(error_tag_service=ErrorTagService()))
+
+    for idx in range(6):
+        classroom.update_station(
+            _station_payload(
+                risk_level="warning",
+                error_code="NODE_MISMATCH",
+                component_id=f"C{idx}",
+            )
+        )
+        _submit_diagnostic(service, classroom)
+
+    assert len(service._get_station_memory("S01")) == 5

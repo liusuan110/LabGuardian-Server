@@ -67,6 +67,8 @@ class RuntimeEvidence(BaseModel):
     validator_report_v2: dict[str, Any] = Field(default_factory=dict)
     circuit_snapshot: str = ""
     runtime_metadata: dict[str, Any] = Field(default_factory=dict)
+    history_facts: list[str] = Field(default_factory=list)
+    history_summary: str = ""
 
 
 class AllowedTool(BaseModel):
@@ -83,6 +85,9 @@ class ContextPackMetrics(BaseModel):
     pushed_facts_count: int = 0
     allowed_tool_count: int = 0
     evidence_ref_count: int = 0
+    history_facts_count: int = 0
+    history_char_count: int = 0
+    history_estimated_tokens: int = 0
     char_count: int = 0
     estimated_tokens: int = 0
 
@@ -98,6 +103,8 @@ class ContextPack(BaseModel):
     prompt_rules: list[str] = Field(default_factory=list)
     citation_requirements: list[str] = Field(default_factory=list)
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    history_facts: list[str] = Field(default_factory=list)
+    history_summary: str = ""
     metrics: ContextPackMetrics | None = None
 
 

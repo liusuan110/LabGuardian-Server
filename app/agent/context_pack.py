@@ -53,6 +53,8 @@ def build_context_pack(evidence: RuntimeEvidence, *, query: str = "") -> Context
             "不得重新猜测元件、孔位、节点或网表事实。",
         ],
         evidence_refs=evidence.evidence_refs,
+        history_facts=evidence.history_facts,
+        history_summary=evidence.history_summary,
     )
     pack.metrics = estimate_context_pack_metrics(pack)
     return pack
@@ -68,13 +70,29 @@ def estimate_context_pack_metrics(pack: ContextPack) -> ContextPackMetrics:
         "prompt_rules": pack.prompt_rules,
         "citation_requirements": pack.citation_requirements,
         "evidence_refs": [ref.model_dump() for ref in pack.evidence_refs],
+        "history_facts": pack.history_facts,
+        "history_summary": pack.history_summary,
     }
     serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     char_count = len(serialized)
+    history_serialized = json.dumps(
+        {
+            "history_facts": pack.history_facts,
+            "history_summary": pack.history_summary,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    history_char_count = len(history_serialized)
     return ContextPackMetrics(
         pushed_facts_count=len(pack.pushed_facts),
         allowed_tool_count=len(pack.allowed_tools),
         evidence_ref_count=len(pack.evidence_refs),
+        history_facts_count=len(pack.history_facts),
+        history_char_count=history_char_count,
+        history_estimated_tokens=(
+            max(1, math.ceil(history_char_count / 4)) if pack.history_facts else 0
+        ),
         char_count=char_count,
         estimated_tokens=max(1, math.ceil(char_count / 4)),
     )
@@ -110,6 +128,7 @@ def _build_pushed_facts(
         facts.append("finding:" + ";".join(parts))
     if evidence.circuit_snapshot:
         facts.append("circuit_snapshot=" + evidence.circuit_snapshot[:300])
+    facts.extend(f"history:{fact}" for fact in evidence.history_facts[:5])
     return facts
 
 
