@@ -11,7 +11,9 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.deps import get_classroom, get_guidance_service, get_pipeline_service
 from app.schemas.pipeline import (
+    CircuitAnalysisResult,
     JobStatusResponse,
+    NetlistVisualization,
     PipelineRequest,
     PipelineResult,
 )
@@ -64,3 +66,113 @@ async def get_pipeline_status(
 ):
     """查询 Pipeline 任务状态"""
     return pipeline_service.get_job_status(job_id)
+
+
+@router.post("/analyze", response_model=CircuitAnalysisResult)
+async def analyze_circuit(
+    request: PipelineRequest,
+    classroom: ClassroomState = Depends(get_classroom),
+    guidance_service: GuidanceService = Depends(get_guidance_service),
+    pipeline_service: PipelineService = Depends(get_pipeline_service),
+):
+    """
+    电路分析接口 — 返回元件引脚二维定位和网表信息
+    
+    执行完整的图像处理和电路分析流程，返回：
+    - 元件及其引脚的二维定位信息（包含逻辑坐标和图像坐标）
+    - 电气连接关系（网表）
+    - 电路拓扑图（用于前端可视化）
+    
+    输入：
+    - images_b64: 1-3张面包板俯拍图 (base64 JPEG)
+    - station_id: 工作站ID
+    - conf: YOLO置信度阈值（可选，默认0.25）
+    - iou: YOLO NMS IoU阈值（可选，默认0.5）
+    - imgsz: YOLO推理尺寸（可选，默认960）
+    - rail_assignments: 电源轨道分配（可选）
+    - reference_circuit: 参考电路（可选）
+    
+    输出：
+    - components: 元件列表，每个元件包含引脚定位信息
+    - nets: 电气网络列表
+    - topology_graph: 节点链接格式的拓扑图
+    - circuit_description: 电路文本描述
+    """
+    try:
+        return pipeline_service.analyze_circuit(
+            request=request,
+            classroom=classroom,
+            guidance_service=guidance_service,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/visualize/ports", response_model=NetlistVisualization)
+async def get_port_mapping(
+    request: PipelineRequest,
+    classroom: ClassroomState = Depends(get_classroom),
+    guidance_service: GuidanceService = Depends(get_guidance_service),
+    pipeline_service: PipelineService = Depends(get_pipeline_service),
+):
+    """
+    前端端口映射接口 — 返回元件引脚的二维面包板坐标，便于检验结果准确性
+    
+    此接口专为前端网表可视化设计，返回：
+    - 每个元件引脚的二维面包板行列坐标（行号、列名、孔洞ID）
+    - 引脚所属的电气网络信息
+    - 电源轨标识和电源角色
+    
+    输入：
+    - images_b64: 1-3张面包板俯拍图 (base64 JPEG)
+    - station_id: 工作站ID
+    - conf: YOLO置信度阈值（可选，默认0.25）
+    - iou: YOLO NMS IoU阈值（可选，默认0.5）
+    - imgsz: YOLO推理尺寸（可选，默认960）
+    - rail_assignments: 电源轨道分配（可选）
+    
+    输出示例（端口映射列表）：
+    ```json
+    {
+      "ports": [
+        {
+          "component_id": "R1",
+          "component_type": "Resistor",
+          "pin_id": 1,
+          "pin_name": "1",
+          "row_number": 5,
+          "col_name": "a",
+          "hole_id": "A5",
+          "logic_loc": ["5", "a"],
+          "is_power_rail": false,
+          "power_role": null,
+          "net_id": "NET_001",
+          "net_name": "VCC"
+        }
+      ],
+      "nets": [...],
+      "components": [...],
+      "component_count": 5,
+      "pin_count": 12,
+      "net_count": 4
+    }
+    ```
+    
+    前端使用建议：
+    1. 在网表表格中显示 row_number + col_name（如 "5a"）
+    2. 使用 is_power_rail 标记电源轨上的引脚
+    3. 根据 power_role 显示不同颜色（VCC=红色, GND=蓝色）
+    4. 使用 net_id/net_name 检验连接关系是否正确
+    """
+    try:
+        # 执行电路分析
+        analysis = pipeline_service.analyze_circuit(
+            request=request,
+            classroom=classroom,
+            guidance_service=guidance_service,
+        )
+        
+        # 转换为可视化数据结构
+        return NetlistVisualization.from_circuit_analysis(analysis)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))

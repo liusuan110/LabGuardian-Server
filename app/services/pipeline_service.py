@@ -17,6 +17,7 @@ from celery.result import AsyncResult
 from app.core.celery_app import celery_app
 from app.pipeline.orchestrator import run_pipeline
 from app.schemas.pipeline import (
+    CircuitAnalysisResult,
     JobStatus,
     JobStatusResponse,
     PipelineRequest,
@@ -153,3 +154,47 @@ class PipelineService:
             return JobStatusResponse(job_id=job_id, status=JobStatus.FAILED)
 
         return JobStatusResponse(job_id=job_id, status=JobStatus.PENDING)
+
+    def analyze_circuit(
+        self,
+        request: PipelineRequest,
+        classroom: ClassroomState,
+        guidance_service: GuidanceService,
+    ) -> CircuitAnalysisResult:
+        """
+        执行电路分析，返回元件引脚二维定位和网表信息。
+        
+        此方法执行完整的 pipeline 分析，提取并返回：
+        - 元件及其引脚的二维定位信息
+        - 电气连接关系（网表）
+        - 电路拓扑图（用于前端可视化）
+        """
+        job_id = str(uuid.uuid4())
+        
+        # 执行完整 pipeline
+        raw = run_pipeline(
+            images_b64=request.images_b64,
+            reference_circuit=request.reference_circuit,
+            conf=request.conf,
+            iou=request.iou,
+            imgsz=request.imgsz,
+            rail_assignments=request.rail_assignments,
+        )
+        
+        # 构建 PipelineResult
+        pipeline_result = self.build_pipeline_result(job_id=job_id, request=request, raw=raw)
+        
+        # 同步结果到课堂状态
+        self.sync_result_to_classroom(
+            classroom=classroom,
+            guidance_service=guidance_service,
+            request=request,
+            result=pipeline_result,
+        )
+        
+        # 转换为 CircuitAnalysisResult
+        return CircuitAnalysisResult.from_pipeline_result(
+            job_id=job_id,
+            station_id=request.station_id,
+            pipeline_result=pipeline_result,
+        )

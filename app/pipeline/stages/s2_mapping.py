@@ -18,6 +18,7 @@ from app.pipeline.vision.label_mapping import (
     default_symmetry_group,
     normalize_component_type,
 )
+from app.pipeline.vision.projection import BoardProjection, resolve_pin_board_projection
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,7 @@ def _map_component_pins(
             score_by_view=dict(pin.get("score_by_view") or {}),
             source_by_view=dict(pin.get("source_by_view") or {}),
             per_view_metadata=dict(pin_metadata.get("per_view") or {}),
+            pin_metadata=pin_metadata,
             view_ids=view_ids,
             confidence=float(pin.get("confidence", comp.get("confidence", 1.0))),
             calibrator=calibrator,
@@ -122,12 +124,23 @@ def _map_component_pins(
             observations,
             vote_scores=vote_result["vote_scores"],
         )
+        selected_board_point = _selected_board_point(
+            selected_logic=selected_logic,
+            observations=observations,
+            hole_id=hole_id,
+            calibrator=calibrator,
+        )
         mapped_pins.append(
             {
                 "pin_id": int(pin.get("pin_id") or idx),
                 "pin_name": str(pin.get("pin_name") or f"pin{idx}"),
                 "logic_loc": list(selected_logic) if selected_logic else None,
                 "hole_id": hole_id,
+                "board_2d_point": (
+                    [float(selected_board_point[0]), float(selected_board_point[1])]
+                    if selected_board_point is not None
+                    else None
+                ),
                 "electrical_node_id": electrical_node_id,
                 "confidence": float(pin.get("confidence", comp.get("confidence", 1.0))),
                 "observations": observations,
@@ -146,6 +159,11 @@ def _map_component_pins(
                     "mapping_interface_version": "hole_mapping_v1",
                     "vote_scores": vote_result["vote_scores"],
                     "selected_by": vote_result["selected_by"],
+                    "selected_board_2d_point": (
+                        [float(selected_board_point[0]), float(selected_board_point[1])]
+                        if selected_board_point is not None
+                        else None
+                    ),
                 },
             }
         )
@@ -186,6 +204,32 @@ def _get_candidates(
         return []
 
 
+def _get_board_candidates(
+    board_point: Optional[Tuple[float, float]],
+    calibrator: BreadboardCalibrator,
+    k: int = 5,
+) -> List[Tuple[str, str]]:
+    if board_point is None:
+        return []
+    try:
+        return calibrator.board_point_to_logic_candidates(board_point[0], board_point[1], k=k)
+    except Exception as exc:
+        logger.warning("S2 board candidate lookup failed for point %s: %s", board_point, exc)
+        return []
+
+
+def _candidates_for_projection(
+    *,
+    pixel: Optional[Tuple[float, float]],
+    projection: BoardProjection,
+    calibrator: BreadboardCalibrator,
+    k: int = 5,
+) -> List[Tuple[str, str]]:
+    if projection.should_use_board_point_for_mapping:
+        return _get_board_candidates(projection.board_point, calibrator, k=k)
+    return _get_candidates(pixel, calibrator, k=k)
+
+
 def _candidate_hole_ids_from_logic(
     *,
     selected_hole_id: str,
@@ -219,6 +263,30 @@ def _candidate_node_ids(candidate_holes: List[str], board_schema: BoardSchema) -
     return ordered
 
 
+def _selected_board_point(
+    *,
+    selected_logic: Optional[Tuple[str, str]],
+    observations: List[Dict[str, Any]],
+    hole_id: str,
+    calibrator: BreadboardCalibrator,
+) -> Optional[Tuple[float, float]]:
+    if selected_logic is not None and hasattr(calibrator, "logic_to_board_point"):
+        try:
+            board_point = calibrator.logic_to_board_point(selected_logic)
+            if board_point is not None:
+                return (float(board_point[0]), float(board_point[1]))
+        except Exception as exc:
+            logger.warning("S2 selected board point lookup failed for %s: %s", selected_logic, exc)
+
+    for obs in observations:
+        if hole_id not in (obs.get("candidate_hole_ids") or []):
+            continue
+        point = obs.get("board_2d_point")
+        if point and len(point) >= 2:
+            return (float(point[0]), float(point[1]))
+    return None
+
+
 def _view_ids_from_images(images_b64: List[str] | None) -> List[str]:
     if not images_b64:
         return ["top"]
@@ -236,6 +304,7 @@ def _build_pin_observations_from_predictions(
     score_by_view: Dict[str, Any],
     source_by_view: Dict[str, Any],
     per_view_metadata: Dict[str, Any],
+    pin_metadata: Dict[str, Any],
     view_ids: List[str],
     confidence: float,
     calibrator: BreadboardCalibrator,
@@ -246,16 +315,38 @@ def _build_pin_observations_from_predictions(
         keypoint = keypoints_by_view.get(view_id)
         visibility = int(visibility_by_view.get(view_id, 0))
         pixel = (float(keypoint[0]), float(keypoint[1])) if keypoint else None
-        logic_candidates = _get_candidates(pixel, calibrator) if pixel else []
+        projection = resolve_pin_board_projection(
+            view_id=view_id,
+            keypoint=keypoint,
+            per_view_metadata=per_view_metadata.get(view_id) or {},
+            pin_metadata=pin_metadata,
+            calibrator=calibrator,
+        )
+        logic_candidates = (
+            _candidates_for_projection(
+                pixel=pixel,
+                projection=projection,
+                calibrator=calibrator,
+            )
+            if pixel
+            else []
+        )
         candidate_hole_ids = [
             board_schema.normalize_hole_id(board_schema.logic_loc_to_hole_id(logic_loc))
             for logic_loc in logic_candidates
         ]
         candidate_node_ids = _candidate_node_ids(candidate_hole_ids, board_schema)
+        board_2d_point = (
+            [float(projection.board_point[0]), float(projection.board_point[1])]
+            if projection.board_point is not None
+            else None
+        )
         observations.append(
             {
                 "view_id": view_id,
                 "keypoint": [float(keypoint[0]), float(keypoint[1])] if keypoint else None,
+                "board_2d_point": board_2d_point,
+                "projection": projection.to_metadata(),
                 "visibility": visibility,
                 "confidence": float(score_by_view.get(view_id, confidence if visibility > 0 else 0.0)),
                 "source": str(source_by_view.get(view_id, "unknown")),

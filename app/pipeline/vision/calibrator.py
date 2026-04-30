@@ -1097,9 +1097,101 @@ class BreadboardCalibrator:
 
         return (row_name, col_name)
 
+    def frame_pixel_to_board_point(self, px: float, py: float) -> Tuple[float, float]:
+        """Map a source image pixel into the calibrated 2D board plane."""
+        if self._perspective_matrix is not None:
+            pt = np.array([[[px, py]]], dtype=np.float32)
+            transformed = cv2.perspectiveTransform(pt, self._perspective_matrix)
+            px, py = transformed[0, 0]
+        return (float(px), float(py))
+
+    def board_point_to_logic_candidates(
+        self, board_x: float, board_y: float, k: int = 5,
+    ) -> List[Tuple[str, str]]:
+        """Return nearest logic candidates for a point already on the 2D board plane."""
+        if self._row_coords is None or self._col_coords is None:
+            return []
+
+        px, py = float(board_x), float(board_y)
+        if self._landscape:
+            row_val, col_val = px, py
+        else:
+            row_val, col_val = py, px
+
+        indexed_candidates = self._nearest_indexed_holes(row_val, col_val, k=max(k * 3, 8))
+        if indexed_candidates:
+            ordered: List[Tuple[str, str]] = []
+            seen = set()
+            for item in indexed_candidates:
+                logic_loc = tuple(item["logic_loc"])
+                if logic_loc not in seen:
+                    seen.add(logic_loc)
+                    ordered.append(logic_loc)  # type: ignore[arg-type]
+                if len(ordered) >= k:
+                    break
+            if ordered:
+                return ordered
+
+        rail_tolerance = self._rail_tolerance
+        grid_min = float(self._col_coords[0]) if len(self._col_coords) > 0 else 0
+        grid_max = float(self._col_coords[-1]) if len(self._col_coords) > 0 else 0
+        grid_spacing = float(self._col_coords[1] - self._col_coords[0]) if len(self._col_coords) > 1 else 20
+        rail_rows = self._rail_row_coords if self._rail_row_coords is not None else self._row_coords
+
+        if self._top_rails and col_val < grid_min:
+            dist_to_grid = grid_min - col_val
+            if dist_to_grid >= grid_spacing:
+                closest_idx = int(np.argmin([abs(col_val - r) for r in self._top_rails]))
+                row_dists = np.abs(rail_rows - row_val)
+                top_rows = np.argsort(row_dists)[:k]
+                rail_name = "+" if closest_idx == 0 else "-"
+                return [(str(ri + 1), f"rail_top{rail_name}") for ri in top_rows]
+
+        if self._bot_rails and col_val > grid_max:
+            dist_to_grid = col_val - grid_max
+            if dist_to_grid >= grid_spacing:
+                closest_idx = int(np.argmin([abs(col_val - r) for r in self._bot_rails]))
+                row_dists = np.abs(rail_rows - row_val)
+                top_rows = np.argsort(row_dists)[:k]
+                rail_name = "+" if closest_idx == 0 else "-"
+                return [(str(ri + 1), f"rail_bot{rail_name}") for ri in top_rows]
+
+        for rails, prefix in [(self._top_rails, "rail_top"), (self._bot_rails, "rail_bot")]:
+            for i, rail_pos in enumerate(rails):
+                if abs(col_val - rail_pos) < rail_tolerance:
+                    row_dists = np.abs(rail_rows - row_val)
+                    top_rows = np.argsort(row_dists)[:k]
+                    rail_name = "+" if i == 0 else "-"
+                    return [(str(ri + 1), f"{prefix}{rail_name}") for ri in top_rows]
+
+        center_r, center_c = self._spatial_hash(row_val, col_val)
+        scored = []
+        radius = min(k, 3)
+        for dr in range(-radius, radius + 1):
+            for dc in range(-radius, radius + 1):
+                ri = center_r + dr
+                ci = center_c + dc
+                if ri < 0 or ri >= len(self._row_coords):
+                    continue
+                if ci < 0 or ci >= len(self._col_coords):
+                    continue
+                dist = float(
+                    (self._row_coords[ri] - row_val) ** 2
+                    + (self._col_coords[ci] - col_val) ** 2
+                )
+                row_name = str(ri + 1)
+                col_name = self._col_names[ci] if ci < len(self._col_names) else str(ci)
+                scored.append((dist, row_name, col_name))
+        scored.sort(key=lambda x: x[0])
+        return [(r, c) for _, r, c in scored[:k]]
+
     def frame_pixel_to_logic_candidates(
         self, px: float, py: float, k: int = 5,
     ) -> List[Tuple[str, str]]:
+        """Return nearest logic candidates for a source image pixel."""
+        board_x, board_y = self.frame_pixel_to_board_point(px, py)
+        return self.board_point_to_logic_candidates(board_x, board_y, k=k)
+
         """返回最近的 k 个逻辑坐标候选"""
         if self._row_coords is None or self._col_coords is None:
             return []
@@ -1183,6 +1275,50 @@ class BreadboardCalibrator:
 
         candidates = [(r, c) for _, r, c in scored[:k]]
         return candidates
+
+    def logic_to_board_point(self, logic_loc: Tuple[str, str]) -> Optional[Tuple[float, float]]:
+        """Map a logic location to its calibrated 2D board-plane point."""
+        if self._row_coords is None or self._col_coords is None:
+            return None
+        if len(logic_loc) < 2:
+            return None
+
+        row_raw, col_raw = str(logic_loc[0]).strip(), str(logic_loc[1]).strip()
+        try:
+            row_idx = int(row_raw) - 1
+        except ValueError:
+            return None
+        if row_idx < 0:
+            return None
+
+        col_lower = col_raw.lower()
+        rail_rows = self._rail_row_coords if self._rail_row_coords is not None else self._row_coords
+
+        if col_lower in {"rail_top+", "rail_top-", "lp", "ln"}:
+            rail_idx = 0 if col_lower in {"rail_top+", "lp"} else 1
+            if row_idx >= len(rail_rows) or rail_idx >= len(self._top_rails):
+                return None
+            row_val = float(rail_rows[row_idx])
+            col_val = float(self._top_rails[rail_idx])
+            return (row_val, col_val) if self._landscape else (col_val, row_val)
+
+        if col_lower in {"rail_bot+", "rail_bot-", "rp", "rn"}:
+            rail_idx = 0 if col_lower in {"rail_bot+", "rp"} else 1
+            if row_idx >= len(rail_rows) or rail_idx >= len(self._bot_rails):
+                return None
+            row_val = float(rail_rows[row_idx])
+            col_val = float(self._bot_rails[rail_idx])
+            return (row_val, col_val) if self._landscape else (col_val, row_val)
+
+        if col_lower not in self._col_names:
+            return None
+        col_idx = self._col_names.index(col_lower)
+        if row_idx >= len(self._row_coords) or col_idx >= len(self._col_coords):
+            return None
+
+        row_val = float(self._row_coords[row_idx])
+        col_val = float(self._col_coords[col_idx])
+        return (row_val, col_val) if self._landscape else (col_val, row_val)
 
     def get_roi_rect(
         self, image_shape: tuple, padding: int = 30,

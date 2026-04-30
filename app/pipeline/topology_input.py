@@ -224,6 +224,7 @@ def _pin_metadata_from_payload(pin: dict) -> dict:
         "candidate_hole_ids",
         "candidate_node_ids",
         "candidate_count",
+        "board_2d_point",
         "primary_visibility",
         "visible_view_ids",
         "observation_count",
