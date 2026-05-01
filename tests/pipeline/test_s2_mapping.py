@@ -466,3 +466,52 @@ class TestS2Mapping:
         assert side_obs["board_2d_point"] == pytest.approx([target_point[0], target_point[1]])
         assert side_obs["projection"]["used_3d"] is True
         assert side_obs["projection"]["method"] == "project_points_3d_to_top_2d"
+
+    def test_t5_10_board_point_candidates_prioritize_rail(self):
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+
+        assert calibrator._row_coords is not None
+        assert calibrator._col_coords is not None
+
+        calibrator._landscape = True
+        calibrator._rail_row_coords = calibrator._row_coords.copy()
+        calibrator._top_rails = [float(calibrator._col_coords[0] - 30.0), float(calibrator._col_coords[0] - 15.0)]
+        calibrator._bot_rails = [float(calibrator._col_coords[-1] + 15.0), float(calibrator._col_coords[-1] + 30.0)]
+        calibrator._rail_tolerance = 12.0
+
+        row_val = float(calibrator._row_coords[12])
+        col_val = float(calibrator._top_rails[0])
+
+        candidates = calibrator.board_point_to_logic_candidates(row_val, col_val, k=3)
+
+        assert candidates
+        assert candidates[0] == ("13", "rail_top+")
+
+    def test_t5_11_board_mask_alone_does_not_validate_inferred_hole(self):
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator._grid_matrix = np.array([[[50.0, 50.0]]], dtype=np.float32)
+        calibrator._top_rail_matrix = np.array([[[10.0, 10.0], [20.0, 10.0]]], dtype=np.float32)
+        calibrator._bot_rail_matrix = np.array([[[10.0, 90.0], [20.0, 90.0]]], dtype=np.float32)
+        calibrator._observed_main_mask = np.array([[False]], dtype=bool)
+        calibrator._observed_top_mask = np.array([[False, False]], dtype=bool)
+        calibrator._observed_bot_mask = np.array([[False, False]], dtype=bool)
+        calibrator._row_coords = np.array([50.0, 60.0], dtype=np.float32)
+        calibrator._col_coords = np.array([50.0, 60.0], dtype=np.float32)
+        calibrator.hole_centers = []
+        calibrator._board_mask = np.ones((120, 120), dtype=np.uint8) * 255
+
+        calibrator._compute_valid_hole_masks()
+
+        assert calibrator._valid_main_mask is not None
+        assert calibrator._valid_top_mask is not None
+        assert calibrator._valid_bot_mask is not None
+        assert bool(calibrator._valid_main_mask[0, 0]) is False
+        assert bool(calibrator._valid_top_mask[0, 0]) is False
+        assert bool(calibrator._valid_top_mask[0, 1]) is False
+        assert bool(calibrator._valid_bot_mask[0, 0]) is False
+        assert bool(calibrator._valid_bot_mask[0, 1]) is False

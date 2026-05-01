@@ -117,15 +117,26 @@ class BreadboardCalibrator:
             logger.warning(f"[Calibrator] Auto-calibrate failed: {e}")
             return False
 
-    def _detect_board_region(self, image: np.ndarray) -> Optional[np.ndarray]:
-        """检测面包板白色区域轮廓, 返回四角坐标"""
-        candidates = self._detect_board_region_candidates(image)
-        if not candidates:
-            return None
-        return candidates[0]
-
     def _detect_board_region_candidates(self, image: np.ndarray) -> List[np.ndarray]:
         """生成多个角点候选，后续通过 warp 后的孔洞质量选择最优。"""
+        def order_corners(pts: np.ndarray) -> np.ndarray:
+            s = pts.sum(axis=1)
+            d = np.diff(pts, axis=1).flatten()
+            return np.array([
+                pts[np.argmin(s)],
+                pts[np.argmin(d)],
+                pts[np.argmax(s)],
+                pts[np.argmax(d)],
+            ], dtype=np.float32)
+
+        def expand_quad(pts: np.ndarray, scale: float) -> np.ndarray:
+            center = pts.mean(axis=0, keepdims=True)
+            expanded = center + (pts - center) * float(scale)
+            h, w = image.shape[:2]
+            expanded[:, 0] = np.clip(expanded[:, 0], 0, w - 1)
+            expanded[:, 1] = np.clip(expanded[:, 1], 0, h - 1)
+            return expanded.astype(np.float32)
+
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         # 白色区域掩码
         mask = cv2.inRange(hsv, (0, 0, 160), (180, 50, 255))
@@ -146,16 +157,16 @@ class BreadboardCalibrator:
             epsilon = 0.02 * cv2.arcLength(contour, True)
             approx = cv2.approxPolyDP(contour, epsilon, True)
             if len(approx) == 4:
-                candidates.append(self._order_corners(approx.reshape(4, 2).astype(np.float32)))
+                candidates.append(order_corners(approx.reshape(4, 2).astype(np.float32)))
             rect = cv2.minAreaRect(contour)
-            candidates.append(self._order_corners(cv2.boxPoints(rect).astype(np.float32)))
+            candidates.append(order_corners(cv2.boxPoints(rect).astype(np.float32)))
 
         hole_pts = self._detect_holes_raw(image)
         if len(hole_pts) >= 80:
             rect = cv2.minAreaRect(np.array(hole_pts, dtype=np.float32))
             box = cv2.boxPoints(rect).astype(np.float32)
-            expanded = self._expand_quad(box, scale=1.18, image_shape=image.shape[:2])
-            candidates.append(self._order_corners(expanded))
+            expanded = expand_quad(box, scale=1.18)
+            candidates.append(order_corners(expanded))
 
         unique: List[np.ndarray] = []
         seen = set()
@@ -166,26 +177,6 @@ class BreadboardCalibrator:
             seen.add(key)
             unique.append(pts)
         return unique
-
-    @staticmethod
-    def _order_corners(pts: np.ndarray) -> np.ndarray:
-        s = pts.sum(axis=1)
-        d = np.diff(pts, axis=1).flatten()
-        return np.array([
-            pts[np.argmin(s)],
-            pts[np.argmin(d)],
-            pts[np.argmax(s)],
-            pts[np.argmax(d)],
-        ], dtype=np.float32)
-
-    @staticmethod
-    def _expand_quad(pts: np.ndarray, scale: float, image_shape: Tuple[int, int]) -> np.ndarray:
-        center = pts.mean(axis=0, keepdims=True)
-        expanded = center + (pts - center) * float(scale)
-        h, w = image_shape
-        expanded[:, 0] = np.clip(expanded[:, 0], 0, w - 1)
-        expanded[:, 1] = np.clip(expanded[:, 1], 0, h - 1)
-        return expanded.astype(np.float32)
 
     def warp(self, image: np.ndarray) -> np.ndarray:
         """透视变换"""
@@ -600,44 +591,23 @@ class BreadboardCalibrator:
             d = np.sqrt(np.sum((hole_arr - point.reshape(1, 2)) ** 2, axis=1))
             return float(np.min(d))
 
-        board_mask = getattr(self, "_board_mask", None)
-        use_mask = isinstance(board_mask, np.ndarray) and board_mask.ndim == 2
-        if use_mask:
-            mask_h, mask_w = int(board_mask.shape[0]), int(board_mask.shape[1])
-
-            def inside_mask(point: np.ndarray, pad: int = 2) -> bool:
-                x = int(round(float(point[0])))
-                y = int(round(float(point[1])))
-                if x < 0 or y < 0 or x >= mask_w or y >= mask_h:
-                    return False
-                x1 = max(0, x - pad)
-                y1 = max(0, y - pad)
-                x2 = min(mask_w, x + pad + 1)
-                y2 = min(mask_h, y + pad + 1)
-                patch = board_mask[y1:y2, x1:x2]
-                return bool(patch.size > 0 and int(np.max(patch)) > 0)
-        else:
-
-            def inside_mask(point: np.ndarray, pad: int = 2) -> bool:  # type: ignore[no-redef]
-                return False
-
         for row_idx in range(self._grid_matrix.shape[0]):
             for col_idx in range(self._grid_matrix.shape[1]):
                 if self._valid_main_mask[row_idx, col_idx]:
                     continue
                 point = self._grid_matrix[row_idx, col_idx]
-                if (use_mask and inside_mask(point, pad=2)) or nearest_dist(point) <= main_threshold:
+                if nearest_dist(point) <= main_threshold:
                     self._valid_main_mask[row_idx, col_idx] = True
 
         for row_idx in range(self._top_rail_matrix.shape[0]):
             for rail_idx in range(self._top_rail_matrix.shape[1]):
                 if not self._valid_top_mask[row_idx, rail_idx]:
                     point = self._top_rail_matrix[row_idx, rail_idx]
-                    if (use_mask and inside_mask(point, pad=2)) or nearest_dist(point) <= rail_threshold:
+                    if nearest_dist(point) <= rail_threshold:
                         self._valid_top_mask[row_idx, rail_idx] = True
                 if not self._valid_bot_mask[row_idx, rail_idx]:
                     point = self._bot_rail_matrix[row_idx, rail_idx]
-                    if (use_mask and inside_mask(point, pad=2)) or nearest_dist(point) <= rail_threshold:
+                    if nearest_dist(point) <= rail_threshold:
                         self._valid_bot_mask[row_idx, rail_idx] = True
 
     @staticmethod
@@ -1026,76 +996,8 @@ class BreadboardCalibrator:
         self, px: float, py: float,
     ) -> Optional[Tuple[str, str]]:
         """像素坐标 → 逻辑坐标 (行号, 列名)"""
-        if self._row_coords is None or self._col_coords is None:
-            return None
-
-        # 如有透视矩阵, 先变换到校正坐标
-        if self._perspective_matrix is not None:
-            pt = np.array([[[px, py]]], dtype=np.float32)
-            transformed = cv2.perspectiveTransform(pt, self._perspective_matrix)
-            px, py = transformed[0, 0]
-
-        # 根据朝向确定行/列映射轴
-        if self._landscape:
-            row_val, col_val = px, py  # 行沿X, 列沿Y
-        else:
-            row_val, col_val = py, px  # 行沿Y, 列沿X (默认)
-
-        nearest = self._nearest_indexed_holes(row_val, col_val, k=1)
-        if nearest:
-            return tuple(nearest[0]["logic_loc"])  # type: ignore[return-value]
-
-        # 检查是否落入电轨区域 (包括超出面包板范围的引脚)
-        rail_tolerance = self._rail_tolerance
-        grid_min = float(self._col_coords[0]) if len(self._col_coords) > 0 else 0
-        grid_max = float(self._col_coords[-1]) if len(self._col_coords) > 0 else 0
-        rail_rows = self._rail_row_coords if self._rail_row_coords is not None else self._row_coords
-
-        # 超出主 grid 范围的引脚 → 比较到电轨和到主 grid 的距离
-        if self._top_rails and col_val < grid_min:
-            dist_to_grid = grid_min - col_val
-            closest_rail_dist = min(abs(col_val - r) for r in self._top_rails)
-            # 如果到 grid 的距离小于主 grid 间距 → 映射到 grid (可能是 bbox 估计偏移)
-            grid_spacing = float(self._col_coords[1] - self._col_coords[0]) if len(self._col_coords) > 1 else 20
-            if dist_to_grid < grid_spacing:
-                # 离 grid 够近, 映射到 grid 而非 rail
-                pass
-            else:
-                closest_rail_idx = int(np.argmin([abs(col_val - r) for r in self._top_rails]))
-                row_idx = int(np.argmin(np.abs(rail_rows - row_val)))
-                rail_name = "+" if closest_rail_idx == 0 else "-"
-                return (str(row_idx + 1), f"rail_top{rail_name}")
-
-        if self._bot_rails and col_val > grid_max:
-            dist_to_grid = col_val - grid_max
-            grid_spacing = float(self._col_coords[-1] - self._col_coords[-2]) if len(self._col_coords) > 1 else 20
-            if dist_to_grid < grid_spacing:
-                pass  # 离 grid 够近
-            else:
-                closest_rail_idx = int(np.argmin([abs(col_val - r) for r in self._bot_rails]))
-                row_idx = int(np.argmin(np.abs(rail_rows - row_val)))
-                rail_name = "+" if closest_rail_idx == 0 else "-"
-                return (str(row_idx + 1), f"rail_bot{rail_name}")
-
-        for i, rail_pos in enumerate(self._top_rails):
-            if abs(col_val - rail_pos) < rail_tolerance:
-                row_idx = int(np.argmin(np.abs(rail_rows - row_val)))
-                rail_name = "+" if i == 0 else "-"
-                return (str(row_idx + 1), f"rail_top{rail_name}")
-
-        for i, rail_pos in enumerate(self._bot_rails):
-            if abs(col_val - rail_pos) < rail_tolerance:
-                row_idx = int(np.argmin(np.abs(rail_rows - row_val)))
-                rail_name = "+" if i == 0 else "-"
-                return (str(row_idx + 1), f"rail_bot{rail_name}")
-
-        # 主 grid 区域 — 空间哈希 O(1) 查找
-        row_idx, col_idx = self._spatial_hash(row_val, col_val)
-
-        row_name = str(row_idx + 1)
-        col_name = self._col_names[col_idx] if col_idx < len(self._col_names) else str(col_idx)
-
-        return (row_name, col_name)
+        board_x, board_y = self.frame_pixel_to_board_point(px, py)
+        return self.board_point_to_logic(board_x, board_y)
 
     def frame_pixel_to_board_point(self, px: float, py: float) -> Tuple[float, float]:
         """Map a source image pixel into the calibrated 2D board plane."""
@@ -1109,28 +1011,10 @@ class BreadboardCalibrator:
         self, board_x: float, board_y: float, k: int = 5,
     ) -> List[Tuple[str, str]]:
         """Return nearest logic candidates for a point already on the 2D board plane."""
-        if self._row_coords is None or self._col_coords is None:
+        board_values = self._board_values(board_x, board_y)
+        if board_values is None:
             return []
-
-        px, py = float(board_x), float(board_y)
-        if self._landscape:
-            row_val, col_val = px, py
-        else:
-            row_val, col_val = py, px
-
-        indexed_candidates = self._nearest_indexed_holes(row_val, col_val, k=max(k * 3, 8))
-        if indexed_candidates:
-            ordered: List[Tuple[str, str]] = []
-            seen = set()
-            for item in indexed_candidates:
-                logic_loc = tuple(item["logic_loc"])
-                if logic_loc not in seen:
-                    seen.add(logic_loc)
-                    ordered.append(logic_loc)  # type: ignore[arg-type]
-                if len(ordered) >= k:
-                    break
-            if ordered:
-                return ordered
+        row_val, col_val = board_values
 
         rail_tolerance = self._rail_tolerance
         grid_min = float(self._col_coords[0]) if len(self._col_coords) > 0 else 0
@@ -1163,6 +1047,20 @@ class BreadboardCalibrator:
                     top_rows = np.argsort(row_dists)[:k]
                     rail_name = "+" if i == 0 else "-"
                     return [(str(ri + 1), f"{prefix}{rail_name}") for ri in top_rows]
+
+        indexed_candidates = self._nearest_indexed_holes(row_val, col_val, k=max(k * 3, 8))
+        if indexed_candidates:
+            ordered: List[Tuple[str, str]] = []
+            seen = set()
+            for item in indexed_candidates:
+                logic_loc = tuple(item["logic_loc"])
+                if logic_loc not in seen:
+                    seen.add(logic_loc)
+                    ordered.append(logic_loc)  # type: ignore[arg-type]
+                if len(ordered) >= k:
+                    break
+            if ordered:
+                return ordered
 
         center_r, center_c = self._spatial_hash(row_val, col_val)
         scored = []
@@ -1185,96 +1083,19 @@ class BreadboardCalibrator:
         scored.sort(key=lambda x: x[0])
         return [(r, c) for _, r, c in scored[:k]]
 
+    def board_point_to_logic(
+        self, board_x: float, board_y: float,
+    ) -> Optional[Tuple[str, str]]:
+        """Map a calibrated 2D board-plane point to one logic location."""
+        candidates = self.board_point_to_logic_candidates(board_x, board_y, k=1)
+        return candidates[0] if candidates else None
+
     def frame_pixel_to_logic_candidates(
         self, px: float, py: float, k: int = 5,
     ) -> List[Tuple[str, str]]:
         """Return nearest logic candidates for a source image pixel."""
         board_x, board_y = self.frame_pixel_to_board_point(px, py)
         return self.board_point_to_logic_candidates(board_x, board_y, k=k)
-
-        """返回最近的 k 个逻辑坐标候选"""
-        if self._row_coords is None or self._col_coords is None:
-            return []
-
-        if self._perspective_matrix is not None:
-            pt = np.array([[[px, py]]], dtype=np.float32)
-            transformed = cv2.perspectiveTransform(pt, self._perspective_matrix)
-            px, py = transformed[0, 0]
-
-        if self._landscape:
-            row_val, col_val = px, py
-        else:
-            row_val, col_val = py, px
-
-        indexed_candidates = self._nearest_indexed_holes(row_val, col_val, k=max(k * 3, 8))
-        if indexed_candidates:
-            ordered: List[Tuple[str, str]] = []
-            seen = set()
-            for item in indexed_candidates:
-                logic_loc = tuple(item["logic_loc"])
-                if logic_loc not in seen:
-                    seen.add(logic_loc)
-                    ordered.append(logic_loc)  # type: ignore[arg-type]
-                if len(ordered) >= k:
-                    break
-            if ordered:
-                return ordered
-
-        # 先检查电轨 (包括超出 grid 范围的引脚)
-        rail_tolerance = self._rail_tolerance
-        grid_min = float(self._col_coords[0]) if len(self._col_coords) > 0 else 0
-        grid_max = float(self._col_coords[-1]) if len(self._col_coords) > 0 else 0
-        grid_spacing = float(self._col_coords[1] - self._col_coords[0]) if len(self._col_coords) > 1 else 20
-        rail_rows = self._rail_row_coords if self._rail_row_coords is not None else self._row_coords
-
-        # 超出范围但离 grid 近的 → 映射到 grid, 离 grid 远的 → 映射到 rail
-        if self._top_rails and col_val < grid_min:
-            dist_to_grid = grid_min - col_val
-            if dist_to_grid >= grid_spacing:
-                closest_idx = int(np.argmin([abs(col_val - r) for r in self._top_rails]))
-                row_dists = np.abs(rail_rows - row_val)
-                top_rows = np.argsort(row_dists)[:k]
-                rail_name = "+" if closest_idx == 0 else "-"
-                return [(str(ri + 1), f"rail_top{rail_name}") for ri in top_rows]
-
-        if self._bot_rails and col_val > grid_max:
-            dist_to_grid = col_val - grid_max
-            if dist_to_grid >= grid_spacing:
-                closest_idx = int(np.argmin([abs(col_val - r) for r in self._bot_rails]))
-                row_dists = np.abs(rail_rows - row_val)
-                top_rows = np.argsort(row_dists)[:k]
-                rail_name = "+" if closest_idx == 0 else "-"
-                return [(str(ri + 1), f"rail_bot{rail_name}") for ri in top_rows]
-
-        for rails, prefix in [(self._top_rails, "rail_top"), (self._bot_rails, "rail_bot")]:
-            for i, rail_pos in enumerate(rails):
-                if abs(col_val - rail_pos) < rail_tolerance:
-                    row_dists = np.abs(rail_rows - row_val)
-                    top_rows = np.argsort(row_dists)[:k]
-                    rail_name = "+" if i == 0 else "-"
-                    return [(str(ri + 1), f"{prefix}{rail_name}") for ri in top_rows]
-
-        # 空间哈希定位中心 + 邻域展开 (O(k²) 代替 O(N·k²))
-        center_r, center_c = self._spatial_hash(row_val, col_val)
-        scored = []
-        radius = min(k, 3)
-        for dr in range(-radius, radius + 1):
-            for dc in range(-radius, radius + 1):
-                ri = center_r + dr
-                ci = center_c + dc
-                if ri < 0 or ri >= len(self._row_coords):
-                    continue
-                if ci < 0 or ci >= len(self._col_coords):
-                    continue
-                dist = float((self._row_coords[ri] - row_val) ** 2 +
-                             (self._col_coords[ci] - col_val) ** 2)
-                row_name = str(ri + 1)
-                col_name = self._col_names[ci] if ci < len(self._col_names) else str(ci)
-                scored.append((dist, row_name, col_name))
-        scored.sort(key=lambda x: x[0])
-
-        candidates = [(r, c) for _, r, c in scored[:k]]
-        return candidates
 
     def logic_to_board_point(self, logic_loc: Tuple[str, str]) -> Optional[Tuple[float, float]]:
         """Map a logic location to its calibrated 2D board-plane point."""
@@ -1319,6 +1140,14 @@ class BreadboardCalibrator:
         row_val = float(self._row_coords[row_idx])
         col_val = float(self._col_coords[col_idx])
         return (row_val, col_val) if self._landscape else (col_val, row_val)
+
+    def _board_values(self, board_x: float, board_y: float) -> Optional[Tuple[float, float]]:
+        if self._row_coords is None or self._col_coords is None:
+            return None
+        px, py = float(board_x), float(board_y)
+        if self._landscape:
+            return (px, py)
+        return (py, px)
 
     def get_roi_rect(
         self, image_shape: tuple, padding: int = 30,
