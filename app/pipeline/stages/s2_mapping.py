@@ -44,6 +44,8 @@ def run_mapping(
         decode_meta = decode_summary(decoded)
         _ensure_calibrated(calibrator, decoded, image_shape)
         calibration_mode = _calibration_mode(calibrator)
+    elif calibrator.is_grid_ready:
+        calibration_mode = _calibration_mode(calibrator)
     elif image_shape[0] > 0 and image_shape[1] > 0:
         calibrator.build_synthetic_grid(image_shape)
         calibration_mode = _calibration_mode(calibrator)
@@ -474,6 +476,8 @@ def _roi_source_weight(source: str) -> float:
 
 
 def _calibration_mode(calibrator: BreadboardCalibrator) -> str:
+    if getattr(calibrator, "_detected_hole_map", False):
+        return "detected_hole_map"
     if getattr(calibrator, "_synthetic_grid", False):
         return "synthetic_fallback"
     if calibrator.is_grid_ready:

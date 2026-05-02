@@ -515,3 +515,46 @@ class TestS2Mapping:
         assert bool(calibrator._valid_top_mask[0, 1]) is False
         assert bool(calibrator._valid_bot_mask[0, 0]) is False
         assert bool(calibrator._valid_bot_mask[0, 1]) is False
+
+    def test_t5_12_detected_holes_json_maps_original_pixels(self):
+        from pathlib import Path
+
+        from app.pipeline.stages.s2_mapping import run_mapping
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        assert calibrator.load_detected_holes_json(
+            Path("bread_detect/outputs/bread_4_white_holes.json")
+        )
+
+        candidates = calibrator.frame_pixel_to_logic_candidates(126.94, 549.51, k=3)
+        assert candidates[0] == ("1", "a")
+
+        result = run_mapping(
+            components=[
+                {
+                    "component_id": "R1",
+                    "component_type": "Resistor",
+                    "pins": [
+                        {
+                            "pin_id": 1,
+                            "pin_name": "pin1",
+                            "keypoints_by_view": {"top": [126.94, 549.51]},
+                            "visibility_by_view": {"top": 2},
+                            "score_by_view": {"top": 0.95},
+                            "source_by_view": {"top": "model"},
+                            "confidence": 0.95,
+                            "source": "model",
+                        }
+                    ],
+                }
+            ],
+            calibrator=calibrator,
+            image_shape=(0, 0),
+            images_b64=None,
+        )
+
+        pin = result["components"][0]["pins"][0]
+        assert result["calibration"]["mode"] == "detected_hole_map"
+        assert pin["hole_id"] == "A1"
+        assert pin["candidate_hole_ids"][0] == "A1"

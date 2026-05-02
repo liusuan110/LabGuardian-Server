@@ -7,7 +7,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
@@ -69,6 +71,7 @@ class BreadboardCalibrator:
         self._valid_main_mask: Optional[np.ndarray] = None
         self._valid_top_mask: Optional[np.ndarray] = None
         self._valid_bot_mask: Optional[np.ndarray] = None
+        self._detected_hole_map = False
 
     def calibrate(self, corners: np.ndarray):
         """用四角坐标进行透视变换校准"""
@@ -92,6 +95,7 @@ class BreadboardCalibrator:
         """自动校准: 检测面包板区域 + 孔洞"""
         try:
             self._synthetic_grid = False
+            self._detected_hole_map = False
             candidates = self._detect_board_region_candidates(image)
             if not candidates:
                 return False
@@ -1207,6 +1211,291 @@ class BreadboardCalibrator:
         """公共接口: 根据图像尺寸生成合成面包板网格"""
         self._build_synthetic_grid(image_shape)
 
+    def load_detected_holes_json(self, path: str | Path) -> bool:
+        """Load a bread_detect holes.json file as the calibrated board grid."""
+        with Path(path).open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return self.load_detected_holes(payload)
+
+    def load_detected_holes(self, payload: Dict[str, Any]) -> bool:
+        """Load detected breadboard holes exported by bread_detect.
+
+        bread_detect names terminal holes as A00..J62. The pipeline's legacy
+        logic coordinate is (numeric row along the board, column name), so
+        A00 becomes ("1", "a"), and BoardSchema resolves that to hole_id A1.
+        """
+        holes = payload.get("holes") or []
+        if not holes:
+            return False
+
+        def as_float(item: Dict[str, Any], key: str) -> Optional[float]:
+            value = item.get(key)
+            if value is None:
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        def board_point(item: Dict[str, Any]) -> Optional[Tuple[float, float]]:
+            x = as_float(item, "x_warp")
+            y = as_float(item, "y_warp")
+            if x is None or y is None:
+                x = as_float(item, "x_image")
+                y = as_float(item, "y_image")
+            if x is None or y is None:
+                return None
+            return (x, y)
+
+        terminal_rows = set("ABCDEFGHIJ")
+        main_items = [
+            item
+            for item in holes
+            if str(item.get("row") or "").upper() in terminal_rows
+        ]
+        if not main_items:
+            return False
+
+        main_cols = [
+            int(item.get("column"))
+            for item in main_items
+            if item.get("column") is not None
+        ]
+        if not main_cols:
+            return False
+        row_count = max(main_cols) + 1
+        col_names = list("abcdefghij")
+        main_grid = np.full((row_count, len(col_names), 2), np.nan, dtype=np.float32)
+        observed_main = np.zeros((row_count, len(col_names)), dtype=bool)
+
+        for item in main_items:
+            point = board_point(item)
+            if point is None:
+                continue
+            row_letter = str(item.get("row") or "").strip().lower()
+            if row_letter not in col_names:
+                continue
+            try:
+                row_idx = int(item.get("column"))
+            except (TypeError, ValueError):
+                continue
+            if row_idx < 0 or row_idx >= row_count:
+                continue
+            col_idx = col_names.index(row_letter)
+            main_grid[row_idx, col_idx] = point
+            observed_main[row_idx, col_idx] = True
+
+        if not observed_main.any():
+            return False
+
+        row_coords = self._median_axis_from_grid(
+            main_grid[:, :, 0],
+            observed_main,
+            axis=1,
+        )
+        col_coords = self._median_axis_from_grid(
+            main_grid[:, :, 1],
+            observed_main,
+            axis=0,
+        )
+        if row_coords is None or col_coords is None:
+            return False
+
+        for row_idx in range(row_count):
+            for col_idx in range(len(col_names)):
+                if not observed_main[row_idx, col_idx]:
+                    main_grid[row_idx, col_idx] = [row_coords[row_idx], col_coords[col_idx]]
+
+        rail_items = [
+            item
+            for item in holes
+            if str(item.get("row") or "").lower()
+            in {"top_pos", "top_neg", "bottom_pos", "bottom_neg"}
+        ]
+        rail_cols = [
+            int(item.get("column"))
+            for item in rail_items
+            if item.get("column") is not None
+        ]
+        rail_count = max(rail_cols) + 1 if rail_cols else self._expected_rail_rows
+        top_grid = np.full((rail_count, 2, 2), np.nan, dtype=np.float32)
+        bot_grid = np.full((rail_count, 2, 2), np.nan, dtype=np.float32)
+        observed_top = np.zeros((rail_count, 2), dtype=bool)
+        observed_bot = np.zeros((rail_count, 2), dtype=bool)
+        rail_name_to_target = {
+            "top_pos": (top_grid, observed_top, 0),
+            "top_neg": (top_grid, observed_top, 1),
+            "bottom_pos": (bot_grid, observed_bot, 0),
+            "bottom_neg": (bot_grid, observed_bot, 1),
+        }
+
+        for item in rail_items:
+            point = board_point(item)
+            if point is None:
+                continue
+            target = rail_name_to_target.get(str(item.get("row") or "").lower())
+            if target is None:
+                continue
+            try:
+                row_idx = int(item.get("column"))
+            except (TypeError, ValueError):
+                continue
+            if row_idx < 0 or row_idx >= rail_count:
+                continue
+            grid, observed, rail_idx = target
+            grid[row_idx, rail_idx] = point
+            observed[row_idx, rail_idx] = True
+
+        rail_row_coords = None
+        top_rails = None
+        bot_rails = None
+        if rail_items and (observed_top.any() or observed_bot.any()):
+            rail_x_values = np.concatenate(
+                [top_grid[:, :, 0], bot_grid[:, :, 0]],
+                axis=1,
+            )
+            rail_observed = np.concatenate([observed_top, observed_bot], axis=1)
+            rail_row_coords = self._median_axis_from_grid(
+                rail_x_values,
+                rail_observed,
+                axis=1,
+            )
+            if rail_row_coords is None:
+                rail_row_coords = np.linspace(
+                    float(row_coords[0]),
+                    float(row_coords[-1]),
+                    rail_count,
+                ).astype(np.float32)
+
+            top_rails = self._rail_levels_from_grid(top_grid, observed_top)
+            bot_rails = self._rail_levels_from_grid(bot_grid, observed_bot)
+            for row_idx in range(rail_count):
+                for rail_idx in range(2):
+                    if top_rails is not None and not observed_top[row_idx, rail_idx]:
+                        top_grid[row_idx, rail_idx] = [
+                            rail_row_coords[row_idx],
+                            top_rails[rail_idx],
+                        ]
+                    if bot_rails is not None and not observed_bot[row_idx, rail_idx]:
+                        bot_grid[row_idx, rail_idx] = [
+                            rail_row_coords[row_idx],
+                            bot_rails[rail_idx],
+                        ]
+
+        self.rows = row_count
+        self._expected_rows = row_count
+        self._expected_rail_rows = rail_count
+        self.total_cols = len(col_names)
+        self._col_names = col_names
+        self._landscape = True
+        self._synthetic_grid = False
+        self._detected_hole_map = True
+        self.is_calibrated = True
+        self._row_coords = row_coords.astype(np.float32)
+        self._col_coords = col_coords.astype(np.float32)
+        self._grid_matrix = main_grid.astype(np.float32)
+        self._observed_main_mask = observed_main
+        self._valid_main_mask = observed_main.copy()
+        self._rail_row_coords = (
+            rail_row_coords.astype(np.float32)
+            if rail_row_coords is not None
+            else None
+        )
+        self._top_rails = [float(v) for v in top_rails] if top_rails is not None else []
+        self._bot_rails = [float(v) for v in bot_rails] if bot_rails is not None else []
+        self._top_rail_matrix = (
+            top_grid.astype(np.float32)
+            if top_rails is not None
+            else None
+        )
+        self._bot_rail_matrix = (
+            bot_grid.astype(np.float32)
+            if bot_rails is not None
+            else None
+        )
+        self._observed_top_mask = observed_top if top_rails is not None else None
+        self._observed_bot_mask = observed_bot if bot_rails is not None else None
+        self._valid_top_mask = observed_top.copy() if top_rails is not None else None
+        self._valid_bot_mask = observed_bot.copy() if bot_rails is not None else None
+
+        self.hole_centers = []
+        for item in holes:
+            point = board_point(item)
+            if point is not None:
+                self.hole_centers.append(tuple(map(float, point)))
+
+        warped_size = payload.get("warped_size") or {}
+        quad = payload.get("quad_tl_tr_br_bl")
+        if quad and warped_size.get("width") and warped_size.get("height"):
+            try:
+                src = np.asarray(quad, dtype=np.float32)
+                width = float(warped_size["width"])
+                height = float(warped_size["height"])
+                dst = np.asarray(
+                    [
+                        [0.0, 0.0],
+                        [width, 0.0],
+                        [width, height],
+                        [0.0, height],
+                    ],
+                    dtype=np.float32,
+                )
+                self._perspective_matrix = cv2.getPerspectiveTransform(src, dst)
+                self._inv_perspective = cv2.getPerspectiveTransform(dst, src)
+            except Exception as exc:
+                logger.warning(
+                    "[Calibrator] Could not load detected hole homography: %s",
+                    exc,
+                )
+                self._perspective_matrix = None
+                self._inv_perspective = None
+        else:
+            self._perspective_matrix = None
+            self._inv_perspective = None
+
+        self._compute_grid_params()
+        logger.info(
+            "[Calibrator] Loaded detected hole map: main=%d×%d, rails=%d",
+            row_count,
+            len(col_names),
+            rail_count,
+        )
+        return self.is_grid_ready
+
+    @staticmethod
+    def _median_axis_from_grid(
+        values: np.ndarray,
+        observed: np.ndarray,
+        *,
+        axis: int,
+    ) -> Optional[np.ndarray]:
+        count = values.shape[0] if axis == 1 else values.shape[1]
+        centers: List[float] = []
+        for idx in range(count):
+            mask = observed[idx, :] if axis == 1 else observed[:, idx]
+            vals = values[idx, :] if axis == 1 else values[:, idx]
+            finite = vals[mask & np.isfinite(vals)]
+            if len(finite) == 0:
+                return None
+            centers.append(float(np.median(finite)))
+        return np.asarray(centers, dtype=np.float32)
+
+    @staticmethod
+    def _rail_levels_from_grid(
+        grid: np.ndarray,
+        observed: np.ndarray,
+    ) -> Optional[np.ndarray]:
+        if not observed.any():
+            return None
+        levels: List[float] = []
+        for rail_idx in range(grid.shape[1]):
+            vals = grid[:, rail_idx, 1]
+            mask = observed[:, rail_idx] & np.isfinite(vals)
+            if not mask.any():
+                return None
+            levels.append(float(np.median(vals[mask])))
+        return np.asarray(levels, dtype=np.float32)
+
     def ensure_calibrated(self, image: np.ndarray) -> bool:
         """确保校准器已校准: 优先使用板区透视校准, 峰值法作为兜底"""
         if self.is_grid_ready:
@@ -1244,6 +1533,7 @@ class BreadboardCalibrator:
         self._img_h = h
         self._img_w = w
         self._synthetic_grid = True
+        self._detected_hole_map = False
         # 清除可能的部分校准状态
         self._perspective_matrix = None
         self._inv_perspective = None
