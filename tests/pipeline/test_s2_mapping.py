@@ -558,3 +558,28 @@ class TestS2Mapping:
         assert result["calibration"]["mode"] == "detected_hole_map"
         assert pin["hole_id"] == "A1"
         assert pin["candidate_hole_ids"][0] == "A1"
+
+    def test_t5_13_exact_board_point_returns_single_main_candidate(self):
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+
+        assert calibrator._row_coords is not None
+        assert calibrator._col_coords is not None
+
+        nr = len(calibrator._row_coords)
+        nc = len(calibrator._col_coords)
+        calibrator._landscape = True
+        calibrator._grid_matrix = np.zeros((nr, nc, 2), dtype=np.float32)
+        for ri in range(nr):
+            for ci in range(nc):
+                calibrator._grid_matrix[ri, ci] = [calibrator._row_coords[ri], calibrator._col_coords[ci]]
+        calibrator._valid_main_mask = np.ones((nr, nc), dtype=bool)
+
+        row_val = float(calibrator._row_coords[12])
+        col_val = float(calibrator._col_coords[1])
+
+        candidates = calibrator.board_point_to_logic_candidates(row_val, col_val, k=5)
+
+        assert candidates == [("13", "b")]
