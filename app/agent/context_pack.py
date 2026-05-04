@@ -39,13 +39,13 @@ def classify_error_family(evidence: RuntimeEvidence) -> ErrorFamily:
     return "unknown"
 
 
-def build_context_pack(evidence: RuntimeEvidence, *, query: str = "") -> ContextPack:
+def build_context_pack(evidence: RuntimeEvidence, *, query: str = "", user_message: str = "") -> ContextPack:
     family = classify_error_family(evidence)
     pack = ContextPack(
         pack_id=f"pcm_{family}_v1",
         error_family=family,
         risk_level=evidence.risk_level,
-        pushed_facts=_build_pushed_facts(evidence=evidence, family=family, query=query),
+        pushed_facts=_build_pushed_facts(evidence=evidence, family=family, query=query, user_message=user_message),
         allowed_tools=_allowed_tools_for_family(family),
         prompt_rules=_prompt_rules_for_family(family),
         citation_requirements=[
@@ -103,6 +103,7 @@ def _build_pushed_facts(
     evidence: RuntimeEvidence,
     family: ErrorFamily,
     query: str,
+    user_message: str,
 ) -> list[str]:
     facts = [
         f"station_id={evidence.station_id}",
@@ -113,7 +114,9 @@ def _build_pushed_facts(
         facts.append("error_codes=" + ",".join(evidence.error_codes))
     if evidence.error_tags:
         facts.append("error_tags=" + ",".join(evidence.error_tags))
-    if query:
+    if user_message:
+        facts.append(f"user_message={user_message}")
+    elif query:
         facts.append(f"user_query={query}")
     for finding in evidence.findings[:3]:
         parts = [finding.error_code]

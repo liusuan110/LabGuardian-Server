@@ -129,6 +129,8 @@ class DiagnosticState(BaseModel):
     """LangGraph state object for deterministic PCM diagnostic flow."""
 
     query: str = ""
+    user_message: str = ""
+    chat_history: list[dict[str, str]] = Field(default_factory=list)
     top_k: int = 5
     runtime_evidence: RuntimeEvidence
     error_family: ErrorFamily = "unknown"

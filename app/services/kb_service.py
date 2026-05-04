@@ -7,13 +7,11 @@ import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.vectorstores import Chroma
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+if TYPE_CHECKING:
+    from langchain_community.vectorstores import Chroma
+    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 from app.core.config import settings
 from app.schemas.angnt import AngntCitation, AngntEvidence
@@ -45,6 +43,11 @@ class KbService:
         self._chroma_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_embeddings(self) -> OpenAIEmbeddings:
+        try:
+            from langchain_openai import OpenAIEmbeddings
+        except ImportError as exc:
+            raise RuntimeError("langchain-openai is required for KB embeddings") from exc
+
         if not settings.LLM_API_KEY:
             raise RuntimeError("LLM_API_KEY is required for embeddings")
         return OpenAIEmbeddings(
@@ -54,6 +57,11 @@ class KbService:
         )
 
     def _get_vectorstore(self) -> Chroma:
+        try:
+            from langchain_community.vectorstores import Chroma
+        except ImportError as exc:
+            raise RuntimeError("langchain-community is required for KB vector search") from exc
+
         if self._vs is not None:
             return self._vs
         with self._lock:
@@ -131,6 +139,12 @@ class KbService:
             pdf_path = self._docs_dir / f"{doc_id}_{safe_name}"
             pdf_path.write_bytes(content)
 
+        try:
+            from langchain_community.document_loaders import PyPDFLoader
+            from langchain_text_splitters import RecursiveCharacterTextSplitter
+        except ImportError as exc:
+            raise RuntimeError("langchain-community and langchain-text-splitters are required for PDF ingestion") from exc
+
         loader = PyPDFLoader(str(pdf_path))
         pages = loader.load()
 
@@ -205,6 +219,11 @@ class KbService:
         return results
 
     def _get_llm(self) -> ChatOpenAI:
+        try:
+            from langchain_openai import ChatOpenAI
+        except ImportError as exc:
+            raise RuntimeError("langchain-openai is required for KB answering") from exc
+
         if not settings.LLM_API_KEY or not settings.LLM_MODEL:
             raise RuntimeError("LLM_API_KEY and LLM_MODEL are required for answering")
         return ChatOpenAI(
@@ -255,6 +274,8 @@ class KbService:
             )
 
         try:
+            from langchain_core.messages import HumanMessage, SystemMessage
+
             llm = self._get_llm()
             sys = SystemMessage(
                 content=(

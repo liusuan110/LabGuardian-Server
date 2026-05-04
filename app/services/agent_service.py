@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.agent.answering import (
+    _build_follow_up_suggestions,
     build_diagnostic_citations,
     build_diagnostic_evidence,
 )
@@ -23,6 +24,7 @@ from app.agent.tools import ToolResult
 from app.schemas.angnt import (
     AngntAction,
     AngntAskRequest,
+    AngntChatDebug,
     AngntJobResult,
     AngntJobState,
     AngntJobStatusResponse,
@@ -56,7 +58,7 @@ class AgentService:
         self._station_memory: dict[str, list[AgentMemoryRecord]] = {}
 
     def submit(self, request: AngntAskRequest, classroom: ClassroomState) -> AngntJobStatusResponse:
-        job_id = str(uuid.uuid4())
+        job_id = request.job_id or str(uuid.uuid4())
         created_at = time.time()
 
         with self._lock:
@@ -128,7 +130,7 @@ class AgentService:
         base_context = self._rag_service.build_context(
             classroom=classroom,
             station_id=request.station_id,
-            query=request.query,
+            query=request.user_message or request.query,
             top_k=request.top_k,
         )
         station = base_context["station"]
@@ -138,7 +140,7 @@ class AgentService:
 
         if request.mode == "rag":
             answer, kb_citations, kb_evidence, used = self._rag_service.answer_with_kb(
-                query=request.query,
+                query=request.user_message or request.query,
                 top_k=request.top_k,
             )
             citations = list(kb_citations) + list(base_context.get("citations", []))
@@ -149,7 +151,7 @@ class AgentService:
             answer = self._build_answer(
                 station_id=request.station_id,
                 mode=request.mode,
-                query=request.query,
+                query=request.user_message or request.query,
                 risk_level=risk_level,
                 diagnostics=diagnostics,
                 risk_reasons=risk_reasons,
@@ -180,11 +182,34 @@ class AgentService:
         created_at: float,
     ) -> AngntJobResult:
         stations = classroom.get_all_stations()
+        station_data = stations.get(request.station_id, {})
+
+        # 如果 classroom 中没有该 station，尝试用 diagnosis_context 兜底
+        if not station_data and request.diagnosis_context:
+            station_data = dict(request.diagnosis_context)
+            station_data["station_id"] = request.station_id
+
+        # 若仍无数据，构造空 station（用于无状态测试或首次查询），不报错
+        if not station_data:
+            station_data = {"station_id": request.station_id}
+
         evidence_contract = build_runtime_evidence_from_classroom(
             station_id=request.station_id,
-            stations=stations,
+            stations={request.station_id: station_data},
             error_tag_service=ErrorTagService(),
         )
+
+        # 将 chat_history 注入 history_facts
+        if request.chat_history:
+            chat_facts = [
+                f"chat_history:{item.role}:{item.content[:200]}"
+                for item in request.chat_history
+            ]
+            evidence_contract.history_facts = [
+                *evidence_contract.history_facts,
+                *chat_facts,
+            ]
+
         history_records = self._get_station_memory(request.station_id)
         history_facts, history_summary = self._build_context_timeline(
             current_evidence=evidence_contract,
@@ -192,9 +217,12 @@ class AgentService:
         )
         evidence_contract.history_facts = history_facts
         evidence_contract.history_summary = history_summary
+
         graph_state = run_diagnostic_graph(
             evidence=evidence_contract,
             query=request.query,
+            user_message=request.user_message or request.query,
+            chat_history=[item.model_dump() for item in request.chat_history] if request.chat_history else None,
             top_k=request.top_k,
         )
         context_pack = graph_state.context_pack
@@ -211,11 +239,20 @@ class AgentService:
             risk_level=evidence_contract.risk_level,
             diagnostics=evidence_contract.diagnostics,
         )
+
+        used_context_refs = [
+            ref.ref_id for ref in evidence_contract.evidence_refs
+        ] + [tool.tool_name for tool in tool_results]
+
         result = AngntJobResult(
             job_id=job_id,
             station_id=request.station_id,
             mode=request.mode,
             answer=graph_state.final_answer,
+            follow_up_suggestions=_build_follow_up_suggestions(
+                evidence=evidence_contract,
+                context_pack=context_pack,
+            ),
             citations=build_diagnostic_citations(
                 evidence=evidence_contract,
                 context_pack=context_pack,
@@ -234,11 +271,15 @@ class AgentService:
             actions=actions,
             used_retrieval=bool(tool_results),
             created_at=created_at,
+            debug=AngntChatDebug(
+                job_id=job_id,
+                used_context_refs=used_context_refs[:10],
+            ),
         )
         self._append_station_memory(
             station_id=request.station_id,
             record=AgentMemoryRecord(
-                query=request.query,
+                query=request.user_message or request.query,
                 risk_level=evidence_contract.risk_level,
                 error_codes=list(evidence_contract.error_codes),
                 error_family=context_pack.error_family,

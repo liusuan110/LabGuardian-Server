@@ -9,24 +9,22 @@ def verify_draft_answer(
     context_pack: ContextPack,
     draft_answer: str,
 ) -> VerificationReport:
-    """Rule-based reflection node for the first LangGraph version."""
+    """Rule-based reflection node for the first LangGraph version.
+
+    注意：不再强制要求回答中出现 error_code 或 raw evidence_refs，
+    以避免将内部调试信息泄漏到用户可见的自然语言回答中。
+    """
 
     text = draft_answer or ""
     issues: list[str] = []
 
-    if evidence.error_codes and not any(code in text for code in evidence.error_codes):
-        issues.append("回答没有引用当前 validator error_code。")
+    if not text.strip():
+        issues.append("回答不能为空。")
 
-    required_refs = [ref for ref in context_pack.evidence_refs if ref.component_id or ref.ref_id]
-    if required_refs:
-        ref_hit = False
-        for ref in required_refs:
-            candidates = [ref.ref_id, ref.component_id, ref.pin_name, ref.hole_id]
-            if any(candidate and candidate in text for candidate in candidates):
-                ref_hit = True
-                break
-        if not ref_hit:
-            issues.append("回答没有引用推送的 evidence_refs。")
+    # 检查是否泄漏了不应出现的内部字段
+    forbidden_keywords = ("error_codes=", "user_query=", "user_message=", "station_id=", "runtime_metadata")
+    if any(kw in text for kw in forbidden_keywords):
+        issues.append("回答中出现了不应展示的内部调试字段。")
 
     safety_words = ("断电", "电源", "短路")
     if evidence.risk_level == "danger" and not any(word in text for word in safety_words):

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 项目根目录 (LabGuardian-Server/)
@@ -156,6 +157,17 @@ class Settings(BaseSettings):
     VLM_OPENVINO_DEVICE: str = "CPU"
     VLM_OPENVINO_CACHE_DIR: str | None = None
     VLM_MAX_NEW_TOKENS: int = 256
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def _parse_debug(cls, value):
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"release", "prod", "production", "off"}:
+                return False
+            if normalized in {"debug", "dev", "development", "on"}:
+                return True
+        return value
 
 
 settings = Settings()

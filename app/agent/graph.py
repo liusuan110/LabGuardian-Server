@@ -4,7 +4,10 @@ from functools import lru_cache
 from time import perf_counter
 from typing import Any
 
-from langgraph.graph import END, START, StateGraph
+try:  # LangGraph is an optional orchestration shell for the deterministic flow.
+    from langgraph.graph import END, START, StateGraph
+except ImportError:  # pragma: no cover - exercised in environments without langgraph
+    END = START = StateGraph = None  # type: ignore[assignment]
 
 from app.agent.answering import (
     build_diagnostic_template_answer,
@@ -21,6 +24,8 @@ def run_diagnostic_graph(
     *,
     evidence: RuntimeEvidence,
     query: str = "",
+    user_message: str = "",
+    chat_history: list[dict[str, str]] | None = None,
     top_k: int = 5,
 ) -> DiagnosticState:
     """Run the deterministic PCM diagnostic state machine.
@@ -32,15 +37,22 @@ def run_diagnostic_graph(
 
     initial = DiagnosticState(
         query=query,
+        user_message=user_message or query,
+        chat_history=chat_history or [],
         top_k=top_k,
         runtime_evidence=evidence,
     )
-    result = _compiled_graph().invoke(initial.model_dump())
+    if StateGraph is None:
+        result = _run_sequential_graph(initial).model_dump()
+    else:
+        result = _compiled_graph().invoke(initial.model_dump())
     return DiagnosticState.model_validate(result)
 
 
 @lru_cache(maxsize=1)
 def _compiled_graph():
+    if StateGraph is None:
+        raise RuntimeError("langgraph is not installed")
     graph = StateGraph(DiagnosticState)
     graph.add_node("classify_error", _classify_error_node)
     graph.add_node("build_context_pack", _build_context_pack_node)
@@ -68,6 +80,31 @@ def _compiled_graph():
     return graph.compile()
 
 
+def _run_sequential_graph(initial: DiagnosticState) -> DiagnosticState:
+    state = initial
+    for node in (
+        _classify_error_node,
+        _build_context_pack_node,
+        _run_tools_node,
+        _generate_draft_node,
+        _verify_answer_node,
+    ):
+        state = _apply_node_update(state, node(state))
+
+    if state.verification_report and state.verification_report.passed:
+        state = _apply_node_update(state, _finalize_answer_node(state))
+    else:
+        state = _apply_node_update(state, _repair_answer_node(state))
+        state = _apply_node_update(state, _finalize_answer_node(state))
+    return state
+
+
+def _apply_node_update(state: DiagnosticState, update: dict[str, Any]) -> DiagnosticState:
+    payload = state.model_dump()
+    payload.update(update)
+    return DiagnosticState.model_validate(payload)
+
+
 def _classify_error_node(state: DiagnosticState) -> dict:
     started_at = perf_counter()
     error_family = classify_error_family(state.runtime_evidence)
@@ -84,7 +121,11 @@ def _classify_error_node(state: DiagnosticState) -> dict:
 
 def _build_context_pack_node(state: DiagnosticState) -> dict:
     started_at = perf_counter()
-    pack = build_context_pack(state.runtime_evidence, query=state.query)
+    pack = build_context_pack(
+        state.runtime_evidence,
+        query=state.query,
+        user_message=state.user_message,
+    )
     return {
         "context_pack": pack.model_dump(),
         "error_family": pack.error_family,
@@ -139,6 +180,7 @@ def _generate_draft_node(state: DiagnosticState) -> dict:
     answer = build_diagnostic_template_answer(
         station_id=state.runtime_evidence.station_id,
         query=state.query,
+        user_message=state.user_message,
         evidence=state.runtime_evidence,
         context_pack=context_pack,
         tool_results=tool_results,

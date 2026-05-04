@@ -24,6 +24,7 @@ def test_build_verified_diagnostic_answer_passes_danger_short_circuit() -> None:
     answer, passed, issues = build_verified_diagnostic_answer(
         station_id="S01",
         query="为什么危险",
+        user_message="为什么危险",
         evidence=evidence,
         context_pack=pack,
         tool_results=[],
@@ -31,7 +32,6 @@ def test_build_verified_diagnostic_answer_passes_danger_short_circuit() -> None:
 
     assert passed is True
     assert issues == []
-    assert "COMPONENT_SHORTED_SAME_NET" in answer
     assert "R1" in answer
     assert "断电" in answer
 

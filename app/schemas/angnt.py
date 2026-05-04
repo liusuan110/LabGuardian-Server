@@ -23,6 +23,28 @@ class AngntAskRequest(BaseModel):
     query: str = ""
     mode: str = "diagnose"
     top_k: int = Field(default=5, ge=1, le=10)
+    job_id: str | None = None
+    user_message: str | None = None
+    chat_history: list["AngntChatHistoryItem"] = Field(default_factory=list)
+    diagnosis_context: dict[str, Any] | None = None
+    locale: str = "zh-CN"
+
+
+class AngntChatHistoryItem(BaseModel):
+    role: str
+    content: str
+
+
+class AngntChatDebug(BaseModel):
+    job_id: str = ""
+    used_context_refs: list[str] = Field(default_factory=list)
+
+
+class AngntChatResponse(BaseModel):
+    answer: str = ""
+    follow_up_suggestions: list[str] = Field(default_factory=list)
+    debug: AngntChatDebug | None = None
+    error: str | None = None
 
 
 class AngntCitation(BaseModel):
@@ -50,11 +72,13 @@ class AngntJobResult(BaseModel):
     station_id: str
     mode: str
     answer: str
+    follow_up_suggestions: list[str] = Field(default_factory=list)
     citations: list[AngntCitation] = Field(default_factory=list)
     evidence: list[AngntEvidence] = Field(default_factory=list)
     actions: list[AngntAction] = Field(default_factory=list)
     used_retrieval: bool = False
     created_at: float = Field(default_factory=time.time)
+    debug: AngntChatDebug | None = None
 
 
 class AngntJobAcceptedResponse(BaseModel):

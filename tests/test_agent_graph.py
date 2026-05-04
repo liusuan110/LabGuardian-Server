@@ -41,7 +41,6 @@ def test_diagnostic_graph_runs_white_box_short_circuit_path() -> None:
     assert "netlist_trace_tool" in tool_names
     assert "fault_case_lookup_tool" in tool_names
     assert "safety_rule_lookup_tool" in tool_names
-    assert "COMPONENT_SHORTED_SAME_NET" in state.final_answer
     assert "R1" in state.final_answer
     assert "断电" in state.final_answer
     assert state.verification_report is not None
@@ -117,7 +116,6 @@ def test_diagnostic_graph_routes_failed_verification_to_repair(monkeypatch) -> N
 
     metric_names = [metric.node_name for metric in state.graph_metrics]
     assert "repair_answer" in metric_names
-    assert "COMPONENT_SHORTED_SAME_NET" in state.final_answer
     assert "断电" in state.final_answer
     assert state.verification_report is not None
     assert state.verification_report.passed is True

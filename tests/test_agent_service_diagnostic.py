@@ -90,7 +90,6 @@ def test_diagnostic_agent_mode_builds_template_answer_and_verifies() -> None:
 
     assert status.result is not None
     assert status.result.mode == "diagnostic_agent"
-    assert "COMPONENT_SHORTED_SAME_NET" in status.result.answer
     assert "R1" in status.result.answer
     assert "断电" in status.result.answer
     evidence_types = {item.evidence_type for item in status.result.evidence}
