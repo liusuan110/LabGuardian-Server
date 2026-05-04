@@ -169,6 +169,39 @@ def _map_component_pins(
                 },
             }
         )
+    return _apply_component_pair_selector(
+        comp=comp,
+        mapped_pins=mapped_pins,
+        calibrator=calibrator,
+        board_schema=board_schema,
+    )
+
+
+def _apply_component_pair_selector(
+    *,
+    comp: dict,
+    mapped_pins: List[Dict[str, Any]],
+    calibrator: BreadboardCalibrator,
+    board_schema: BoardSchema,
+) -> List[Dict[str, Any]]:
+    component_type = normalize_component_type(str(comp.get("component_type") or comp.get("class_name") or "UNKNOWN"))
+    if component_type not in {"Wire", "CapacitorElectrolytic"}:
+        return mapped_pins
+    if len(mapped_pins) < 2:
+        return mapped_pins
+
+    pair = mapped_pins[:2]
+    resolved = _resolve_two_pin_hole_pair(
+        pins=pair,
+        component_type=component_type,
+        calibrator=calibrator,
+        board_schema=board_schema,
+    )
+    if resolved is None:
+        return mapped_pins
+
+    for idx, resolved_pin in enumerate(resolved):
+        mapped_pins[idx] = resolved_pin
     return mapped_pins
 def _ensure_calibrated(
     calibrator: BreadboardCalibrator,
@@ -263,6 +296,155 @@ def _candidate_node_ids(candidate_holes: List[str], board_schema: BoardSchema) -
             seen.add(node_id)
             ordered.append(node_id)
     return ordered
+
+
+def _resolve_two_pin_hole_pair(
+    *,
+    pins: List[Dict[str, Any]],
+    component_type: str,
+    calibrator: BreadboardCalibrator,
+    board_schema: BoardSchema,
+) -> Optional[List[Dict[str, Any]]]:
+    if len(pins) < 2:
+        return None
+
+    candidates_per_pin: List[List[Tuple[str, Optional[Tuple[str, str]], Optional[Tuple[float, float]], int]]] = []
+    seed_points: List[Optional[Tuple[float, float]]] = []
+    for pin in pins[:2]:
+        seed_points.append(_pin_seed_board_point(pin))
+        ranked_candidates: List[Tuple[str, Optional[Tuple[str, str]], Optional[Tuple[float, float]], int]] = []
+        seen = set()
+        for rank, hole_id in enumerate(pin.get("candidate_hole_ids") or []):
+            normalized = board_schema.normalize_hole_id(str(hole_id))
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            logic_loc = board_schema.hole_id_to_logic_loc(normalized)
+            board_point = _hole_id_to_board_point(normalized, board_schema, calibrator)
+            ranked_candidates.append((normalized, logic_loc, board_point, rank))
+        if pin.get("hole_id"):
+            normalized = board_schema.normalize_hole_id(str(pin["hole_id"]))
+            if normalized not in seen:
+                logic_loc = board_schema.hole_id_to_logic_loc(normalized)
+                board_point = _hole_id_to_board_point(normalized, board_schema, calibrator)
+                ranked_candidates.insert(0, (normalized, logic_loc, board_point, 0))
+        candidates_per_pin.append(ranked_candidates[:4])
+
+    if not candidates_per_pin[0] or not candidates_per_pin[1]:
+        return None
+
+    best: Optional[Tuple[float, Tuple[str, Optional[Tuple[str, str]], Optional[Tuple[float, float]], int], Tuple[str, Optional[Tuple[str, str]], Optional[Tuple[float, float]], int]]] = None
+    desired_distance = _pair_seed_distance(seed_points[0], seed_points[1])
+    pair_orientation = _pair_seed_orientation(seed_points[0], seed_points[1])
+    pitch = _mapping_pitch(calibrator)
+    for cand1 in candidates_per_pin[0]:
+        for cand2 in candidates_per_pin[1]:
+            hole1, logic1, point1, rank1 = cand1
+            hole2, logic2, point2, rank2 = cand2
+            if hole1 == hole2:
+                continue
+            score = (rank1 + rank2) * 0.55
+            if point1 is not None and point2 is not None and desired_distance is not None:
+                actual_distance = _euclidean(point1, point2)
+                score += abs(actual_distance - desired_distance) / max(pitch, 1.0) * 0.28
+                if pair_orientation == "horizontal" and point1[0] >= point2[0]:
+                    score += 6.0
+                elif pair_orientation == "vertical" and point1[1] >= point2[1]:
+                    score += 6.0
+                if component_type == "CapacitorElectrolytic":
+                    score += abs(point1[1] - point2[1]) / max(pitch, 1.0) * 0.12
+            elif desired_distance is not None:
+                score += 3.0
+            if best is None or score < best[0]:
+                best = (score, cand1, cand2)
+
+    if best is None:
+        return None
+
+    _, left, right = best
+    resolved = [dict(pin) for pin in pins[:2]]
+    for pin, chosen in zip(resolved, [left, right]):
+        hole_id, logic_loc, board_point, _rank = chosen
+        candidate_hole_ids = [hole_id] + [hid for hid in pin.get("candidate_hole_ids") or [] if hid != hole_id]
+        pin["hole_id"] = hole_id
+        pin["logic_loc"] = list(logic_loc) if logic_loc else pin.get("logic_loc")
+        pin["board_2d_point"] = [float(board_point[0]), float(board_point[1])] if board_point is not None else pin.get("board_2d_point")
+        pin["electrical_node_id"] = board_schema.resolve_hole_to_node(hole_id)
+        pin["candidate_hole_ids"] = candidate_hole_ids
+        pin["candidate_node_ids"] = _candidate_node_ids(candidate_hole_ids, board_schema)
+        pin["candidate_count"] = len(candidate_hole_ids)
+        metadata = dict(pin.get("metadata") or {})
+        vote_scores = dict(metadata.get("vote_scores") or {})
+        metadata["selected_by"] = f"{metadata.get('selected_by', 'multi_view_weighted_vote')}+pair_selector"
+        metadata["pair_selector"] = {
+            "component_type": component_type,
+            "strategy": "two_pin_joint_hole_selection",
+            "selected_hole_id": hole_id,
+            "vote_scores": vote_scores,
+        }
+        if board_point is not None:
+            metadata["selected_board_2d_point"] = [float(board_point[0]), float(board_point[1])]
+        pin["metadata"] = metadata
+    return resolved
+
+
+def _pin_seed_board_point(pin: Dict[str, Any]) -> Optional[Tuple[float, float]]:
+    for obs in pin.get("observations") or []:
+        board_point = obs.get("board_2d_point")
+        if board_point and len(board_point) >= 2:
+            return (float(board_point[0]), float(board_point[1]))
+    point = pin.get("board_2d_point")
+    if point and len(point) >= 2:
+        return (float(point[0]), float(point[1]))
+    return None
+
+
+def _hole_id_to_board_point(
+    hole_id: str,
+    board_schema: BoardSchema,
+    calibrator: BreadboardCalibrator,
+) -> Optional[Tuple[float, float]]:
+    logic_loc = board_schema.hole_id_to_logic_loc(hole_id)
+    if logic_loc is None or not hasattr(calibrator, "logic_to_board_point"):
+        return None
+    try:
+        point = calibrator.logic_to_board_point(logic_loc)
+    except Exception as exc:
+        logger.warning("S2 pair selector board point lookup failed for %s: %s", hole_id, exc)
+        return None
+    if point is None:
+        return None
+    return (float(point[0]), float(point[1]))
+
+
+def _pair_seed_distance(
+    point1: Optional[Tuple[float, float]],
+    point2: Optional[Tuple[float, float]],
+) -> Optional[float]:
+    if point1 is None or point2 is None:
+        return None
+    return _euclidean(point1, point2)
+
+
+def _pair_seed_orientation(
+    point1: Optional[Tuple[float, float]],
+    point2: Optional[Tuple[float, float]],
+) -> Optional[str]:
+    if point1 is None or point2 is None:
+        return None
+    if abs(point2[0] - point1[0]) >= abs(point2[1] - point1[1]):
+        return "horizontal"
+    return "vertical"
+
+
+def _mapping_pitch(calibrator: BreadboardCalibrator) -> float:
+    row_pitch = calibrator._median_pitch(calibrator._row_coords) if getattr(calibrator, "_row_coords", None) is not None else 10.0
+    col_pitch = calibrator._median_pitch(calibrator._col_coords) if getattr(calibrator, "_col_coords", None) is not None else 10.0
+    return max(1.0, min(row_pitch, col_pitch))
+
+
+def _euclidean(point1: Tuple[float, float], point2: Tuple[float, float]) -> float:
+    return float(((point2[0] - point1[0]) ** 2 + (point2[1] - point1[1]) ** 2) ** 0.5)
 
 
 def _selected_board_point(

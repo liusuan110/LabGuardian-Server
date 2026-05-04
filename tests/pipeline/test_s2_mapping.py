@@ -518,6 +518,119 @@ class TestS2Mapping:
 
         assert candidates == []
 
+    def test_t5_12_wire_pair_selector_prefers_joint_distance_consistency(self):
+        from app.pipeline.stages.s2_mapping import run_mapping
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.fixtures import image_to_b64, make_blank_image
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+
+        def fake_candidates(x: float, y: float, k: int = 5):
+            if x < 200:
+                return [("10", "a"), ("30", "a")]
+            return [("12", "a"), ("32", "a")]
+
+        calibrator.frame_pixel_to_logic_candidates = fake_candidates  # type: ignore[method-assign]
+
+        components = [
+            {
+                "component_id": "W1",
+                "component_type": "Wire",
+                "pins": [
+                    {
+                        "pin_id": 1,
+                        "pin_name": "pin1",
+                        "keypoints_by_view": {"top": [120.0, 240.0]},
+                        "visibility_by_view": {"top": 2},
+                        "score_by_view": {"top": 0.95},
+                        "source_by_view": {"top": "model"},
+                        "confidence": 0.95,
+                        "source": "model",
+                    },
+                    {
+                        "pin_id": 2,
+                        "pin_name": "pin2",
+                        "keypoints_by_view": {"top": [300.0, 240.0]},
+                        "visibility_by_view": {"top": 2},
+                        "score_by_view": {"top": 0.95},
+                        "source_by_view": {"top": "model"},
+                        "confidence": 0.95,
+                        "source": "model",
+                    },
+                ],
+            }
+        ]
+
+        result = run_mapping(
+            components=components,
+            calibrator=calibrator,
+            image_shape=(480, 640),
+            images_b64=[image_to_b64(make_blank_image())],
+        )
+
+        pin1, pin2 = result["components"][0]["pins"]
+        assert pin1["hole_id"] == "A10"
+        assert pin2["hole_id"] == "A32"
+        assert pin1["metadata"]["selected_by"].endswith("+pair_selector")
+        assert pin2["metadata"]["selected_by"].endswith("+pair_selector")
+
+    def test_t5_13_electrolytic_pair_selector_avoids_same_hole_for_both_pins(self):
+        from app.pipeline.stages.s2_mapping import run_mapping
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.fixtures import image_to_b64, make_blank_image
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+
+        def fake_candidates(x: float, y: float, k: int = 5):
+            if x < 200:
+                return [("20", "i"), ("21", "i")]
+            return [("20", "i"), ("21", "i")]
+
+        calibrator.frame_pixel_to_logic_candidates = fake_candidates  # type: ignore[method-assign]
+
+        components = [
+            {
+                "component_id": "CE1",
+                "component_type": "CapacitorElectrolytic",
+                "pins": [
+                    {
+                        "pin_id": 1,
+                        "pin_name": "positive",
+                        "keypoints_by_view": {"top": [170.0, 240.0]},
+                        "visibility_by_view": {"top": 2},
+                        "score_by_view": {"top": 0.95},
+                        "source_by_view": {"top": "model"},
+                        "confidence": 0.95,
+                        "source": "model",
+                    },
+                    {
+                        "pin_id": 2,
+                        "pin_name": "negative",
+                        "keypoints_by_view": {"top": [182.0, 240.0]},
+                        "visibility_by_view": {"top": 2},
+                        "score_by_view": {"top": 0.95},
+                        "source_by_view": {"top": "model"},
+                        "confidence": 0.95,
+                        "source": "model",
+                    },
+                ],
+            }
+        ]
+
+        result = run_mapping(
+            components=components,
+            calibrator=calibrator,
+            image_shape=(480, 640),
+            images_b64=[image_to_b64(make_blank_image())],
+        )
+
+        pin1, pin2 = result["components"][0]["pins"]
+        assert pin1["hole_id"] == "I20"
+        assert pin2["hole_id"] == "I21"
+        assert pin1["hole_id"] != pin2["hole_id"]
+
     def test_t5_12_detected_holes_json_maps_original_pixels(self):
         from pathlib import Path
 
