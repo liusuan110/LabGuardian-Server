@@ -6,11 +6,11 @@
 
 ```text
 S1: YOLO-Detect component detection
-S1.5: YOLO-Pose ROI pin detection
+S1.5: YOLO-Pose full-image pin detection
 S2: pixel pin -> hole_id mapping
 ```
 
-面包板网格化 / `calibrator.py` 当前由队友继续推进。本仓库这边优先保持接口稳定，并继续围绕组件检测、ROI 裁剪和 pin pose 模型评估收口。
+面包板网格化 / `calibrator.py` 当前已经切到队友的 detected-hole 主路径。本仓库这边当前重点是继续围绕 full-image pose pin 质量和 hole 匹配稳定性收口。
 
 ## 当前推荐模型
 
@@ -47,37 +47,24 @@ train_demo/detect_components/weights/best.pt
 
 ### S1.5 引脚检测
 
-当前最值得继续评估的两个候选：
+当前最值得继续评估的候选：
 
 ```text
-train_demo/pose_roi_context_v12/weights/best.pt
-train_demo/models/weights/best.pt
+train_demo/pose_components/weights/best.pt
 ```
 
-`pose_roi_context_v12`：
+`pose_components`：
 
 - 模型类型：`PoseModel`
 - `kpt_shape = [3, 3]`
-- 最好 `Pose mAP50-95`: `0.8815`
-- 最后一轮 `Pose mAP50-95`: `0.8759`
-- 之前在真实 ROI 链路里表现稳定，是当前稳妥候选。
-
-`train_demo/models`：
-
-- 模型类型：`PoseModel`
-- `kpt_shape = [3, 3]`
-- 训练数据：稍微扩大后的裁切小图
-- 来源：原根目录 `pose_crop_by_box_v1-3`，已归档重命名到 `train_demo/models`
-- 最好 `Pose mAP50-95`: `0.8745`
-- 最后一轮 `Pose mAP50-95`: `0.8614`
-- `Pose recall` 较高，真实复杂图上出点稳定，适合作为下一版候选主模型继续 A/B。
+- 用途：当前正式 S1.5 full-image pose 主模型
+- 优势：整图直接输出元件框和 pin keypoint，便于与新 S2 hole mapping 主链直连
+- 当前主要风险：部分器件的 keypoint 语义更接近引脚端点而不是孔中心
 
 当前判断：
 
-- 不建议只看 mAP 直接替换默认模型。
-- 需要继续用真实图片比较：
-  - pin 是否稳定来自 `model`
-  - 是否出现同孔
+- 正式主链默认已切到 `pose_components`
+- ROI 裁切训练权重暂不再作为默认主链候选，只保留实验和历史对照价值
   - 最终 `hole_id` 是否合理
   - ROI 是否包含完整元件和引脚活动区
 

@@ -74,15 +74,17 @@ DEFAULT_COMPONENT_MODEL_PATH = _first_existing_path(
     TRAIN_DEMO_DIR / "detect_components" / "weights" / "best.pt",
 )
 DEFAULT_PIN_MODEL_PATH = _first_existing_path(
+    MODEL_ROOT / "pose_components" / "best.pt",
+    MODEL_ROOT / "pose_components" / "weights" / "best.pt",
     MODEL_ROOT / "pin" / "best.pt",
     MODEL_ROOT / "pin_detector" / "best.pt",
     MODEL_ROOT / "pose_roi_context_v12" / "best.pt",
     MODEL_ROOT / "pose_roi_context_v12" / "weights" / "best.pt",
     MODEL_ROOT / "models" / "best.pt",
     MODEL_ROOT / "models" / "weights" / "best.pt",
+    TRAIN_DEMO_DIR / "pose_components" / "weights" / "best.pt",
     TRAIN_DEMO_DIR / "models" / "weights" / "best.pt",
     TRAIN_DEMO_DIR / "pose_roi_context_v12" / "weights" / "best.pt",
-    TRAIN_DEMO_DIR / "pose_components" / "weights" / "best.pt",
 )
 
 
@@ -122,6 +124,7 @@ class Settings(BaseSettings):
     YOLO_IOU_THRESHOLD: float = 0.5
     YOLO_IMGSZ: int = 960
     YOLO_DEVICE: str = "cpu"
+    # 当前 pin 主路径使用 full-image YOLO-Pose。ROI 训练权重仅保留兼容候选位。
     PIN_MODEL_PATH: str | None = DEFAULT_PIN_MODEL_PATH
     PIN_MODEL_DEVICE: str = "cpu"
 
@@ -171,6 +174,8 @@ component_candidates = (
     model_root / "detect_components" / "weights" / "best.pt",
 )
 pin_candidates = (
+    model_root / "pose_components" / "best.pt",
+    model_root / "pose_components" / "weights" / "best.pt",
     model_root / "pin" / "best.pt",
     model_root / "pin_detector" / "best.pt",
     model_root / "pose_roi_context_v12" / "best.pt",

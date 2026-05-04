@@ -22,7 +22,7 @@ _BREAD_DETECT_DIR = Path(__file__).resolve().parents[3] / "bread_detect"
 if str(_BREAD_DETECT_DIR) not in sys.path:
     sys.path.append(str(_BREAD_DETECT_DIR))
 
-from breadboard_detect import GridModel, build_holes, fit_grid, score_image
+from breadboard_detect import build_holes, fit_grid, score_image
 from breadboard_detect_white_region import (
     _locate_score_peak,
     _refine_quad_from_hole_lattice,
@@ -73,7 +73,6 @@ class BreadboardCalibrator:
         self._grid_spacing: Optional[Tuple[float, float]] = None  # (d_row, d_col)
         self._rail_tolerance: float = 15.0  # 自适应电轨容差
         self._grid_matrix: Optional[np.ndarray] = None  # grid[row][col] 二维矩阵
-        self._board_mask: Optional[np.ndarray] = None  # warped 图中的面包板区域 mask
         self._top_rail_matrix: Optional[np.ndarray] = None  # grid[row][rail_idx] 上电源轨孔洞中心
         self._bot_rail_matrix: Optional[np.ndarray] = None  # grid[row][rail_idx] 下电源轨孔洞中心
         self._rail_row_coords: Optional[np.ndarray] = None
@@ -104,7 +103,7 @@ class BreadboardCalibrator:
         self.is_calibrated = True
 
     def auto_calibrate(self, image: np.ndarray) -> bool:
-        """自动校准: 使用队友的白区域 + 孔洞晶格细化 + 标准孔位 payload 主路径。"""
+        """自动校准: 只走队友的白区域 + 孔洞晶格细化 + detected-hole payload 主路径。"""
         try:
             self._synthetic_grid = False
             corners, _, _ = detect_white_region_quad(
@@ -117,13 +116,7 @@ class BreadboardCalibrator:
                 main_columns=self._expected_rows,
             )
             self.calibrate(refined_corners)
-
-            if self._load_teammate_detected_holes(image, refined_corners):
-                return self.is_grid_ready
-
-            warped = self.warp(image)
-            self.detect_holes(warped)
-            return self.is_grid_ready
+            return self._load_teammate_detected_holes(image, refined_corners)
         except Exception as e:
             logger.warning(f"[Calibrator] Auto-calibrate failed: {e}")
             return False
@@ -230,261 +223,9 @@ class BreadboardCalibrator:
             return image
         return cv2.warpPerspective(image, self._perspective_matrix, (800, 600))
 
-    def detect_holes(self, warped_image: np.ndarray):
-        """在校正后的图像中检测孔洞，并按队友的标准网格模型建孔位矩阵。"""
-        raw_holes = self._detect_holes_raw(warped_image)
-        blob_holes = self._detect_holes_blob(warped_image)
-        merged_holes = self._merge_hole_centers(raw_holes + blob_holes)
-        self._board_mask = self._estimate_warped_board_mask(warped_image)
-        board_holes = self._filter_points_by_mask(merged_holes, self._board_mask, pad=4)
-        candidate_holes = board_holes if len(board_holes) >= 400 else merged_holes
-        self.hole_centers = self._limit_hole_candidates(candidate_holes, self._max_hole_count())
-        self._landscape = True
-        self._top_rails = []
-        self._bot_rails = []
-        logger.info(
-            "[Calibrator] Detected %d holes (board-filtered=%d, capped=%d)",
-            len(merged_holes),
-            len(board_holes),
-            len(self.hole_centers),
-        )
-
-        if len(self.hole_centers) >= 50:
-            self._build_from_teammate_model(warped_image)
-
-    def _max_hole_count(self) -> int:
-        return int(self._expected_rows * self.total_cols + self._expected_rail_rows * 4)
-
-    @staticmethod
-    def _limit_hole_candidates(points: List[Tuple[float, float]], max_count: int) -> List[Tuple[float, float]]:
-        if len(points) <= max_count or max_count <= 0:
-            return points
-        pts = np.asarray(points, dtype=np.float32)
-        if len(pts) < 8:
-            return points[:max_count]
-
-        diff = pts[:, None, :] - pts[None, :, :]
-        dist = np.sqrt(np.sum(diff * diff, axis=2))
-        np.fill_diagonal(dist, np.inf)
-        nn = np.sort(dist, axis=1)
-        first_nn = nn[:, 0]
-        finite_first = first_nn[np.isfinite(first_nn)]
-        if len(finite_first) == 0:
-            return points[:max_count]
-        pitch = float(np.median(finite_first))
-        if pitch <= 0:
-            return points[:max_count]
-
-        near_min = pitch * 0.45
-        near_max = pitch * 1.9
-        axis_tol = pitch * 0.35
-        long_max = pitch * 3.2
-
-        scores: List[Tuple[float, int]] = []
-        for idx in range(len(pts)):
-            dx = np.abs(pts[:, 0] - pts[idx, 0])
-            dy = np.abs(pts[:, 1] - pts[idx, 1])
-            d = dist[idx]
-
-            neighbor_support = int(np.sum((d >= near_min) & (d <= near_max)))
-            horizontal_support = int(np.sum((dy <= axis_tol) & (dx >= near_min) & (dx <= long_max)))
-            vertical_support = int(np.sum((dx <= axis_tol) & (dy >= near_min) & (dy <= long_max)))
-            pitch_penalty = abs(float(first_nn[idx]) - pitch) / max(pitch, 1e-6)
-            score = (
-                neighbor_support * 1.0
-                + horizontal_support * 1.5
-                + vertical_support * 1.5
-                - pitch_penalty * 0.75
-            )
-            scores.append((score, idx))
-
-        scores.sort(key=lambda item: item[0], reverse=True)
-        keep_indices = sorted(idx for _, idx in scores[:max_count])
-        return [points[idx] for idx in keep_indices]
-
-    def _build_from_teammate_model(self, warped_image: np.ndarray) -> None:
-        """用队友的 GridModel 直接生成主区/电源轨孔位矩阵。"""
-        model = fit_grid(warped_image, self._expected_rows)
-        self._apply_grid_model(model)
-        logger.info(
-            "[Calibrator] GridModel applied: rows=%d, cols=%d, rails=(%d,%d)",
-            len(self._row_coords) if self._row_coords is not None else 0,
-            len(self._col_coords) if self._col_coords is not None else 0,
-            len(self._top_rails),
-            len(self._bot_rails),
-        )
-
-    def _apply_grid_model(self, model: GridModel) -> None:
-        self._landscape = True
-        self._row_coords = np.asarray(
-            [model.main_x0 + idx * model.main_pitch_x for idx in range(self._expected_rows)],
-            dtype=np.float32,
-        )
-        upper_main = np.asarray(
-            [model.upper_y0 + idx * model.upper_pitch_y for idx in range(5)],
-            dtype=np.float32,
-        )
-        lower_main = np.asarray(
-            [model.lower_y0 + idx * model.lower_pitch_y for idx in range(5)],
-            dtype=np.float32,
-        )
-        self._col_coords = np.concatenate([upper_main, lower_main]).astype(np.float32)
-        self._top_rails = [
-            float(model.top_rail_y0),
-            float(model.top_rail_y0 + model.top_rail_pitch_y),
-        ]
-        self._bot_rails = [
-            float(model.bottom_rail_y0),
-            float(model.bottom_rail_y0 + model.bottom_rail_pitch_y),
-        ]
-        rail_offsets = self._rail_position_units()
-        self._rail_row_coords = np.asarray(
-            [model.rail_x0 + offset * model.rail_pitch_x for offset in rail_offsets],
-            dtype=np.float32,
-        )
-
-        self._grid_matrix = np.zeros((self._expected_rows, self.total_cols, 2), dtype=np.float32)
-        for row_idx, row_x in enumerate(self._row_coords):
-            for col_idx, col_y in enumerate(self._col_coords):
-                self._grid_matrix[row_idx, col_idx] = [row_x, col_y]
-
-        self._top_rail_matrix = np.zeros((self._expected_rail_rows, 2, 2), dtype=np.float32)
-        self._bot_rail_matrix = np.zeros((self._expected_rail_rows, 2, 2), dtype=np.float32)
-        for row_idx, row_x in enumerate(self._rail_row_coords):
-            for rail_idx, rail_y in enumerate(self._top_rails):
-                self._top_rail_matrix[row_idx, rail_idx] = [row_x, rail_y]
-            for rail_idx, rail_y in enumerate(self._bot_rails):
-                self._bot_rail_matrix[row_idx, rail_idx] = [row_x, rail_y]
-
-        self._observed_main_mask = self._observed_mask_for_grid(self._grid_matrix)
-        self._observed_top_mask = self._observed_mask_for_grid(self._top_rail_matrix)
-        self._observed_bot_mask = self._observed_mask_for_grid(self._bot_rail_matrix)
-        self._compute_valid_hole_masks()
-        self._compute_grid_params()
-
-    def _observed_mask_for_grid(self, grid: np.ndarray) -> np.ndarray:
-        if not self.hole_centers:
-            return np.zeros(grid.shape[:-1], dtype=bool)
-        hole_arr = np.asarray(self.hole_centers, dtype=np.float32)
-        flat_grid = grid.reshape(-1, 2)
-        diff = flat_grid[:, None, :] - hole_arr[None, :, :]
-        dist = np.sqrt(np.sum(diff * diff, axis=2))
-        nearest = np.min(dist, axis=1)
-        threshold = max(self._grid_observation_threshold(grid), 5.0)
-        return (nearest <= threshold).reshape(grid.shape[:-1])
-
-    @staticmethod
-    def _grid_observation_threshold(grid: np.ndarray) -> float:
-        x_pitch = float("inf")
-        y_pitch = float("inf")
-        if grid.shape[0] > 1:
-            x_pitch = float(np.median(np.abs(np.diff(grid[:, 0, 0]))))
-        if len(grid.shape) >= 3 and grid.shape[1] > 1:
-            y_pitch = float(np.median(np.abs(np.diff(grid[0, :, 1]))))
-        finite = [value for value in (x_pitch, y_pitch) if np.isfinite(value) and value > 0]
-        if not finite:
-            return 6.0
-        return min(finite) * 0.72
-
-    def _compute_valid_hole_masks(self) -> None:
-        if self._grid_matrix is None or self._top_rail_matrix is None or self._bot_rail_matrix is None:
-            return
-        if self._observed_main_mask is None or self._observed_top_mask is None or self._observed_bot_mask is None:
-            return
-
-        hole_arr = np.asarray(self.hole_centers, dtype=np.float32) if self.hole_centers else None
-        row_pitch = float(np.median(np.diff(self._row_coords))) if self._row_coords is not None and len(self._row_coords) > 1 else 10.0
-        col_pitch = float(np.median(np.diff(self._col_coords))) if self._col_coords is not None and len(self._col_coords) > 1 else 10.0
-        main_threshold = max(min(row_pitch, col_pitch) * 0.85, 6.0)
-        rail_threshold = max(row_pitch * 0.9, 7.0)
-
-        self._valid_main_mask = self._observed_main_mask.copy()
-        self._valid_top_mask = self._observed_top_mask.copy()
-        self._valid_bot_mask = self._observed_bot_mask.copy()
-
-        def nearest_dist(point: np.ndarray) -> float:
-            if hole_arr is None or len(hole_arr) == 0:
-                return float("inf")
-            d = np.sqrt(np.sum((hole_arr - point.reshape(1, 2)) ** 2, axis=1))
-            return float(np.min(d))
-
-        for row_idx in range(self._grid_matrix.shape[0]):
-            for col_idx in range(self._grid_matrix.shape[1]):
-                if self._valid_main_mask[row_idx, col_idx]:
-                    continue
-                point = self._grid_matrix[row_idx, col_idx]
-                if nearest_dist(point) <= main_threshold:
-                    self._valid_main_mask[row_idx, col_idx] = True
-
-        for row_idx in range(self._top_rail_matrix.shape[0]):
-            for rail_idx in range(self._top_rail_matrix.shape[1]):
-                if not self._valid_top_mask[row_idx, rail_idx]:
-                    point = self._top_rail_matrix[row_idx, rail_idx]
-                    if nearest_dist(point) <= rail_threshold:
-                        self._valid_top_mask[row_idx, rail_idx] = True
-                if not self._valid_bot_mask[row_idx, rail_idx]:
-                    point = self._bot_rail_matrix[row_idx, rail_idx]
-                    if nearest_dist(point) <= rail_threshold:
-                        self._valid_bot_mask[row_idx, rail_idx] = True
-
-    @staticmethod
-    def _rail_position_units(group_count: int = 10, holes_per_group: int = 5) -> np.ndarray:
-        units: List[float] = [0.0]
-        pos = 0.0
-        for group_idx in range(group_count):
-            for hole_idx in range(holes_per_group - 1):
-                pos += 1.0
-                units.append(pos)
-            if group_idx < group_count - 1:
-                pos += 2.0
-        return np.asarray(units, dtype=np.float32)
-
-
-    def _estimate_warped_board_mask(self, warped_image: np.ndarray) -> Optional[np.ndarray]:
-        hsv = cv2.cvtColor(warped_image, cv2.COLOR_BGR2HSV)
-        white_mask = cv2.inRange(hsv, (0, 0, 120), (180, 70, 255))
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 11))
-        white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-        white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel, iterations=1)
-        white_mask = cv2.dilate(
-            white_mask,
-            cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7)),
-            iterations=1,
-        )
-        contours, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return None
-        contour = max(contours, key=cv2.contourArea)
-        mask = np.zeros_like(white_mask)
-        cv2.drawContours(mask, [contour], -1, 255, thickness=cv2.FILLED)
-        return mask
-
-    @staticmethod
-    def _filter_points_by_mask(
-        points: List[Tuple[float, float]],
-        mask: Optional[np.ndarray],
-        *,
-        pad: int = 2,
-    ) -> List[Tuple[float, float]]:
-        if mask is None:
-            return points
-        h, w = mask.shape[:2]
-        kept: List[Tuple[float, float]] = []
-        for x, y in points:
-            xi = int(round(x))
-            yi = int(round(y))
-            x1 = max(0, xi - pad)
-            y1 = max(0, yi - pad)
-            x2 = min(w, xi + pad + 1)
-            y2 = min(h, yi + pad + 1)
-            patch = mask[y1:y2, x1:x2]
-            if patch.size > 0 and int(np.max(patch)) > 0:
-                kept.append((x, y))
-        return kept
-
     # ============================================================
-    # 空间哈希 & RANSAC 单应性 (Spatial Hashing & Homography)
-    # 参考: OpenCV Document Scanner, ArUco Marker Homography
+    # 空间哈希 (Spatial Hashing)
+    # 队友方案已提供标准孔位 payload, 这里仅保留坐标查找层
     # ============================================================
 
     def _spatial_hash(self, row_val: float, col_val: float) -> Tuple[int, int]:
@@ -853,12 +594,7 @@ class BreadboardCalibrator:
         return self.load_detected_holes(payload)
 
     def load_detected_holes(self, payload: Dict[str, Any]) -> bool:
-        """Load detected breadboard holes exported by bread_detect.
-
-        bread_detect names terminal holes as A00..J62. The pipeline's legacy
-        logic coordinate is (numeric row along the board, column name), so
-        A00 becomes ("1", "a"), and BoardSchema resolves that to hole_id A1.
-        """
+        """Load detected breadboard holes exported by bread_detect as the active grid."""
         holes = payload.get("holes") or []
         if not holes:
             return False
@@ -1275,83 +1011,3 @@ class BreadboardCalibrator:
         if nearest:
             return tuple(nearest[0]["pixel"])  # type: ignore[return-value]
         return None
-
-    # ---- 智能校准 (孔洞检测 + 自动朝向识别) ----
-
-    def _detect_holes_raw(self, image: np.ndarray) -> List[Tuple[float, float]]:
-        """形态学检测面包板孔洞, 返回 (cx, cy) 列表"""
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(blur)
-        blackhat = cv2.morphologyEx(
-            clahe,
-            cv2.MORPH_BLACKHAT,
-            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)),
-        )
-        _, thresh_otsu = cv2.threshold(blackhat, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        thresh_adapt = cv2.adaptiveThreshold(
-            clahe,
-            255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV,
-            21,
-            6,
-        )
-        thresh = cv2.bitwise_or(thresh_otsu, thresh_adapt)
-        thresh = cv2.morphologyEx(
-            thresh,
-            cv2.MORPH_OPEN,
-            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
-            iterations=1,
-        )
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        holes: List[Tuple[float, float]] = []
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if 4 < area < 180:
-                M = cv2.moments(cnt)
-                if M["m00"] > 0:
-                    cx = M["m10"] / M["m00"]
-                    cy = M["m01"] / M["m00"]
-                    perimeter = cv2.arcLength(cnt, True)
-                    circ = 4 * np.pi * area / (perimeter ** 2 + 1e-6)
-                    if circ > 0.15:
-                        holes.append((cx, cy))
-        return self._merge_hole_centers(holes)
-
-    def _detect_holes_blob(self, image: np.ndarray) -> List[Tuple[float, float]]:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
-        params = cv2.SimpleBlobDetector_Params()
-        params.minArea = 8
-        params.maxArea = 220
-        params.filterByCircularity = True
-        params.minCircularity = 0.12
-        params.filterByConvexity = False
-        params.filterByInertia = False
-        detector = cv2.SimpleBlobDetector_create(params)
-        inv = cv2.bitwise_not(gray)
-        keypoints = detector.detect(inv)
-        return [(kp.pt[0], kp.pt[1]) for kp in keypoints]
-
-    @staticmethod
-    def _merge_hole_centers(points: List[Tuple[float, float]], distance_threshold: float = 6.0) -> List[Tuple[float, float]]:
-        if not points:
-            return []
-        ordered = sorted(points, key=lambda p: (p[0], p[1]))
-        merged: List[List[Tuple[float, float]]] = []
-        for point in ordered:
-            if not merged:
-                merged.append([point])
-                continue
-            last_cluster = merged[-1]
-            last_x = float(np.mean([p[0] for p in last_cluster]))
-            last_y = float(np.mean([p[1] for p in last_cluster]))
-            if (point[0] - last_x) ** 2 + (point[1] - last_y) ** 2 <= distance_threshold ** 2:
-                last_cluster.append(point)
-            else:
-                merged.append([point])
-        return [
-            (float(np.mean([p[0] for p in cluster])), float(np.mean([p[1] for p in cluster])))
-            for cluster in merged
-        ]

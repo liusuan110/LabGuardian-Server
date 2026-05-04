@@ -19,13 +19,12 @@ LabGuardian 的服务器端负责把视觉识别结果转换成可验证、可�
 - 服务层骨架已经建立：`pipeline_service / guidance_service / version_service / rag_service / agent_service`
 - 新网表模型已经落地：`netlist_v2`
 - 比赛板 `board_schema` 已接入默认加载流程
-- pipeline 已切到 `S1 component detect -> S1.5 ROI pin detect -> S2 hole mapping`
+- pipeline 已切到 `S1 component detect -> S1.5 full-image pose pin detect -> S2 hole mapping`
 - 当前组件检测主路径已经收口为 `YOLO-Detect`，`OBB` 仅保留兼容解析能力
 - S1 现在固定由 `top` 视图建立全局 `component_id`
 - S1 已支持 `side recall candidates` 输出，但 side 候选当前不直接进入主实例链
-- S1.5 已支持多视图 ROI pin 检测结构，侧视图当前用显式 `shared_bbox_fallback`
-- S1.5 的 ROI 裁剪已切到“按封装 + bbox 几何方向”的策略，不再使用统一 margin
-- S1.5 已预留侧视图 ROI 关联骨架，优先尝试使用 `side recall candidates`
+- S1.5 正式主路径已切到 `full-image YOLO-Pose`
+- ROI 裁切 pin 检测逻辑不再参与默认主流程，仅作为 legacy fallback 保留
 - S2 开始原生输出 `components[].pins[]`
 - S3 / S4 / validator 已开始消费新结构
 - `circuit.py` 内部主逻辑已切到 `ComponentInstance + pins[]`
@@ -90,7 +89,7 @@ LabGuardian 的服务器端负责把视觉识别结果转换成可验证、可�
 ```text
 top / left / right 图片
 -> S1: component detect (YOLO-Detect)
--> S1.5: component ROI pin detect (YOLO-Pose, fallback 显式标记)
+-> S1.5: full-image pose pin detect (YOLO-Pose, fallback 显式标记)
 -> S2: pin keypoint -> hole_id / electrical_node_id
 -> S3: topology / netlist_v2
 -> S4: validator_report_v2 / risk
@@ -115,7 +114,7 @@ top / left / right 图片
 - `top` 是主实例化入口
 - `left_front / right_front` 当前只做候选补召回, 不直接进入主实例列表
 
-### S1.5: 组件 ROI 引脚检测
+### S1.5: 全图引脚检测
 
 对应文件:
 
@@ -126,9 +125,8 @@ top / left / right 图片
 
 职责:
 
-- 根据 `component_id + bbox + package_type` 为每个元件建立 ROI
-- ROI 裁剪按封装模板执行，不同封装使用不同覆盖范围
-- 对每个视图分别执行 pin detector
+- 在 `top` 整图上直接执行 `YOLO-Pose`
+- 将 pose 实例按 `component_type + bbox` 几何关系关联回 S1 组件
 - 输出 ordered `pins[]`
 - 为每个 pin 保留:
   - `keypoints_by_view`
@@ -139,16 +137,10 @@ top / left / right 图片
 
 当前状态:
 
-- `top` 视图 ROI 来源为 `detected_bbox`
-- 侧视图 ROI 现在优先尝试 `associated_bbox_candidate`
-- 未命中侧视图候选时，才回退到 `shared_bbox_fallback`
-- 当前 ROI 裁剪已经切到“封装 profile + 最小有效跨度”的策略，用于尽量覆盖完整元件本体和引脚活动区
-- ROI 元数据会继续保留:
-  - `crop_source`
-  - `crop_profile`
-  - `crop_bounds`
-  - `association`
-- `PinRoiDetector` 已能加载真实 `YOLO-Pose` 权重；模型失败或未产出有效点时会显式走 `heuristic_fallback`
+- 当前主语义:
+  - `top` 视图整图 pose 为唯一默认 pin 来源
+  - `left_front / right_front` 暂不参与默认 pin 主判定
+- `PinRoiDetector` 已能加载真实 `YOLO-Pose` 权重；无模型或测试 mock 时才显式走 legacy fallback
 
 ### S2: 孔位映射与多视图证据整理
 
@@ -307,7 +299,7 @@ component_id + pin_name + hole_id
 
 ```text
 S1 检测
--> S1.5 component ROI pin detect
+-> S1.5 full-image pose pin detect
 -> S2 components[].pins[]
 -> topology_input.normalize_components_for_topology()
 -> CircuitAnalyzer(board_schema=...)

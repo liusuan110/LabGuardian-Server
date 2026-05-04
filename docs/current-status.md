@@ -14,7 +14,7 @@
 
 ```text
 component detect
--> component ROI pin detect
+-> full-image pose pin detect
 -> pin keypoint / observation
 -> hole_id
 -> electrical_node_id
@@ -31,7 +31,7 @@ RAG、PCM Agent、VLM 和前端指导都应消费这条主链输出，不应绕�
 ### 1. 视觉与 pipeline 合同
 
 - S1 默认主路径：`YOLO-Detect`
-- S1.5 默认主路径：`YOLO-Pose ROI pin detect`
+- S1.5 默认主路径：`YOLO-Pose full-image pin detect`
 - S2 原生输出 `components[].pins[]`
 - S3 / S4 已消费结构化 pins 输入
 - `topology_input.py` 已将正式主输入收口到结构化 `components[].pins[]`

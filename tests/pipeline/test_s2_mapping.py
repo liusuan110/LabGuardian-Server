@@ -491,31 +491,32 @@ class TestS2Mapping:
         assert candidates
         assert candidates[0] == ("13", "rail_top+")
 
-    def test_t5_11_board_mask_alone_does_not_validate_inferred_hole(self):
+    def test_t5_11_missing_observation_does_not_create_phantom_candidate(self):
         from app.pipeline.vision.calibrator import BreadboardCalibrator
 
         calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
-        calibrator._grid_matrix = np.array([[[50.0, 50.0]]], dtype=np.float32)
+        calibrator._grid_matrix = np.array(
+            [
+                [[50.0, 50.0], [50.0, 60.0]],
+                [[60.0, 50.0], [60.0, 60.0]],
+            ],
+            dtype=np.float32,
+        )
         calibrator._top_rail_matrix = np.array([[[10.0, 10.0], [20.0, 10.0]]], dtype=np.float32)
         calibrator._bot_rail_matrix = np.array([[[10.0, 90.0], [20.0, 90.0]]], dtype=np.float32)
-        calibrator._observed_main_mask = np.array([[False]], dtype=bool)
-        calibrator._observed_top_mask = np.array([[False, False]], dtype=bool)
-        calibrator._observed_bot_mask = np.array([[False, False]], dtype=bool)
         calibrator._row_coords = np.array([50.0, 60.0], dtype=np.float32)
         calibrator._col_coords = np.array([50.0, 60.0], dtype=np.float32)
-        calibrator.hole_centers = []
-        calibrator._board_mask = np.ones((120, 120), dtype=np.uint8) * 255
+        calibrator._landscape = True
+        calibrator._valid_main_mask = np.zeros((2, 2), dtype=bool)
+        calibrator._valid_top_mask = np.array([[False, False]], dtype=bool)
+        calibrator._valid_bot_mask = np.array([[False, False]], dtype=bool)
+        calibrator._rail_row_coords = np.array([10.0], dtype=np.float32)
+        calibrator._top_rails = [10.0, 20.0]
+        calibrator._bot_rails = [90.0, 100.0]
 
-        calibrator._compute_valid_hole_masks()
+        candidates = calibrator.board_point_to_logic_candidates(50.0, 50.0, k=3)
 
-        assert calibrator._valid_main_mask is not None
-        assert calibrator._valid_top_mask is not None
-        assert calibrator._valid_bot_mask is not None
-        assert bool(calibrator._valid_main_mask[0, 0]) is False
-        assert bool(calibrator._valid_top_mask[0, 0]) is False
-        assert bool(calibrator._valid_top_mask[0, 1]) is False
-        assert bool(calibrator._valid_bot_mask[0, 0]) is False
-        assert bool(calibrator._valid_bot_mask[0, 1]) is False
+        assert candidates == []
 
     def test_t5_12_detected_holes_json_maps_original_pixels(self):
         from pathlib import Path

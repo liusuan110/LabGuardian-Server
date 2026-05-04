@@ -27,7 +27,7 @@
 ```text
 输入图片(top / left / right)
 -> S1 component detect
--> S1.5 component ROI pin detect
+-> S1.5 full-image pose pin detect
 -> S2 hole mapping
 -> S3 topology / netlist_v2
 -> S4 validate / risk / validator_report_v2
@@ -54,19 +54,17 @@
 - 真实 `YOLO-Detect` 组件模型后续主要接在 `detector.py`
 - `OBB` 仅保留兼容解析分支, 不再作为默认组件检测路线
 
-### S1.5: Component ROI Pin Detect
+### S1.5: Full-Image Pose Pin Detect
 
 对应文件:
 
 - `app/pipeline/stages/s1b_pin_detect.py`
 - `app/pipeline/vision/pin_model.py`
-- `app/pipeline/vision/roi_cropper.py`
-- `app/pipeline/vision/pin_schema.py`
 
 职责:
 
-- 根据 `component_id + bbox + package_type` 建立 ROI
-- 对每个视图分别执行 pin detector
+- 在 top 整图上直接执行 `YOLO-Pose`
+- 将 pose 实例按 `component_type + bbox` 几何关系关联回 S1 组件
 - 输出 ordered `pins[]`
 - 保留多视图 pin 证据:
   - `keypoints_by_view`
@@ -77,9 +75,9 @@
 
 当前协作约束:
 
-- `PinRoiDetector` 是 `YOLO-Pose` 的正式接入口
-- 当前允许存在 `heuristic_fallback`, 但必须显式标记
-- 侧视图 ROI 当前仍可能走 `shared_bbox_fallback`
+- `PinRoiDetector` 仍是 `YOLO-Pose` 的正式接入口
+- 默认主路径已经切到 `full-image model`
+- ROI 裁切 pin 检测仅保留为 legacy fallback / 测试兼容逻辑
 
 ### S2: Hole Mapping
 
@@ -445,8 +443,7 @@ ClassroomState station
 
 为了让 README 和架构文档保持同一套认知，这里明确当前还未完成的点：
 
-- `YOLO-Pose` 已有真实模型接入口, 当前重点是候选权重 A/B、ROI 覆盖率和复杂场景稳定性
-- 侧视图 ROI 目前仍可能使用 `shared_bbox_fallback`
+- `YOLO-Pose` 已切到 full-image 主路径, 当前重点是 pin 语义和复杂场景稳定性
 - side recall candidates 目前还没有完全接成“缺失实例补全”
 - 面包板 pixel -> hole_id 的网格化细节由 `calibrator.py` 继续独立优化
 - 比赛板实物若与默认 schema 有差异, 还需要补正式 schema JSON

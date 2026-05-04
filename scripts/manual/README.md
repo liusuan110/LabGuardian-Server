@@ -28,7 +28,7 @@
 - 模型研究 / 实验:
   - `evaluate_full_image_pose_dataset.py`
   - `debug_full_image_pose.py`
-  - 允许使用实验性 full-image pose 逻辑, 不代表正式主链
+  - 当前主要用于单独研究 full-image pose 匹配细节
 - 面包板网格诊断:
   - `debug_calibrator_grid.py`
   - 只诊断 calibrator, 不代表完整 pipeline 演示
@@ -43,8 +43,8 @@
 
 - `tools/vision/` 目录里目前没有“高置信度可直接删除”的多余脚本
 - 但要注意区分:
-  - `run_official_pipeline_debug.py` 才是当前视觉主链调试入口
-  - `debug_full_image_pose.py` 是实验脚本, 只用于比较全图 pose 方案
+- `run_official_pipeline_debug.py` 才是当前视觉主链调试入口
+- `debug_full_image_pose.py` 是实验脚本, 但当前正式 S1.5 也已切到 full-image pose 主语义
   - `debug_calibrator_grid.py` 只服务 calibrator 诊断
   - `labelme_pose_dataset_utils.py` 是 helper, 不是一个给团队直接运行的主入口
 

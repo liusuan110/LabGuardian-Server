@@ -1,18 +1,33 @@
 """
 Stage 1.5: Component ROI pin detection.
 
-这一阶段承接组件检测结果，为每个 component 建立 ROI，并输出有序 pin 预测。
+当前正式主路径:
+- 不再按单组件 ROI 裁切后做 pin 识别
+- 改为整图 full-image YOLO-Pose
+- 再按类别 + bbox 几何把 pose 实例关联回 S1 组件检测结果
+
+保留 legacy ROI 路径仅用于:
+- 无 full-image pose 模型时的启发式 fallback
+- 测试中的 mock pin detector
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import time
 from typing import Any, Dict, List
 
-from app.pipeline.vision.pin_model import PinRoiDetector
+import numpy as np
+
+from app.pipeline.vision.pin_model import PinRoiDetector, _parse_model_keypoints
 from app.pipeline.vision.image_io import decode_images_b64, decode_summary
-from app.pipeline.vision.label_mapping import component_id_prefix, normalize_component_type
+from app.pipeline.vision.label_mapping import (
+    component_id_prefix,
+    default_pin_count,
+    default_pin_names,
+    normalize_component_type,
+)
 from app.pipeline.vision.pin_schema import (
     default_package_type,
     default_pin_schema_id,
@@ -31,17 +46,116 @@ ROI_RETRY_SCALES = {
 }
 ROI_EDGE_MARGIN_PX = 12
 
+
+@dataclass
+class PoseInstance:
+    component_type: str
+    class_name: str
+    bbox: list[float]
+    confidence: float
+    keypoints: list[tuple[float, float] | None]
+    parse_meta: dict[str, Any]
+    used: bool = False
+
 def run_pin_detect(
     detections: List[dict],
     images_b64: List[str],
     pin_detector: PinRoiDetector,
     supplemental_detections: List[dict] | None = None,
 ) -> Dict[str, Any]:
-    """为每个组件 ROI 生成 ordered pin predictions。"""
-    t0 = time.time()
+    """为每个组件生成 ordered pin predictions.
+
+    默认主路径:
+    - top 整图 full-image pose
+    - 关联回 S1 检测框
+    - 产出与旧 S1.5 相同的组件 pin JSON 外壳
+    """
     decoded = decode_images_b64(images_b64, logger=logger, stage_name="S1.5")
     summary = decode_summary(decoded)
     view_ids = _view_ids_from_images(images_b64)
+    top_item = next((item for item in decoded if item["view_id"] == "top" and item["decoded"]), None)
+
+    if _should_use_full_image_pose(pin_detector=pin_detector, top_item=top_item):
+        return _run_pin_detect_full_image_pose(
+            detections=detections,
+            decoded=decoded,
+            summary=summary,
+            view_ids=view_ids,
+            pin_detector=pin_detector,
+        )
+
+    return _run_pin_detect_legacy(
+        detections=detections,
+        decoded=decoded,
+        summary=summary,
+        view_ids=view_ids,
+        pin_detector=pin_detector,
+        supplemental_detections=supplemental_detections,
+    )
+
+
+def _should_use_full_image_pose(*, pin_detector: PinRoiDetector, top_item: dict | None) -> bool:
+    if top_item is None or top_item.get("image") is None:
+        return False
+    if getattr(pin_detector, "backend_type", "") != "yolo_pose":
+        return False
+    return getattr(pin_detector, "model", None) is not None
+
+
+def _run_pin_detect_full_image_pose(
+    *,
+    detections: List[dict],
+    decoded: List[dict],
+    summary: dict[str, Any],
+    view_ids: List[str],
+    pin_detector: PinRoiDetector,
+) -> Dict[str, Any]:
+    t0 = time.time()
+    top_item = next((item for item in decoded if item["view_id"] == "top" and item["decoded"]), None)
+    top_image = top_item["image"] if top_item else None
+    if top_image is None:
+        return {
+            "interface_version": "component_pin_detect_v1",
+            "pin_detector_backend": pin_detector.backend_type,
+            "pin_detector_mode": "unavailable",
+            "pin_detector_contract": dict(getattr(pin_detector, "model_contract", {}) or {}),
+            "side_roi_assoc_backend": "not_applicable_full_image_pose",
+            "components": [],
+            **summary,
+            "duration_ms": (time.time() - t0) * 1000,
+        }
+
+    pose_instances = _load_full_image_pose_instances(image=top_image, pin_detector=pin_detector)
+    components = _build_components_from_full_pose(
+        detections=detections,
+        pose_instances=pose_instances,
+        view_ids=view_ids,
+        image_shape=top_image.shape[:2],
+        pin_detector=pin_detector,
+    )
+
+    return {
+        "interface_version": "component_pin_detect_v1",
+        "pin_detector_backend": pin_detector.backend_type,
+        "pin_detector_mode": "full_image_model",
+        "pin_detector_contract": dict(getattr(pin_detector, "model_contract", {}) or {}),
+        "side_roi_assoc_backend": "not_applicable_full_image_pose",
+        "components": components,
+        **summary,
+        "duration_ms": (time.time() - t0) * 1000,
+    }
+
+
+def _run_pin_detect_legacy(
+    *,
+    detections: List[dict],
+    decoded: List[dict],
+    summary: dict[str, Any],
+    view_ids: List[str],
+    pin_detector: PinRoiDetector,
+    supplemental_detections: List[dict] | None = None,
+) -> Dict[str, Any]:
+    t0 = time.time()
     roi_resolver = SideViewRoiResolver()
 
     counters: Dict[str, int] = {}
@@ -181,6 +295,311 @@ def _view_ids_from_images(images_b64: List[str]) -> List[str]:
         for idx in range(len(defaults), len(images_b64)):
             view_ids.append(f"aux_view_{idx - len(defaults) + 1}")
     return view_ids
+
+
+def _load_full_image_pose_instances(
+    *,
+    image: np.ndarray,
+    pin_detector: PinRoiDetector,
+) -> list[PoseInstance]:
+    results = pin_detector.model(image, verbose=False, device=pin_detector.device)  # type: ignore[union-attr]
+    if not results:
+        return []
+    first = results[0]
+    boxes = getattr(first, "boxes", None)
+    keypoints = getattr(first, "keypoints", None)
+    if boxes is None or keypoints is None or getattr(keypoints, "xy", None) is None:
+        return []
+
+    names_map = getattr(pin_detector.model, "names", {})  # type: ignore[union-attr]
+    xyxy = boxes.xyxy.cpu().numpy()
+    cls_ids = boxes.cls.cpu().numpy() if boxes.cls is not None else np.zeros((len(xyxy),), dtype=np.float32)
+    confs = boxes.conf.cpu().numpy() if boxes.conf is not None else np.ones((len(xyxy),), dtype=np.float32)
+    all_xy = keypoints.xy.cpu().numpy()
+    kp_conf = keypoints.conf.cpu().numpy() if keypoints.conf is not None else None
+
+    instances: list[PoseInstance] = []
+    for idx in range(len(xyxy)):
+        raw_class = str(names_map.get(int(cls_ids[idx]), int(cls_ids[idx])))
+        component_type = normalize_component_type(raw_class)
+        package_type = default_package_type(component_type)
+        pin_count = default_pin_count(component_type, package_type)
+        parsed = _parse_model_keypoints(
+            points=all_xy[idx],
+            confs=kp_conf[idx] if kp_conf is not None and idx < len(kp_conf) else None,
+            pin_count=pin_count,
+        )
+        instances.append(
+            PoseInstance(
+                component_type=component_type,
+                class_name=raw_class,
+                bbox=[float(v) for v in xyxy[idx].tolist()],
+                confidence=float(confs[idx]),
+                keypoints=list(parsed.ordered_keypoints),
+                parse_meta={
+                    "raw_keypoint_count": parsed.raw_keypoint_count,
+                    "raw_visible_keypoint_count": parsed.raw_visible_keypoint_count,
+                    "used_keypoint_count": parsed.used_keypoint_count,
+                    "extra_keypoints_ignored": parsed.extra_keypoints_ignored,
+                    "ignored_keypoints_reason": parsed.ignored_keypoints_reason,
+                },
+            )
+        )
+    return instances
+
+
+def _iou_xyxy(a: list[float], b: list[float]) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+    iw = max(0.0, ix2 - ix1)
+    ih = max(0.0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _bbox_orientation(bbox: list[float]) -> str:
+    x1, y1, x2, y2 = bbox
+    return "horizontal" if (x2 - x1) >= (y2 - y1) else "vertical"
+
+
+def _keypoint_orientation(points: list[tuple[float, float] | None]) -> str | None:
+    valid = [p for p in points if p is not None]
+    if len(valid) < 2:
+        return None
+    p1, p2 = valid[0], valid[-1]
+    return "horizontal" if abs(p2[0] - p1[0]) >= abs(p2[1] - p1[1]) else "vertical"
+
+
+def _point_in_bbox(point: tuple[float, float] | None, bbox: list[float]) -> bool:
+    if point is None:
+        return False
+    x, y = point
+    x1, y1, x2, y2 = bbox
+    return x1 <= x <= x2 and y1 <= y <= y2
+
+
+def _expand_bbox(bbox: list[float], pad_ratio: float = 0.22, min_pad: float = 12.0) -> list[float]:
+    x1, y1, x2, y2 = bbox
+    w = max(1.0, x2 - x1)
+    h = max(1.0, y2 - y1)
+    pad_x = max(min_pad, w * pad_ratio)
+    pad_y = max(min_pad, h * pad_ratio)
+    return [x1 - pad_x, y1 - pad_y, x2 + pad_x, y2 + pad_y]
+
+
+def _keypoints_inside_ratio(points: list[tuple[float, float] | None], bbox: list[float]) -> float:
+    valid = [p for p in points if p is not None]
+    if not valid:
+        return 0.0
+    inside = sum(1 for p in valid if _point_in_bbox(p, bbox))
+    return inside / len(valid)
+
+
+def _span_consistency(points: list[tuple[float, float] | None], bbox: list[float]) -> float:
+    valid = [p for p in points if p is not None]
+    if len(valid) < 2:
+        return 0.35
+    p1, p2 = valid[0], valid[-1]
+    span = ((p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2) ** 0.5
+    x1, y1, x2, y2 = bbox
+    bw = max(1.0, x2 - x1)
+    bh = max(1.0, y2 - y1)
+    major = max(bw, bh)
+    minor = max(1.0, min(bw, bh))
+    if span < minor * 0.4:
+        base = 0.2
+    elif span > major * 2.6:
+        base = 0.25
+    else:
+        base = 1.0 - min(abs(span - major) / max(major, 1.0), 1.0) * 0.5
+    kp_orient = _keypoint_orientation(points)
+    bbox_orient = _bbox_orientation(bbox)
+    if kp_orient is None:
+        return base
+    return base if kp_orient == bbox_orient else base * 0.55
+
+
+def _match_pose_instance(det: dict, pose_instances: list[PoseInstance]) -> PoseInstance | None:
+    det_bbox = [float(v) for v in det.get("bbox") or [0, 0, 0, 0]]
+    component_type = normalize_component_type(str(det.get("component_type") or det.get("class_name") or "UNKNOWN"))
+
+    def _score(inst: PoseInstance) -> float:
+        iou = _iou_xyxy(det_bbox, inst.bbox)
+        det_cx = (det_bbox[0] + det_bbox[2]) / 2.0
+        det_cy = (det_bbox[1] + det_bbox[3]) / 2.0
+        inst_cx = (inst.bbox[0] + inst.bbox[2]) / 2.0
+        inst_cy = (inst.bbox[1] + inst.bbox[3]) / 2.0
+        center_dist = ((det_cx - inst_cx) ** 2 + (det_cy - inst_cy) ** 2) ** 0.5
+        diag = max(1.0, ((det_bbox[2] - det_bbox[0]) ** 2 + (det_bbox[3] - det_bbox[1]) ** 2) ** 0.5)
+        proximity = max(0.0, 1.0 - center_dist / (diag * 1.5))
+        kp_fit = _keypoints_inside_ratio(inst.keypoints, _expand_bbox(det_bbox))
+        span_fit = _span_consistency(inst.keypoints, det_bbox)
+        return iou * 1.2 + proximity * 0.45 + kp_fit * 0.9 + span_fit * 0.7 + inst.confidence * 0.1
+
+    typed_candidates = [
+        inst
+        for inst in pose_instances
+        if not inst.used and inst.component_type == component_type
+    ]
+    candidates = typed_candidates or [inst for inst in pose_instances if not inst.used]
+    best: tuple[float, PoseInstance] | None = None
+    for inst in candidates:
+        score = _score(inst)
+        if best is None or score > best[0]:
+            best = (score, inst)
+    if best is None:
+        return None
+    best[1].used = True
+    return best[1]
+
+
+def _aligned_keypoints(component_type: str, keypoints: list[tuple[float, float] | None], bbox: list[float]) -> list[tuple[float, float] | None]:
+    if len(keypoints) < 2 or keypoints[0] is None or keypoints[1] is None:
+        return list(keypoints)
+    if component_type not in {"Resistor", "CapacitorCeramic", "Diode", "LED", "Wire", "CapacitorElectrolytic"}:
+        return list(keypoints)
+    p1, p2 = keypoints[0], keypoints[1]
+    if _bbox_orientation(bbox) == "horizontal":
+        ordered = [p1, p2] if p1[0] <= p2[0] else [p2, p1]
+    else:
+        ordered = [p1, p2] if p1[1] <= p2[1] else [p2, p1]
+    result = list(keypoints)
+    result[0], result[1] = ordered[0], ordered[1]
+    return result
+
+
+def _build_components_from_full_pose(
+    *,
+    detections: list[dict],
+    pose_instances: list[PoseInstance],
+    view_ids: list[str],
+    image_shape: tuple[int, int],
+    pin_detector: PinRoiDetector,
+) -> list[dict]:
+    components: list[dict] = []
+    unavailable_views = [vid for vid in view_ids if vid != "top"]
+    for det in detections:
+        component_type = normalize_component_type(str(det.get("component_type") or det.get("class_name") or "UNKNOWN"))
+        package_type = str(det.get("package_type") or default_package_type(component_type))
+        pin_schema_id = default_pin_schema_id(component_type, package_type)
+        pin_count = default_pin_count(component_type, package_type)
+        pin_names = default_pin_names(component_type, pin_count)
+        matched = _match_pose_instance(det, pose_instances)
+        aligned_points = _aligned_keypoints(
+            component_type,
+            matched.keypoints if matched else [],
+            list(det.get("bbox") or [0, 0, 0, 0]),
+        )
+
+        pins = []
+        for idx, pin_name in enumerate(pin_names, start=1):
+            kp = aligned_points[idx - 1] if matched and idx - 1 < len(aligned_points) else None
+            keypoints_by_view = {vid: None for vid in view_ids}
+            visibility_by_view = {vid: 0 for vid in view_ids}
+            score_by_view = {vid: 0.0 for vid in view_ids}
+            source_by_view = {vid: "unavailable" for vid in view_ids}
+            per_view = {vid: {} for vid in unavailable_views}
+            if kp is not None:
+                keypoints_by_view["top"] = [float(kp[0]), float(kp[1])]
+                visibility_by_view["top"] = 2
+                score_by_view["top"] = float(det.get("confidence", 1.0))
+                source_by_view["top"] = "model"
+            per_view["top"] = {
+                "backend_type": pin_detector.backend_type,
+                "backend_mode": "full_image_model",
+                "interface_version": "full_image_pose_v1",
+                "roi_source": "full_image_pose",
+                **(matched.parse_meta if matched else {}),
+            }
+            pins.append(
+                {
+                    "pin_id": idx,
+                    "pin_name": pin_name,
+                    "keypoints_by_view": keypoints_by_view,
+                    "visibility_by_view": visibility_by_view,
+                    "score_by_view": score_by_view,
+                    "source_by_view": source_by_view,
+                    "confidence": float(det.get("confidence", 1.0)) if kp is not None else 0.0,
+                    "source": "model" if kp is not None else "unavailable",
+                    "metadata": {"per_view": per_view},
+                }
+            )
+
+        roi_by_view = {
+            "top": {
+                "offset": [0, 0],
+                "shape": [int(image_shape[0]), int(image_shape[1])],
+                "source": "full_image_pose",
+                "crop_source": "full_image_pose",
+                "crop_profile": "none",
+                "crop_bounds": None,
+                "body_bbox": list(det.get("bbox") or [0, 0, 0, 0]),
+                "body_size": None,
+                "roi_size": [int(image_shape[1]), int(image_shape[0])],
+                "scale_multiplier": 1.0,
+                "retry_attempts": 0,
+                "association": {},
+                "available": True,
+            }
+        }
+        for view_id in unavailable_views:
+            roi_by_view[view_id] = {
+                "offset": [0, 0],
+                "shape": [0, 0],
+                "source": "unavailable",
+                "crop_source": "unavailable",
+                "crop_profile": "none",
+                "crop_bounds": None,
+                "body_bbox": None,
+                "body_size": None,
+                "roi_size": [0, 0],
+                "scale_multiplier": 1.0,
+                "retry_attempts": 0,
+                "association": {},
+                "available": False,
+            }
+
+        components.append(
+            {
+                "component_id": det.get("component_id"),
+                "component_type": component_type,
+                "class_name": component_type,
+                "package_type": package_type,
+                "pin_schema_id": pin_schema_id,
+                "input_pin_detect_interface_version": "component_pin_detect_v1",
+                "input_detection_interface_version": det.get("input_detection_interface_version") or "component_detect_v1",
+                "part_subtype": det.get("part_subtype") or "",
+                "symmetry_group": det.get("symmetry_group") or default_symmetry_group(component_type),
+                "bbox": list(det.get("bbox") or [0, 0, 0, 0]),
+                "confidence": float(det.get("confidence", 1.0)),
+                "orientation": float(det.get("orientation", 0.0)),
+                "full_image_pose_match": {
+                    "matched": matched is not None,
+                    "pose_bbox": matched.bbox if matched else None,
+                    "pose_class_name": matched.class_name if matched else None,
+                    "pose_component_type": matched.component_type if matched else None,
+                    "pose_confidence": matched.confidence if matched else 0.0,
+                },
+                "pins": pins,
+                "roi": roi_by_view["top"],
+                "roi_by_view": roi_by_view,
+                "pin_detector": {
+                    "interface_version": pin_detector.interface_version,
+                    "backend_type": pin_detector.backend_type,
+                    "backend_mode": "full_image_model",
+                },
+            }
+        )
+    return components
 
 
 def _build_rois_by_view(

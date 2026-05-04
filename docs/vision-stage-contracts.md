@@ -4,7 +4,7 @@
 
 ```text
 S1 component detect
--> S1.5 component ROI pin detect
+-> S1.5 full-image pose pin detect
 -> S2 hole mapping
 ```
 
@@ -119,6 +119,12 @@ S1 component detect
 - `roi_by_view`
 - `pin_detector`
 
+当前主语义:
+
+- `top` 整图 pose 是默认 pin 来源
+- `roi` / `roi_by_view` 仅作为兼容外壳继续保留
+- 若 `pin_detector_mode="full_image_model"`，则不应再把 `roi` 理解成真实裁切推理来源
+
 每个 pin:
 
 - `pin_id`
@@ -136,23 +142,10 @@ S1 component detect
 - `source="model"` 表示来自真实 `YOLO-Pose`
 - `source="heuristic_fallback"` 表示来自 fallback
 - fallback 可以继续存在, 但必须显式标记, 不得伪装成模型输出
-- `roi_by_view[view].source="detected_bbox"` 表示 top 视图使用真实检测框
-- `roi_by_view[view].source="associated_bbox_candidate"` 表示侧视图 ROI 来自 side recall 候选关联
-- `roi_by_view[view].source="shared_bbox_fallback"` 表示当前没有命中 side 关联, 仍暂时共用 top bbox 裁 ROI
-- `roi_by_view[view].crop_source="package_profile_crop"` 表示 ROI 已按封装裁剪策略生成
-- `roi_by_view[view].crop_profile` 表示当前采用的封装裁剪模板
-- `roi_by_view[view].crop_bounds` 表示实际裁剪范围
-- `roi_by_view[view].association` 表示侧视图 ROI 关联元数据
-- 后续真实多视图关联完成后, 只需要替换 `shared_bbox_fallback` 这一路
-
-当前 ROI 裁剪原则:
-
-- 轴向 2-pin 器件沿主轴保留更多 lead 空间
-- DIP 封装沿短轴保留更多 pin 排空间
-- 裁剪不只依赖比例 margin，还会按封装设置最小有效跨度，避免只裁到元件本体而漏掉引脚活动区
-- top 视图优先使用 bbox 几何方向
-- 若历史兼容输入提供 `obb_corners`，可作为裁剪辅助，但不是主路径前提
-- side 视图当前允许走封装驱动的 fallback crop, 但来源必须显式标记
+- `roi_by_view` 现在主要作为兼容输出壳保留:
+  - `top` 视图常见为 `source="full_image_pose"`
+  - 侧视图若未参与默认判定，应明确标记为 `unavailable`
+- 若未来重新启用 ROI 路径，才需要恢复 `associated_bbox_candidate / shared_bbox_fallback` 这类语义
 
 ## S2
 

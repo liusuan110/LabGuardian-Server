@@ -510,6 +510,54 @@ class _FakePoseModel:
         return [_FakePoseResult(self._xy, self._conf)]
 
 
+class _FakeTensorList:
+    def __init__(self, arr):
+        self._arr = np.array(arr, dtype=np.float32)
+
+    def cpu(self):
+        return self
+
+    def numpy(self):
+        return self._arr
+
+    def __len__(self):
+        return len(self._arr)
+
+
+class _FakeBoxes:
+    def __init__(self, xyxy, cls_ids, confs):
+        self.xyxy = _FakeTensorList(xyxy)
+        self.cls = _FakeTensorList(cls_ids)
+        self.conf = _FakeTensorList(confs)
+
+
+class _FakeFullImageKeypoints:
+    def __init__(self, xy, conf):
+        self.xy = _FakeTensorList(xy)
+        self.conf = _FakeTensorList(conf)
+
+
+class _FakeFullImagePoseResult:
+    def __init__(self, *, xyxy, cls_ids, box_confs, kpts_xy, kpts_conf):
+        self.boxes = _FakeBoxes(xyxy, cls_ids, box_confs)
+        self.keypoints = _FakeFullImageKeypoints(kpts_xy, kpts_conf)
+
+
+class _FakeFullImagePoseModel:
+    names = {0: "Resistor"}
+
+    def __call__(self, image, verbose=False, device="cpu"):
+        return [
+            _FakeFullImagePoseResult(
+                xyxy=[[100.0, 200.0, 300.0, 260.0]],
+                cls_ids=[0],
+                box_confs=[0.93],
+                kpts_xy=[[[120.0, 240.0], [280.0, 240.0], [0.0, 0.0]]],
+                kpts_conf=[[0.95, 0.92, 0.0]],
+            )
+        ]
+
+
 class TestPinModelSchemaAlignment:
     def test_two_pin_components_ignore_third_padding_keypoint(self):
         from app.pipeline.vision.pin_model import PinRoiDetector
@@ -599,3 +647,32 @@ class TestAdaptiveRoiRetry:
         assert pin.calls >= 2
         assert comp["roi"]["retry_attempts"] >= 2
         assert float(comp["roi"]["scale_multiplier"]) > 1.0
+
+
+class TestFullImagePoseMainPath:
+    def test_full_image_pose_becomes_default_main_path(self, blank_image_b64):
+        from app.pipeline.stages.s1_detect import run_detect
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from app.pipeline.vision.pin_model import PinRoiDetector
+        from tests.pipeline.mocks import MockComponentDetector
+
+        det = MockComponentDetector([
+            {"class_name": "Resistor", "bbox": (100, 200, 300, 260), "confidence": 0.95}
+        ])
+        s1 = run_detect(images_b64=[blank_image_b64], detector=det)
+
+        pin_det = PinRoiDetector(model_path=None, device="cpu")
+        pin_det.model = _FakeFullImagePoseModel()
+
+        result = run_pin_detect(
+            detections=s1["detections"],
+            images_b64=[blank_image_b64],
+            pin_detector=pin_det,
+        )
+
+        assert result["pin_detector_mode"] == "full_image_model"
+        assert result["side_roi_assoc_backend"] == "not_applicable_full_image_pose"
+        comp = result["components"][0]
+        assert comp["roi"]["source"] == "full_image_pose"
+        assert comp["pins"][0]["keypoints_by_view"]["top"] == [120.0, 240.0]
+        assert comp["pins"][1]["keypoints_by_view"]["top"] == [280.0, 240.0]
