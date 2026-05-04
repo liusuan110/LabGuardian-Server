@@ -72,14 +72,6 @@ def resolve_pin_board_projection(
     When that data is absent, top-view keypoints and legacy side-view pixels keep the
     existing behavior while explicitly marking the fallback method.
     """
-    input_point = _coerce_point2(keypoint)
-    if input_point is None:
-        return BoardProjection(
-            source_view_id=view_id,
-            method="unavailable",
-            reason="missing_keypoint",
-        )
-
     per_view = dict(per_view_metadata or {})
     pin_meta = dict(pin_metadata or {})
     target_view_id = str(
@@ -88,6 +80,7 @@ def resolve_pin_board_projection(
         or (pin_meta.get("projection") or {}).get("target_view_id")
         or "top"
     )
+    input_point = _coerce_point2(keypoint)
 
     provided_board = _first_point2(
         per_view,
@@ -156,6 +149,14 @@ def resolve_pin_board_projection(
             projected_frame_point=projected_top,
             board_point=_frame_to_board_point(calibrator, projected_top),
             method="provided_projected_top_keypoint",
+        )
+
+    if input_point is None:
+        return BoardProjection(
+            source_view_id=view_id,
+            target_view_id=target_view_id,
+            method="unavailable",
+            reason="missing_keypoint",
         )
 
     board_point = _frame_to_board_point(calibrator, input_point)

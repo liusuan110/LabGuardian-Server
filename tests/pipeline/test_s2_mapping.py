@@ -468,6 +468,69 @@ class TestS2Mapping:
         assert side_obs["projection"]["used_3d"] is True
         assert side_obs["projection"]["method"] == "project_points_3d_to_top_2d"
 
+    def test_t5_9b_3d_projection_enters_mapping_without_2d_keypoint(self):
+        from app.pipeline.stages.s2_mapping import run_mapping
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.fixtures import image_to_b64, make_blank_image
+
+        probe = BreadboardCalibrator(rows=63, cols_per_side=5)
+        probe.build_synthetic_grid((480, 640))
+        target_point = probe.logic_to_board_point(("13", "b"))
+        assert target_point is not None
+
+        components = [
+            {
+                "component_id": "R1",
+                "component_type": "Resistor",
+                "pins": [
+                    {
+                        "pin_id": 1,
+                        "pin_name": "pin1",
+                        "keypoints_by_view": {
+                            "top": None,
+                            "left_front": None,
+                        },
+                        "visibility_by_view": {
+                            "top": 0,
+                            "left_front": 0,
+                        },
+                        "score_by_view": {
+                            "left_front": 0.99,
+                        },
+                        "source_by_view": {
+                            "left_front": "model",
+                        },
+                        "confidence": 0.99,
+                        "source": "model",
+                        "metadata": {
+                            "per_view": {
+                                "left_front": {
+                                    "roi_source": "associated_bbox_candidate",
+                                    "point_3d": [target_point[0], target_point[1], 1.0],
+                                },
+                            }
+                        },
+                    }
+                ],
+            }
+        ]
+
+        result = run_mapping(
+            components=components,
+            calibrator=BreadboardCalibrator(rows=63, cols_per_side=5),
+            image_shape=(480, 640),
+            images_b64=[image_to_b64(make_blank_image()) for _ in range(2)],
+        )
+
+        pin_data = result["components"][0]["pins"][0]
+        side_obs = next(obs for obs in pin_data["observations"] if obs["view_id"] == "left_front")
+
+        assert pin_data["hole_id"] == "B13"
+        assert pin_data["board_2d_point"] == pytest.approx([target_point[0], target_point[1]])
+        assert side_obs["visibility"] == 1
+        assert side_obs["projection"]["used_3d"] is True
+        assert side_obs["projection"]["method"] == "orthographic_3d_to_board_2d"
+
     def test_t5_10_board_point_candidates_prioritize_rail(self):
         from app.pipeline.vision.calibrator import BreadboardCalibrator
 

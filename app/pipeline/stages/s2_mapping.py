@@ -512,7 +512,7 @@ def _build_pin_observations_from_predictions(
                 projection=projection,
                 calibrator=calibrator,
             )
-            if pixel
+            if pixel is not None or projection.should_use_board_point_for_mapping
             else []
         )
         candidate_hole_ids = [
@@ -525,6 +525,8 @@ def _build_pin_observations_from_predictions(
             if projection.board_point is not None
             else None
         )
+        if visibility <= 0 and projection.should_use_board_point_for_mapping and candidate_hole_ids:
+            visibility = 1
         observations.append(
             {
                 "view_id": view_id,

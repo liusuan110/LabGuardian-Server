@@ -73,18 +73,11 @@ DEFAULT_COMPONENT_MODEL_PATH = _first_existing_path(
     MODEL_ROOT / "detect_components" / "weights" / "best.pt",
     TRAIN_DEMO_DIR / "detect_components" / "weights" / "best.pt",
 )
+# Pin main path uses full-image YOLO-Pose. Do not auto-select legacy ROI weights here.
 DEFAULT_PIN_MODEL_PATH = _first_existing_path(
     MODEL_ROOT / "pose_components" / "best.pt",
     MODEL_ROOT / "pose_components" / "weights" / "best.pt",
-    MODEL_ROOT / "pin" / "best.pt",
-    MODEL_ROOT / "pin_detector" / "best.pt",
-    MODEL_ROOT / "pose_roi_context_v12" / "best.pt",
-    MODEL_ROOT / "pose_roi_context_v12" / "weights" / "best.pt",
-    MODEL_ROOT / "models" / "best.pt",
-    MODEL_ROOT / "models" / "weights" / "best.pt",
     TRAIN_DEMO_DIR / "pose_components" / "weights" / "best.pt",
-    TRAIN_DEMO_DIR / "models" / "weights" / "best.pt",
-    TRAIN_DEMO_DIR / "pose_roi_context_v12" / "weights" / "best.pt",
 )
 
 
@@ -176,12 +169,6 @@ component_candidates = (
 pin_candidates = (
     model_root / "pose_components" / "best.pt",
     model_root / "pose_components" / "weights" / "best.pt",
-    model_root / "pin" / "best.pt",
-    model_root / "pin_detector" / "best.pt",
-    model_root / "pose_roi_context_v12" / "best.pt",
-    model_root / "pose_roi_context_v12" / "weights" / "best.pt",
-    model_root / "models" / "best.pt",
-    model_root / "models" / "weights" / "best.pt",
 )
 settings.YOLO_MODEL_PATH = (
     _prefer_existing_path(_resolve_model_path(settings.YOLO_MODEL_PATH), None)
