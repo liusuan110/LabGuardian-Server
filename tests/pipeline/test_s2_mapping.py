@@ -7,6 +7,7 @@ T5: Pin→Hole 映射测试 — 验证校准、孔位吸附、候选生成
 from __future__ import annotations
 
 import logging
+import cv2
 import numpy as np
 import pytest
 
@@ -583,3 +584,90 @@ class TestS2Mapping:
         candidates = calibrator.board_point_to_logic_candidates(row_val, col_val, k=5)
 
         assert candidates == [("13", "b")]
+
+    def test_t5_14_auto_calibrate_uses_lattice_refined_quad(self, monkeypatch):
+        from app.pipeline.vision import calibrator as calibrator_module
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+
+        coarse = np.array(
+            [[10.0, 10.0], [110.0, 10.0], [110.0, 90.0], [10.0, 90.0]],
+            dtype=np.float32,
+        )
+        refined = np.array(
+            [[20.0, 30.0], [140.0, 30.0], [140.0, 100.0], [20.0, 100.0]],
+            dtype=np.float32,
+        )
+
+        monkeypatch.setattr(
+            calibrator_module,
+            "detect_white_region_quad",
+            lambda image, fallback_auto=True: (coarse, None, {}),
+        )
+        monkeypatch.setattr(
+            calibrator_module,
+            "_refine_quad_from_hole_lattice",
+            lambda image, quad, main_columns: (refined, {"hole_lattice_refined": True}),
+        )
+
+        def fake_load(self, image, corners):
+            self._row_coords = np.array([10.0, 20.0], dtype=np.float32)
+            self._col_coords = np.array([30.0, 40.0], dtype=np.float32)
+            self._landscape = True
+            self.is_calibrated = True
+            return True
+
+        monkeypatch.setattr(BreadboardCalibrator, "_load_teammate_detected_holes", fake_load)
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        ok = calibrator.auto_calibrate(np.zeros((120, 160, 3), dtype=np.uint8))
+
+        assert ok is True
+        assert calibrator._inv_perspective is not None
+
+        restored = cv2.perspectiveTransform(
+            np.array([[[0.0, 0.0]]], dtype=np.float32),
+            calibrator._inv_perspective,
+        )[0, 0]
+        assert restored[0] == pytest.approx(refined[0, 0])
+        assert restored[1] == pytest.approx(refined[0, 1])
+
+    def test_t5_15_logic_to_board_point_prefers_detected_grid_point(self):
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator._row_coords = np.array([10.0, 20.0], dtype=np.float32)
+        calibrator._col_coords = np.array([100.0, 200.0], dtype=np.float32)
+        calibrator._landscape = True
+        calibrator._grid_matrix = np.zeros((2, 2, 2), dtype=np.float32)
+        calibrator._grid_matrix[0, 0] = [11.5, 98.0]
+        calibrator._grid_matrix[0, 1] = [12.0, 201.0]
+        calibrator._grid_matrix[1, 0] = [19.0, 99.5]
+        calibrator._grid_matrix[1, 1] = [21.0, 202.5]
+        calibrator._col_names = ["a", "b"]
+
+        point = calibrator.logic_to_board_point(("1", "b"))
+
+        assert point == pytest.approx((12.0, 201.0))
+
+    def test_t5_16_board_candidates_use_detected_grid_point_distance(self):
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator._row_coords = np.array([10.0, 20.0], dtype=np.float32)
+        calibrator._col_coords = np.array([100.0, 200.0], dtype=np.float32)
+        calibrator._landscape = True
+        calibrator._grid_origin = (10.0, 100.0)
+        calibrator._grid_spacing = (10.0, 100.0)
+        calibrator._grid_matrix = np.zeros((2, 2, 2), dtype=np.float32)
+        calibrator._grid_matrix[0, 0] = [10.0, 100.0]
+        calibrator._grid_matrix[0, 1] = [10.0, 145.0]
+        calibrator._grid_matrix[1, 0] = [20.0, 100.0]
+        calibrator._grid_matrix[1, 1] = [20.0, 145.0]
+        calibrator._valid_main_mask = np.ones((2, 2), dtype=bool)
+        calibrator._col_names = ["a", "b"]
+        calibrator._top_rails = []
+        calibrator._bot_rails = []
+
+        candidates = calibrator.board_point_to_logic_candidates(10.0, 146.0, k=2)
+
+        assert candidates[0] == ("1", "b")

@@ -22,8 +22,12 @@ _BREAD_DETECT_DIR = Path(__file__).resolve().parents[3] / "bread_detect"
 if str(_BREAD_DETECT_DIR) not in sys.path:
     sys.path.append(str(_BREAD_DETECT_DIR))
 
-from breadboard_detect import GridModel, fit_grid
-from breadboard_detect_white_region import detect_white_region_quad
+from breadboard_detect import GridModel, build_holes, fit_grid, score_image
+from breadboard_detect_white_region import (
+    _locate_score_peak,
+    _refine_quad_from_hole_lattice,
+    detect_white_region_quad,
+)
 
 
 # 标准面包板布局常量 (相对比例)
@@ -100,20 +104,125 @@ class BreadboardCalibrator:
         self.is_calibrated = True
 
     def auto_calibrate(self, image: np.ndarray) -> bool:
-        """自动校准: 使用白区域检测 + 标准网格拟合建立主链校准。"""
+        """自动校准: 使用队友的白区域 + 孔洞晶格细化 + 标准孔位 payload 主路径。"""
         try:
             self._synthetic_grid = False
             corners, _, _ = detect_white_region_quad(
                 image,
                 fallback_auto=True,
             )
-            self.calibrate(corners)
+            refined_corners, _ = _refine_quad_from_hole_lattice(
+                image,
+                corners,
+                main_columns=self._expected_rows,
+            )
+            self.calibrate(refined_corners)
+
+            if self._load_teammate_detected_holes(image, refined_corners):
+                return self.is_grid_ready
+
             warped = self.warp(image)
             self.detect_holes(warped)
             return self.is_grid_ready
         except Exception as e:
             logger.warning(f"[Calibrator] Auto-calibrate failed: {e}")
             return False
+
+    def _load_teammate_detected_holes(
+        self,
+        image: np.ndarray,
+        corners: np.ndarray,
+    ) -> bool:
+        """Run teammate breadboard pipeline and load its detected hole payload."""
+        if self._perspective_matrix is None or self._inv_perspective is None:
+            return False
+
+        warped = self.warp(image)
+        model = fit_grid(warped, self._expected_rows)
+        warped_score = score_image(warped)
+        holes = build_holes(
+            model,
+            self._inv_perspective,
+            warped_score,
+            self._expected_rows,
+        )
+        if not holes:
+            return False
+        holes = self._refine_detected_hole_payload(holes, warped_score)
+
+        payload = {
+            "holes": holes,
+            "warped_size": {
+                "width": warped.shape[1],
+                "height": warped.shape[0],
+            },
+            "quad_tl_tr_br_bl": [
+                [float(x), float(y)]
+                for x, y in corners.astype(np.float32)
+            ],
+        }
+        return self.load_detected_holes(payload)
+
+    def _refine_detected_hole_payload(
+        self,
+        holes: List[Dict[str, Any]],
+        warped_score: np.ndarray,
+    ) -> List[Dict[str, Any]]:
+        """Snap teammate grid holes to local score peaks in warped space."""
+        if not holes:
+            return holes
+
+        visibility_scores = np.asarray(
+            [float(item.get("visible_score", 0.0)) for item in holes],
+            dtype=np.float32,
+        )
+        visibility_cut = max(8.0, float(np.percentile(visibility_scores, 30)))
+        search_radius = int(np.clip(round(min(warped_score.shape[:2]) * 0.010), 8, 14))
+        refined: List[Dict[str, Any]] = []
+        for item in holes:
+            updated = dict(item)
+            visible_score = float(updated.get("visible_score", 0.0))
+            if visible_score < visibility_cut:
+                refined.append(updated)
+                continue
+
+            found = _locate_score_peak(
+                warped_score,
+                float(updated["x_warp"]),
+                float(updated["y_warp"]),
+                radius=search_radius,
+                min_peak=12.0,
+            )
+            if found is None:
+                refined.append(updated)
+                continue
+
+            refined_center, peak_value = found
+            shift = float(
+                np.linalg.norm(
+                    refined_center
+                    - np.array(
+                        [float(updated["x_warp"]), float(updated["y_warp"])],
+                        dtype=np.float32,
+                    )
+                )
+            )
+            if shift > search_radius * 0.95:
+                refined.append(updated)
+                continue
+
+            updated["x_warp"] = round(float(refined_center[0]), 3)
+            updated["y_warp"] = round(float(refined_center[1]), 3)
+            if self._inv_perspective is not None:
+                src = cv2.perspectiveTransform(
+                    np.array([[[updated["x_warp"], updated["y_warp"]]]], dtype=np.float32),
+                    self._inv_perspective,
+                )[0, 0]
+                updated["x_image"] = round(float(src[0]), 3)
+                updated["y_image"] = round(float(src[1]), 3)
+            updated["visible_score"] = round(max(visible_score, float(peak_value)), 3)
+            refined.append(updated)
+        return refined
 
     def warp(self, image: np.ndarray) -> np.ndarray:
         """透视变换"""
@@ -533,9 +642,14 @@ class BreadboardCalibrator:
                     continue
                 if self._valid_main_mask is not None and not bool(self._valid_main_mask[ri, ci]):
                     continue
+                point = (
+                    self._grid_matrix[ri, ci]
+                    if self._grid_matrix is not None
+                    else np.array([self._row_coords[ri], self._col_coords[ci]], dtype=np.float32)
+                )
                 dist = float(
-                    (self._row_coords[ri] - row_val) ** 2
-                    + (self._col_coords[ci] - col_val) ** 2
+                    (float(point[0]) - row_val) ** 2
+                    + (float(point[1]) - col_val) ** 2
                 )
                 row_name = str(ri + 1)
                 col_name = self._col_names[ci] if ci < len(self._col_names) else str(ci)
@@ -621,6 +735,13 @@ class BreadboardCalibrator:
 
         if col_lower in {"rail_top+", "rail_top-", "lp", "ln"}:
             rail_idx = 0 if col_lower in {"rail_top+", "lp"} else 1
+            if self._top_rail_matrix is not None and row_idx < self._top_rail_matrix.shape[0] and rail_idx < self._top_rail_matrix.shape[1]:
+                point = self._top_rail_matrix[row_idx, rail_idx]
+                return (
+                    (float(point[0]), float(point[1]))
+                    if self._landscape
+                    else (float(point[1]), float(point[0]))
+                )
             if row_idx >= len(rail_rows) or rail_idx >= len(self._top_rails):
                 return None
             row_val = float(rail_rows[row_idx])
@@ -629,6 +750,13 @@ class BreadboardCalibrator:
 
         if col_lower in {"rail_bot+", "rail_bot-", "rp", "rn"}:
             rail_idx = 0 if col_lower in {"rail_bot+", "rp"} else 1
+            if self._bot_rail_matrix is not None and row_idx < self._bot_rail_matrix.shape[0] and rail_idx < self._bot_rail_matrix.shape[1]:
+                point = self._bot_rail_matrix[row_idx, rail_idx]
+                return (
+                    (float(point[0]), float(point[1]))
+                    if self._landscape
+                    else (float(point[1]), float(point[0]))
+                )
             if row_idx >= len(rail_rows) or rail_idx >= len(self._bot_rails):
                 return None
             row_val = float(rail_rows[row_idx])
@@ -640,6 +768,13 @@ class BreadboardCalibrator:
         col_idx = self._col_names.index(col_lower)
         if row_idx >= len(self._row_coords) or col_idx >= len(self._col_coords):
             return None
+        if self._grid_matrix is not None and row_idx < self._grid_matrix.shape[0] and col_idx < self._grid_matrix.shape[1]:
+            point = self._grid_matrix[row_idx, col_idx]
+            return (
+                (float(point[0]), float(point[1]))
+                if self._landscape
+                else (float(point[1]), float(point[0]))
+            )
 
         row_val = float(self._row_coords[row_idx])
         col_val = float(self._col_coords[col_idx])
@@ -934,9 +1069,9 @@ class BreadboardCalibrator:
                 dst = np.asarray(
                     [
                         [0.0, 0.0],
-                        [width, 0.0],
-                        [width, height],
-                        [0.0, height],
+                        [max(width - 1.0, 0.0), 0.0],
+                        [max(width - 1.0, 0.0), max(height - 1.0, 0.0)],
+                        [0.0, max(height - 1.0, 0.0)],
                     ],
                     dtype=np.float32,
                 )
