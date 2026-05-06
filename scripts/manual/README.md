@@ -29,9 +29,9 @@
   - `evaluate_full_image_pose_dataset.py`
   - `debug_full_image_pose.py`
   - 当前主要用于单独研究 full-image pose 匹配细节
-- 面包板网格诊断:
-  - `debug_calibrator_grid.py`
-  - 只诊断 calibrator, 不代表完整 pipeline 演示
+- OpenVINO 板端 smoke:
+  - `run_openvino_pose_smoke.py`
+  - 验证 OpenVINO 推理路径下 pose 结果与基线一致
 
 ### 辅助模块
 
@@ -44,15 +44,15 @@
 - `tools/vision/` 目录里目前没有“高置信度可直接删除”的多余脚本
 - 但要注意区分:
 - `run_official_pipeline_debug.py` 才是当前视觉主链调试入口
-- `debug_full_image_pose.py` 是实验脚本, 但当前正式 S1.5 也已切到 full-image pose 主语义
-  - `debug_calibrator_grid.py` 只服务 calibrator 诊断
+  - `debug_full_image_pose.py` 是实验脚本, 但当前正式 S1.5 也已切到 full-image pose 主语义
+  - `run_openvino_pose_smoke.py` 服务 OpenVINO 推理通路 smoke
   - `labelme_pose_dataset_utils.py` 是 helper, 不是一个给团队直接运行的主入口
 
 协作约定:
 
 - 对外演示或回归核对当前系统能力时, 优先使用 `run_official_pipeline_debug.py`。
 - `debug_full_image_pose.py` 这类脚本只能用于研究候选方案, 不能当成正式链路结果解释给团队。
-- 面包板网格化实现当前由队友继续推进，`debug_calibrator_grid.py` 只作为可视化/诊断入口保留。
+- 面包板网格化实现当前由队友继续推进。
 - 新的 pin pose 模型评估优先输出到 `/tmp/...`，不要把一次性可视化结果提交进仓库。
 - 模型资产清单统一维护在 `docs/vision-model-inventory.md`。
 

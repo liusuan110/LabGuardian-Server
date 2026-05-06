@@ -197,6 +197,8 @@ S1 component detect
 - `fusion_confidence`
 - `fusion_margin`
 - `cross_view_agreement`
+- `snap_distance_px`
+- `snap_confidence`
 - `metadata`
 
 约定:
@@ -228,12 +230,29 @@ S1 component detect
 - top visibility = 1 → side 视图 ×1.25
 - top visibility = 0 或 confidence ≤ 0 → top ×0.4, side ×1.6
 
+吸附质量字段 (孔洞吸附精准度):
+
+- `observations[*].snap_distance_px`: 该视图候选 hole 离原始预测点的像素距离
+- `observations[*].snap_normalized`: `snap_distance_px / pitch_px`, 范围 [0, ~1]
+- `observations[*].snap_confidence`: 由距离换算的吸附置信度,
+  公式 `max(0, 1 - (d/pitch)^2)`, 范围 [0, 1]
+- `observations[*].pitch_px`: 当前 calibrator 的代表 grid pitch
+- `observations[*].candidate_distances_px`: 每个候选孔的距离, 与 `candidate_hole_ids` 同序
+- pin 级 `snap_distance_px` / `snap_confidence`: 取所有可见且支持最终 hole
+  的视图中最优值, 作为该 pin 吸附质量的代理
+- 吸附质量也参与多视图投票权重: `_snap_weight` 把 `snap_confidence` 映射到
+  [0.4, 1.0]; 模型置信度高但远离孔的预测会被自动降权
+- 当 pin 上的最优 `snap_confidence < 0.5`, `ambiguity_reasons` 中会出现
+  `low_snap_confidence`
+
 下游消费提示:
 
 - validator / agent 引用 mapped pin 时, 优先用 `evidence_source` 和 `fusion_margin`
   判断证据强度, 不再直接读 `vote_scores` 原始值
 - `cross_view_agreement < 1` 通常意味着 ambiguity, 应配合 `ambiguity_reasons`
   里的 `multi_view_vote_conflict` 一起用
+- `low_snap_confidence` 表示几何吸附本身存疑 (pin keypoint 可能预测偏了),
+  与 `multi_view_vote_conflict` 是两类独立的不确定性来源
 
 协作边界:
 

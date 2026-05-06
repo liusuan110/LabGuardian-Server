@@ -161,6 +161,8 @@ def _map_component_pins(
                 "fusion_confidence": vote_result.get("normalized_confidence", 0.0),
                 "fusion_margin": vote_result.get("margin", 0.0),
                 "cross_view_agreement": vote_result.get("cross_view_agreement", 0.0),
+                "snap_distance_px": _best_snap_distance(observations, hole_id),
+                "snap_confidence": _best_snap_confidence(observations, hole_id),
                 "metadata": {
                     **pin_metadata,
                     "mapping_interface_version": "hole_mapping_v1",
@@ -268,6 +270,37 @@ def _get_board_candidates(
         return []
 
 
+def _scored_candidates_for_projection(
+    *,
+    pixel: Optional[Tuple[float, float]],
+    projection: BoardProjection,
+    calibrator: BreadboardCalibrator,
+    k: int = 5,
+) -> List[Tuple[Tuple[str, str], float]]:
+    """Return `(logic_loc, snap_distance_px)` pairs for the active projection.
+
+    Falls back gracefully when calibrator does not yet expose the scored API.
+    """
+    try:
+        if projection.should_use_board_point_for_mapping:
+            if projection.board_point is None:
+                return []
+            return calibrator.board_point_to_logic_candidates_scored(
+                projection.board_point[0], projection.board_point[1], k=k,
+            )
+        if pixel is None:
+            return []
+        return calibrator.frame_pixel_to_logic_candidates_scored(pixel[0], pixel[1], k=k)
+    except AttributeError:
+        # Older calibrator without scored API: synthesize unscored fallback.
+        return [(loc, float("nan")) for loc in _candidates_for_projection(
+            pixel=pixel, projection=projection, calibrator=calibrator, k=k,
+        )]
+    except Exception as exc:
+        logger.warning("S2 scored candidate lookup failed: %s", exc)
+        return []
+
+
 def _candidates_for_projection(
     *,
     pixel: Optional[Tuple[float, float]],
@@ -278,6 +311,26 @@ def _candidates_for_projection(
     if projection.should_use_board_point_for_mapping:
         return _get_board_candidates(projection.board_point, calibrator, k=k)
     return _get_candidates(pixel, calibrator, k=k)
+
+
+def _snap_confidence_from_distance(distance_px: float, pitch_px: float) -> float:
+    """Convert a snap distance to a [0, 1] confidence score.
+
+    Uses a soft cosine-like falloff so that confidence ≈ 1 at d=0,
+    drops to ≈ 0.5 at half a pitch, and floors at 0 once the predicted
+    point is more than one pitch away from the nearest hole.
+    """
+    if not (distance_px == distance_px):  # NaN
+        return 0.5  # unknown — neutral, do not punish
+    if distance_px == float("inf"):
+        return 0.0
+    if pitch_px <= 1e-3:
+        return 0.0 if distance_px > 1.0 else 1.0
+    ratio = max(0.0, distance_px / pitch_px)
+    if ratio >= 1.0:
+        return 0.0
+    # Smooth falloff: 1 - ratio^2, so quadratic penalty for far snaps.
+    return float(max(0.0, 1.0 - ratio * ratio))
 
 
 def _candidate_hole_ids_from_logic(
@@ -521,8 +574,8 @@ def _build_pin_observations_from_predictions(
             pin_metadata=pin_metadata,
             calibrator=calibrator,
         )
-        logic_candidates = (
-            _candidates_for_projection(
+        scored_candidates = (
+            _scored_candidates_for_projection(
                 pixel=pixel,
                 projection=projection,
                 calibrator=calibrator,
@@ -530,6 +583,7 @@ def _build_pin_observations_from_predictions(
             if pixel is not None or projection.should_use_board_point_for_mapping
             else []
         )
+        logic_candidates = [item[0] for item in scored_candidates]
         candidate_hole_ids = [
             board_schema.normalize_hole_id(board_schema.logic_loc_to_hole_id(logic_loc))
             for logic_loc in logic_candidates
@@ -542,6 +596,17 @@ def _build_pin_observations_from_predictions(
         )
         if visibility <= 0 and projection.should_use_board_point_for_mapping and candidate_hole_ids:
             visibility = 1
+
+        pitch_px = _safe_pitch(calibrator)
+        candidate_distances_px = [float(item[1]) for item in scored_candidates]
+        snap_distance_px = candidate_distances_px[0] if candidate_distances_px else float("inf")
+        snap_normalized = (
+            snap_distance_px / pitch_px
+            if pitch_px > 0 and snap_distance_px not in (float("inf"),) and snap_distance_px == snap_distance_px
+            else float("inf")
+        )
+        snap_confidence = _snap_confidence_from_distance(snap_distance_px, pitch_px)
+
         observations.append(
             {
                 "view_id": view_id,
@@ -555,9 +620,68 @@ def _build_pin_observations_from_predictions(
                 "candidate_logic_locs": [list(item) for item in logic_candidates],
                 "candidate_hole_ids": candidate_hole_ids,
                 "candidate_node_ids": candidate_node_ids,
+                "candidate_distances_px": [round(d, 4) if d != float("inf") else None for d in candidate_distances_px],
+                "snap_distance_px": (
+                    round(snap_distance_px, 4) if snap_distance_px not in (float("inf"),) and snap_distance_px == snap_distance_px else None
+                ),
+                "snap_normalized": (
+                    round(snap_normalized, 4) if snap_normalized != float("inf") else None
+                ),
+                "snap_confidence": round(snap_confidence, 4),
+                "pitch_px": round(pitch_px, 4),
             }
         )
     return observations
+
+
+def _best_snap_distance(observations: List[Dict[str, Any]], hole_id: str) -> Optional[float]:
+    """Distance of the visible observation that voted for the selected hole."""
+    best: Optional[float] = None
+    for obs in observations:
+        if int(obs.get("visibility", 0)) <= 0:
+            continue
+        if hole_id not in (obs.get("candidate_hole_ids") or []):
+            continue
+        dist = obs.get("snap_distance_px")
+        if dist is None:
+            continue
+        if best is None or float(dist) < best:
+            best = float(dist)
+    return best
+
+
+def _best_snap_confidence(observations: List[Dict[str, Any]], hole_id: str) -> float:
+    """Highest snap confidence among visible observations that voted for the hole."""
+    best = 0.0
+    found = False
+    for obs in observations:
+        if int(obs.get("visibility", 0)) <= 0:
+            continue
+        if hole_id not in (obs.get("candidate_hole_ids") or []):
+            continue
+        confidence = obs.get("snap_confidence")
+        if confidence is None:
+            continue
+        try:
+            value = float(confidence)
+        except (TypeError, ValueError):
+            continue
+        found = True
+        if value > best:
+            best = value
+    return float(best) if found else 0.0
+
+
+def _safe_pitch(calibrator: BreadboardCalibrator) -> float:
+    """Read calibrator's representative pitch with a safe default."""
+    try:
+        pitch = float(calibrator.representative_pitch_px())
+    except AttributeError:
+        pitch = 10.0
+    except Exception as exc:
+        logger.warning("S2 pitch lookup failed: %s", exc)
+        pitch = 10.0
+    return pitch if pitch > 1e-3 else 10.0
 
 
 def _pin_ambiguity_reasons(
@@ -586,6 +710,13 @@ def _pin_ambiguity_reasons(
         ordered = sorted(vote_scores.values(), reverse=True)
         if ordered[0] - ordered[1] < 0.2:
             reasons.append("close_vote_margin")
+    decisive_snap_confidences = [
+        float(obs["snap_confidence"])
+        for obs in visible_views
+        if obs.get("snap_confidence") is not None
+    ]
+    if decisive_snap_confidences and max(decisive_snap_confidences) < 0.5:
+        reasons.append("low_snap_confidence")
     return reasons
 
 
@@ -621,7 +752,8 @@ def _vote_hole_from_observations(
         view_weight = _view_weight(view_id) * occlusion_boost.get(view_id, 1.0)
         source_weight = _prediction_source_weight(str(obs.get("source", "")))
         roi_weight = _roi_source_weight(str(obs.get("roi_source", "")))
-        base = confidence * _visibility_weight(visibility) * view_weight * source_weight * roi_weight
+        snap_weight = _snap_weight(obs.get("snap_confidence"))
+        base = confidence * _visibility_weight(visibility) * view_weight * source_weight * roi_weight * snap_weight
         for rank, hole_id in enumerate(obs.get("candidate_hole_ids") or []):
             normalized = board_schema.normalize_hole_id(str(hole_id))
             contribution = base * (0.72 ** rank)
@@ -756,6 +888,24 @@ def _prediction_source_weight(source: str) -> float:
         "mock_model": 1.0,
         "heuristic_fallback": 0.72,
     }.get(source, 0.65)
+
+
+def _snap_weight(snap_confidence: Any) -> float:
+    """Map snap confidence to a vote weight in [0.4, 1.0].
+
+    Snap confidence is in [0, 1]; we floor at 0.4 so a poorly snapped but
+    otherwise high-confidence prediction still contributes (it just can't
+    dominate). Unknown snap (None) is treated as neutral 0.85.
+    """
+    if snap_confidence is None:
+        return 0.85
+    try:
+        value = float(snap_confidence)
+    except (TypeError, ValueError):
+        return 0.85
+    if not (value == value):  # NaN
+        return 0.85
+    return float(max(0.4, min(1.0, value)))
 
 
 def _roi_source_weight(source: str) -> float:
