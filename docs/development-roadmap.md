@@ -24,6 +24,25 @@ LabGuardian 不把事实判断交给大模型。
 
 状态：已完成第一轮。
 
+### 多视图融合 (Phase 0.5)
+
+状态：已完成第一轮。
+
+交付物：
+
+- `_vote_hole_from_observations` 输出归一化置信度 / margin / cross-view agreement
+- 遮挡感知动态重权 `_compute_occlusion_boost`：top 不可见时 side 自动接管
+- pin 级 `evidence_source` (`top|left_front|right_front|fused|explicit_or_fallback|none`)
+- `metadata.fusion.{per_view_contribution, per_view_top1, occlusion_boost}` 完整溯源
+- 回归测试 `test_t5_8a_top_occluded_side_takes_over` /
+  `test_t5_8b_fused_when_views_agree`
+
+下一步：
+
+- 用真实多视图样本跑 top-only vs multi-view A/B，作为 Phase 8 论文的消融数据
+- 加 cross-view 几何一致性约束（同一 hole 的 top 与 side 投影必须落在同一 rail/segment）
+- evidence overlay：把 `decisive_view_id` 和 `per_view_contribution` 渲染到前端
+
 交付物：
 
 - 统一模型路径和 `LABGUARDIAN_MODEL_ROOT`

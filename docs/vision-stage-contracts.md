@@ -192,6 +192,11 @@ S1 component detect
 - `ambiguity_reasons`
 - `is_anchor_pin`
 - `source`
+- `evidence_source`
+- `decisive_view_id`
+- `fusion_confidence`
+- `fusion_margin`
+- `cross_view_agreement`
 - `metadata`
 
 约定:
@@ -201,6 +206,34 @@ S1 component detect
 - `metadata.vote_scores` 记录每个候选 hole 的多视图投票分数
 - `metadata.selected_by="multi_view_weighted_vote"` 表示最终 hole 来自多视图加权投票
 - `calibration.mode="synthetic_fallback"` 时, 下游应将结果视为低可信校准
+
+多视图融合元字段:
+
+- `evidence_source ∈ {top, left_front, right_front, fused, explicit_or_fallback, none}`
+  - `fused`: 至少两个可见视图的 top-1 与最终 hole 一致
+  - `top` / `left_front` / `right_front`: 单一视图主导
+  - `explicit_or_fallback`: 没有可信视图证据，由 explicit hole 或 fallback 兜底
+- `decisive_view_id`: 对最终 hole 贡献最大的视图 id
+- `fusion_confidence`: 赢家得分 / 总得分, 范围 [0,1]
+- `fusion_margin`: (赢家 - 第二名) / 总得分, 范围 [0,1], 越大越稳
+- `cross_view_agreement`: 各可见视图 top-1 与最终 hole 一致的比例
+- `metadata.fusion`:
+  - `per_view_contribution`: 每个视图贡献给赢家的分数
+  - `per_view_top1`: 每个视图自己的 top-1 候选 hole
+  - `occlusion_boost`: top 视图被遮挡时对各视图权重的动态加成因子
+
+遮挡感知规则 (写在 `_compute_occlusion_boost`):
+
+- top visibility ≥ 2 且 confidence > 0.3 → 无调整
+- top visibility = 1 → side 视图 ×1.25
+- top visibility = 0 或 confidence ≤ 0 → top ×0.4, side ×1.6
+
+下游消费提示:
+
+- validator / agent 引用 mapped pin 时, 优先用 `evidence_source` 和 `fusion_margin`
+  判断证据强度, 不再直接读 `vote_scores` 原始值
+- `cross_view_agreement < 1` 通常意味着 ambiguity, 应配合 `ambiguity_reasons`
+  里的 `multi_view_vote_conflict` 一起用
 
 协作边界:
 
