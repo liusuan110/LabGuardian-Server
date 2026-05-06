@@ -848,12 +848,12 @@ class TestS2Mapping:
         calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
         calibrator.build_synthetic_grid((480, 640))
 
-        def fake_candidates(x: float, y: float, k: int = 5):
+        def fake_candidates_scored(x: float, y: float, k: int = 5):
             if x < 200:
-                return [("10", "a"), ("30", "a")]
-            return [("12", "a"), ("32", "a")]
+                return [(("10", "a"), 0.0), (("30", "a"), 40.0)]
+            return [(("12", "a"), 0.0), (("32", "a"), 5.0)]
 
-        calibrator.frame_pixel_to_logic_candidates = fake_candidates  # type: ignore[method-assign]
+        calibrator.frame_pixel_to_logic_candidates_scored = fake_candidates_scored  # type: ignore[method-assign]
 
         components = [
             {
@@ -896,6 +896,11 @@ class TestS2Mapping:
         assert pin2["hole_id"] == "A32"
         assert pin1["metadata"]["selected_by"].endswith("+pair_selector")
         assert pin2["metadata"]["selected_by"].endswith("+pair_selector")
+        assert pin2["snap_distance_px"] == pytest.approx(5.0)
+        assert pin2["snap_confidence"] < 1.0
+        assert pin2["fusion_margin"] < 0.0
+        assert pin2["cross_view_agreement"] == pytest.approx(0.0)
+        assert pin2["metadata"]["fusion"]["decisive_view_id"] == "top"
 
     def test_t5_13_electrolytic_pair_selector_avoids_same_hole_for_both_pins(self):
         from app.pipeline.stages.s2_mapping import run_mapping
@@ -952,6 +957,62 @@ class TestS2Mapping:
         assert pin1["hole_id"] == "I20"
         assert pin2["hole_id"] == "I21"
         assert pin1["hole_id"] != pin2["hole_id"]
+
+    def test_t5_14_low_snap_confidence_uses_selected_hole(self):
+        from app.pipeline.stages.s2_mapping import run_mapping
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.fixtures import image_to_b64, make_blank_image
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+
+        def fake_candidates_scored(x: float, y: float, k: int = 5):
+            if x < 200:
+                return [(("10", "a"), 0.0), (("30", "a"), 25.0)]
+            return [(("12", "a"), 0.0), (("32", "a"), 8.0)]
+
+        calibrator.frame_pixel_to_logic_candidates_scored = fake_candidates_scored  # type: ignore[method-assign]
+
+        components = [
+            {
+                "component_id": "W1",
+                "component_type": "Wire",
+                "pins": [
+                    {
+                        "pin_id": 1,
+                        "pin_name": "pin1",
+                        "keypoints_by_view": {"top": [120.0, 240.0]},
+                        "visibility_by_view": {"top": 2},
+                        "score_by_view": {"top": 0.95},
+                        "source_by_view": {"top": "model"},
+                        "confidence": 0.95,
+                        "source": "model",
+                    },
+                    {
+                        "pin_id": 2,
+                        "pin_name": "pin2",
+                        "keypoints_by_view": {"top": [300.0, 240.0]},
+                        "visibility_by_view": {"top": 2},
+                        "score_by_view": {"top": 0.95},
+                        "source_by_view": {"top": "model"},
+                        "confidence": 0.95,
+                        "source": "model",
+                    },
+                ],
+            }
+        ]
+
+        result = run_mapping(
+            components=components,
+            calibrator=calibrator,
+            image_shape=(480, 640),
+            images_b64=[image_to_b64(make_blank_image())],
+        )
+
+        pin2 = result["components"][0]["pins"][1]
+        assert pin2["hole_id"] == "A32"
+        assert pin2["snap_confidence"] < 0.5
+        assert "low_snap_confidence" in pin2["ambiguity_reasons"]
 
     def test_t5_12_detected_holes_json_maps_original_pixels(self):
         from pathlib import Path

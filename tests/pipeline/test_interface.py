@@ -98,6 +98,49 @@ class TestInterfaceVersions:
         assert result["interface_version"] == "hole_mapping_v1"
         assert "board_schema_id" in result
 
+    def test_t9_3a_topology_input_preserves_s2_evidence_metadata(self):
+        """S2 新增的 evidence/fusion/snap 字段应继续传到 topology 输入层。"""
+        from app.pipeline.topology_input import normalize_components_for_topology
+        from app.domain.board_schema import BoardSchema
+
+        schema = BoardSchema.default_breadboard()
+        normalized = normalize_components_for_topology(
+            components=[
+                {
+                    "component_id": "R1",
+                    "component_type": "Resistor",
+                    "pins": [
+                        {
+                            "pin_id": 1,
+                            "pin_name": "pin1",
+                            "hole_id": "A1",
+                            "electrical_node_id": "ROW_1_L",
+                            "confidence": 0.95,
+                            "observations": [],
+                            "source": "model",
+                            "evidence_source": "left_front",
+                            "decisive_view_id": "left_front",
+                            "fusion_confidence": 0.73,
+                            "fusion_margin": 0.21,
+                            "cross_view_agreement": 0.5,
+                            "snap_distance_px": 3.0,
+                            "snap_confidence": 0.91,
+                        }
+                    ],
+                }
+            ],
+            board_schema=schema,
+        )
+
+        pin = normalized[0].pins[0]
+        assert pin.metadata["evidence_source"] == "left_front"
+        assert pin.metadata["decisive_view_id"] == "left_front"
+        assert pin.metadata["fusion_confidence"] == 0.73
+        assert pin.metadata["fusion_margin"] == 0.21
+        assert pin.metadata["cross_view_agreement"] == 0.5
+        assert pin.metadata["snap_distance_px"] == 3.0
+        assert pin.metadata["snap_confidence"] == 0.91
+
     def test_t9_4_s3_interface_fields(self):
         """S3 返回完整的接口字段"""
         from app.pipeline.stages.s3_topology import run_topology

@@ -125,6 +125,7 @@ def _map_component_pins(
             candidate_hole_ids,
             observations,
             vote_scores=vote_result["vote_scores"],
+            selected_hole_id=hole_id,
         )
         selected_board_point = _selected_board_point(
             selected_logic=selected_logic,
@@ -218,6 +219,7 @@ def _apply_component_pair_selector(
         return mapped_pins
 
     for idx, resolved_pin in enumerate(resolved):
+        _refresh_selected_pin_evidence(resolved_pin, board_schema=board_schema)
         mapped_pins[idx] = resolved_pin
     return mapped_pins
 def _ensure_calibrated(
@@ -640,13 +642,11 @@ def _best_snap_distance(observations: List[Dict[str, Any]], hole_id: str) -> Opt
     for obs in observations:
         if int(obs.get("visibility", 0)) <= 0:
             continue
-        if hole_id not in (obs.get("candidate_hole_ids") or []):
-            continue
-        dist = obs.get("snap_distance_px")
+        dist = _observation_hole_snap_distance(obs, hole_id)
         if dist is None:
             continue
-        if best is None or float(dist) < best:
-            best = float(dist)
+        if best is None or dist < best:
+            best = dist
     return best
 
 
@@ -657,19 +657,43 @@ def _best_snap_confidence(observations: List[Dict[str, Any]], hole_id: str) -> f
     for obs in observations:
         if int(obs.get("visibility", 0)) <= 0:
             continue
-        if hole_id not in (obs.get("candidate_hole_ids") or []):
+        distance = _observation_hole_snap_distance(obs, hole_id)
+        if distance is None:
             continue
-        confidence = obs.get("snap_confidence")
-        if confidence is None:
-            continue
-        try:
-            value = float(confidence)
-        except (TypeError, ValueError):
-            continue
+        pitch_px = _observation_pitch_px(obs)
+        value = _snap_confidence_from_distance(distance, pitch_px)
         found = True
         if value > best:
             best = value
     return float(best) if found else 0.0
+
+
+def _observation_hole_snap_distance(obs: Dict[str, Any], hole_id: str) -> Optional[float]:
+    """Return this observation's distance to a specific candidate hole."""
+    candidates = list(obs.get("candidate_hole_ids") or [])
+    try:
+        index = candidates.index(hole_id)
+    except ValueError:
+        return None
+    distances = list(obs.get("candidate_distances_px") or [])
+    if index >= len(distances):
+        return None
+    distance = distances[index]
+    if distance is None:
+        return None
+    try:
+        value = float(distance)
+    except (TypeError, ValueError):
+        return None
+    return value if value == value else None
+
+
+def _observation_pitch_px(obs: Dict[str, Any]) -> float:
+    try:
+        pitch = float(obs.get("pitch_px", 10.0))
+    except (TypeError, ValueError):
+        return 10.0
+    return pitch if pitch > 1e-3 else 10.0
 
 
 def _safe_pitch(calibrator: BreadboardCalibrator) -> float:
@@ -689,6 +713,7 @@ def _pin_ambiguity_reasons(
     observations: List[Dict[str, Any]],
     *,
     vote_scores: Dict[str, float],
+    selected_hole_id: Optional[str],
 ) -> List[str]:
     reasons: List[str] = []
     if len(candidate_hole_ids) > 1:
@@ -710,12 +735,7 @@ def _pin_ambiguity_reasons(
         ordered = sorted(vote_scores.values(), reverse=True)
         if ordered[0] - ordered[1] < 0.2:
             reasons.append("close_vote_margin")
-    decisive_snap_confidences = [
-        float(obs["snap_confidence"])
-        for obs in visible_views
-        if obs.get("snap_confidence") is not None
-    ]
-    if decisive_snap_confidences and max(decisive_snap_confidences) < 0.5:
+    if selected_hole_id and _best_snap_confidence(observations, selected_hole_id) < 0.5:
         reasons.append("low_snap_confidence")
     return reasons
 
@@ -739,8 +759,6 @@ def _vote_hole_from_observations(
     occlusion_boost = _compute_occlusion_boost(observations)
 
     vote_scores: Dict[str, float] = {}
-    per_view_contribution: Dict[str, float] = {}
-    per_view_top1: Dict[str, str] = {}
     for obs in observations:
         visibility = int(obs.get("visibility", 0))
         if visibility <= 0:
@@ -748,19 +766,11 @@ def _vote_hole_from_observations(
         confidence = float(obs.get("confidence", 0.0))
         if confidence <= 0.0:
             continue
-        view_id = str(obs.get("view_id", ""))
-        view_weight = _view_weight(view_id) * occlusion_boost.get(view_id, 1.0)
-        source_weight = _prediction_source_weight(str(obs.get("source", "")))
-        roi_weight = _roi_source_weight(str(obs.get("roi_source", "")))
-        snap_weight = _snap_weight(obs.get("snap_confidence"))
-        base = confidence * _visibility_weight(visibility) * view_weight * source_weight * roi_weight * snap_weight
+        base = _observation_vote_base(obs, occlusion_boost)
         for rank, hole_id in enumerate(obs.get("candidate_hole_ids") or []):
             normalized = board_schema.normalize_hole_id(str(hole_id))
             contribution = base * (0.72 ** rank)
             vote_scores[normalized] = vote_scores.get(normalized, 0.0) + contribution
-            if rank == 0 and view_id:
-                per_view_top1[view_id] = normalized
-                per_view_contribution[view_id] = per_view_contribution.get(view_id, 0.0) + contribution
 
     if explicit_hole_id:
         normalized = board_schema.normalize_hole_id(str(explicit_hole_id))
@@ -772,52 +782,20 @@ def _vote_hole_from_observations(
 
     ordered = [item[0] for item in sorted(vote_scores.items(), key=lambda item: item[1], reverse=True)]
     selected = ordered[0] if ordered else (board_schema.normalize_hole_id(str(explicit_hole_id)) if explicit_hole_id else None)
-
-    total_score = sum(vote_scores.values()) or 0.0
-    winner_score = vote_scores.get(selected, 0.0) if selected else 0.0
-    runner_up = vote_scores[ordered[1]] if len(ordered) >= 2 else 0.0
-    normalized_confidence = (winner_score / total_score) if total_score > 0 else 0.0
-    margin = ((winner_score - runner_up) / total_score) if total_score > 0 else 0.0
-
-    decisive_view_id = ""
-    if selected:
-        contributing = {
-            vid: amount for vid, amount in per_view_contribution.items()
-            if per_view_top1.get(vid) == selected
-        }
-        if contributing:
-            decisive_view_id = max(contributing.items(), key=lambda kv: kv[1])[0]
-
-    visible_views = [str(obs.get("view_id", "")) for obs in observations if int(obs.get("visibility", 0)) > 0]
-    visible_views = [vid for vid in visible_views if vid]
-    if selected and visible_views:
-        agreeing = sum(1 for vid in visible_views if per_view_top1.get(vid) == selected)
-        cross_view_agreement = agreeing / len(visible_views)
-    else:
-        cross_view_agreement = 0.0
-
-    if not selected:
-        evidence_source = "none"
-    elif len([vid for vid in visible_views if per_view_top1.get(vid) == selected]) >= 2:
-        evidence_source = "fused"
-    elif decisive_view_id:
-        evidence_source = decisive_view_id
-    else:
-        evidence_source = "explicit_or_fallback"
+    support = _summarize_selected_hole_support(
+        observations=observations,
+        board_schema=board_schema,
+        vote_scores=vote_scores,
+        selected_hole_id=selected,
+        occlusion_boost=occlusion_boost,
+    )
 
     return {
         "selected_hole_id": selected,
         "candidate_hole_ids": ordered,
         "vote_scores": {key: round(val, 6) for key, val in sorted(vote_scores.items(), key=lambda item: item[1], reverse=True)},
         "selected_by": "multi_view_weighted_vote" if ordered else "explicit_or_empty",
-        "normalized_confidence": round(normalized_confidence, 6),
-        "margin": round(margin, 6),
-        "cross_view_agreement": round(cross_view_agreement, 6),
-        "decisive_view_id": decisive_view_id,
-        "evidence_source": evidence_source,
-        "per_view_contribution": {vid: round(val, 6) for vid, val in per_view_contribution.items()},
-        "per_view_top1": dict(per_view_top1),
-        "occlusion_boost": {vid: round(val, 6) for vid, val in occlusion_boost.items()},
+        **support,
     }
 
 
@@ -853,6 +831,132 @@ def _compute_occlusion_boost(observations: List[Dict[str, Any]]) -> Dict[str, fl
         else:
             boost[vid] = side_factor
     return boost
+
+
+def _observation_vote_base(obs: Dict[str, Any], occlusion_boost: Dict[str, float]) -> float:
+    visibility = int(obs.get("visibility", 0))
+    confidence = float(obs.get("confidence", 0.0))
+    view_id = str(obs.get("view_id", ""))
+    view_weight = _view_weight(view_id) * occlusion_boost.get(view_id, 1.0)
+    source_weight = _prediction_source_weight(str(obs.get("source", "")))
+    roi_weight = _roi_source_weight(str(obs.get("roi_source", "")))
+    snap_weight = _snap_weight(obs.get("snap_confidence"))
+    return confidence * _visibility_weight(visibility) * view_weight * source_weight * roi_weight * snap_weight
+
+
+def _summarize_selected_hole_support(
+    *,
+    observations: List[Dict[str, Any]],
+    board_schema: BoardSchema,
+    vote_scores: Dict[str, float],
+    selected_hole_id: Optional[str],
+    occlusion_boost: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
+    occlusion_boost = dict(occlusion_boost or _compute_occlusion_boost(observations))
+    per_view_top1: Dict[str, str] = {}
+    per_view_contribution: Dict[str, float] = {}
+    visible_views: List[str] = []
+
+    for obs in observations:
+        visibility = int(obs.get("visibility", 0))
+        if visibility <= 0:
+            continue
+        view_id = str(obs.get("view_id", ""))
+        if not view_id:
+            continue
+        visible_views.append(view_id)
+        raw_candidates = [board_schema.normalize_hole_id(str(hole_id)) for hole_id in (obs.get("candidate_hole_ids") or [])]
+        if raw_candidates:
+            per_view_top1[view_id] = raw_candidates[0]
+        if not selected_hole_id or selected_hole_id not in raw_candidates:
+            continue
+        rank = raw_candidates.index(selected_hole_id)
+        contribution = _observation_vote_base(obs, occlusion_boost) * (0.72 ** rank)
+        per_view_contribution[view_id] = per_view_contribution.get(view_id, 0.0) + contribution
+
+    total_score = sum(vote_scores.values()) or 0.0
+    selected_score = vote_scores.get(selected_hole_id, 0.0) if selected_hole_id else 0.0
+    best_other = max((score for hole_id, score in vote_scores.items() if hole_id != selected_hole_id), default=0.0)
+    normalized_confidence = (selected_score / total_score) if total_score > 0 else 0.0
+    margin = ((selected_score - best_other) / total_score) if total_score > 0 else 0.0
+
+    decisive_view_id = ""
+    if per_view_contribution:
+        decisive_view_id = max(per_view_contribution.items(), key=lambda kv: kv[1])[0]
+
+    if selected_hole_id and visible_views:
+        agreeing = sum(1 for vid in visible_views if per_view_top1.get(vid) == selected_hole_id)
+        cross_view_agreement = agreeing / len(visible_views)
+    else:
+        cross_view_agreement = 0.0
+
+    if not selected_hole_id:
+        evidence_source = "none"
+    elif len([vid for vid in visible_views if per_view_top1.get(vid) == selected_hole_id]) >= 2:
+        evidence_source = "fused"
+    elif decisive_view_id:
+        evidence_source = decisive_view_id
+    else:
+        evidence_source = "explicit_or_fallback"
+
+    return {
+        "normalized_confidence": round(normalized_confidence, 6),
+        "margin": round(margin, 6),
+        "cross_view_agreement": round(cross_view_agreement, 6),
+        "decisive_view_id": decisive_view_id,
+        "evidence_source": evidence_source,
+        "per_view_contribution": {vid: round(val, 6) for vid, val in per_view_contribution.items()},
+        "per_view_top1": dict(per_view_top1),
+        "occlusion_boost": {vid: round(val, 6) for vid, val in occlusion_boost.items()},
+    }
+
+
+def _refresh_selected_pin_evidence(
+    pin: Dict[str, Any],
+    *,
+    board_schema: BoardSchema,
+) -> None:
+    hole_id = str(pin.get("hole_id") or "")
+    observations = list(pin.get("observations") or [])
+    metadata = dict(pin.get("metadata") or {})
+    vote_scores_raw = dict(metadata.get("vote_scores") or {})
+    vote_scores = {
+        board_schema.normalize_hole_id(str(candidate_hole)): float(score)
+        for candidate_hole, score in vote_scores_raw.items()
+    }
+    fusion = _summarize_selected_hole_support(
+        observations=observations,
+        board_schema=board_schema,
+        vote_scores=vote_scores,
+        selected_hole_id=hole_id or None,
+    )
+
+    pin["evidence_source"] = fusion["evidence_source"]
+    pin["decisive_view_id"] = fusion["decisive_view_id"]
+    pin["fusion_confidence"] = fusion["normalized_confidence"]
+    pin["fusion_margin"] = fusion["margin"]
+    pin["cross_view_agreement"] = fusion["cross_view_agreement"]
+    pin["snap_distance_px"] = _best_snap_distance(observations, hole_id) if hole_id else None
+    pin["snap_confidence"] = _best_snap_confidence(observations, hole_id) if hole_id else 0.0
+    ambiguity_reasons = _pin_ambiguity_reasons(
+        list(pin.get("candidate_hole_ids") or []),
+        observations,
+        vote_scores=vote_scores,
+        selected_hole_id=hole_id or None,
+    )
+    pin["ambiguity_reasons"] = ambiguity_reasons
+    pin["is_ambiguous"] = bool(ambiguity_reasons)
+    metadata["fusion"] = {
+        "evidence_source": fusion["evidence_source"],
+        "decisive_view_id": fusion["decisive_view_id"],
+        "normalized_confidence": fusion["normalized_confidence"],
+        "margin": fusion["margin"],
+        "cross_view_agreement": fusion["cross_view_agreement"],
+        "per_view_contribution": fusion["per_view_contribution"],
+        "per_view_top1": fusion["per_view_top1"],
+        "occlusion_boost": fusion["occlusion_boost"],
+    }
+    pin["metadata"] = metadata
 
 
 def _first_logic_for_hole(
