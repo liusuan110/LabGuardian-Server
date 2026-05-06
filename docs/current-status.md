@@ -35,6 +35,9 @@ RAG、PCM Agent、VLM 和前端指导都应消费这条主链输出，不应绕�
 - S2 原生输出 `components[].pins[]`
 - S2 多视图融合：动态遮挡感知重权 + 归一化 `fusion_confidence` / `fusion_margin`
   + `cross_view_agreement` + `evidence_source` (`top|left_front|right_front|fused|...`)
+- S2 孔洞吸附质量：`snap_distance_px` / `snap_confidence` / `snap_normalized`
+  per observation 与 pin, 吸附质量进入投票权重并触发 `low_snap_confidence`
+  ambiguity reason
 - S3 / S4 已消费结构化 pins 输入
 - `topology_input.py` 已将正式主输入收口到结构化 `components[].pins[]`
 - OBB 仅作为历史权重兼容解析分支，不再是默认检测路线

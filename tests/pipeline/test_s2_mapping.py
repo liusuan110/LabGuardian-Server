@@ -328,6 +328,152 @@ class TestS2Mapping:
         assert result["components"] == []
         assert "calibration" in result
 
+    def test_t5_snap_confidence_high_when_pixel_on_grid(self):
+        """精确落在已检测网格点上 -> snap_confidence 接近 1, snap_distance_px 接近 0。"""
+        from app.pipeline.stages.s2_mapping import run_mapping
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.fixtures import image_to_b64, make_blank_image
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        target = calibrator.logic_to_board_point(("13", "b"))
+        assert target is not None
+
+        components = [
+            {
+                "component_id": "R1",
+                "component_type": "Resistor",
+                "pins": [
+                    {
+                        "pin_id": 1,
+                        "pin_name": "pin1",
+                        "keypoints_by_view": {"top": [float(target[0]), float(target[1])]},
+                        "visibility_by_view": {"top": 2},
+                        "score_by_view": {"top": 0.95},
+                        "source_by_view": {"top": "model"},
+                        "confidence": 0.95,
+                        "source": "model",
+                    }
+                ],
+            }
+        ]
+
+        result = run_mapping(
+            components=components,
+            calibrator=calibrator,
+            image_shape=(480, 640),
+            images_b64=[image_to_b64(make_blank_image())],
+        )
+
+        pin = result["components"][0]["pins"][0]
+        assert pin["snap_distance_px"] is not None
+        assert pin["snap_distance_px"] < 0.5
+        assert pin["snap_confidence"] >= 0.95
+        # ambiguity reasons should not contain low_snap_confidence
+        assert "low_snap_confidence" not in pin["ambiguity_reasons"]
+
+    def test_t5_snap_confidence_low_when_pixel_far_from_hole(self):
+        """像素离最近孔大约半个 pitch -> snap_confidence 明显降低, 触发 low_snap_confidence。"""
+        from app.pipeline.stages.s2_mapping import run_mapping
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.fixtures import image_to_b64, make_blank_image
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        target = calibrator.logic_to_board_point(("13", "b"))
+        pitch = calibrator.representative_pitch_px()
+        assert target is not None and pitch > 0
+        # offset 在 0.85 pitch 处, 仍属于同一孔的吸附半径但置信度极低
+        offset = pitch * 0.85
+
+        components = [
+            {
+                "component_id": "R1",
+                "component_type": "Resistor",
+                "pins": [
+                    {
+                        "pin_id": 1,
+                        "pin_name": "pin1",
+                        "keypoints_by_view": {"top": [float(target[0]) + offset, float(target[1])]},
+                        "visibility_by_view": {"top": 2},
+                        "score_by_view": {"top": 0.95},
+                        "source_by_view": {"top": "model"},
+                        "confidence": 0.95,
+                        "source": "model",
+                    }
+                ],
+            }
+        ]
+
+        result = run_mapping(
+            components=components,
+            calibrator=calibrator,
+            image_shape=(480, 640),
+            images_b64=[image_to_b64(make_blank_image())],
+        )
+
+        pin = result["components"][0]["pins"][0]
+        assert pin["snap_confidence"] < 0.6
+        assert "low_snap_confidence" in pin["ambiguity_reasons"]
+
+    def test_t5_snap_low_confidence_loses_vote_to_well_snapped_view(self):
+        """两视图候选不同时, snap 更准的视图应在投票中胜出, 即便 model confidence 略低。"""
+        from app.pipeline.stages.s2_mapping import run_mapping
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.fixtures import image_to_b64, make_blank_image
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        good_target = calibrator.logic_to_board_point(("13", "b"))
+        bad_target = calibrator.logic_to_board_point(("12", "b"))
+        assert good_target is not None and bad_target is not None
+        pitch = calibrator.representative_pitch_px()
+
+        # top 视图 model 置信度高但偏离 B12 接近一个 pitch（snap 差）
+        # left_front 视图 model 置信度略低但精准吸附 B13
+        components = [
+            {
+                "component_id": "R1",
+                "component_type": "Resistor",
+                "pins": [
+                    {
+                        "pin_id": 1,
+                        "pin_name": "pin1",
+                        "keypoints_by_view": {
+                            "top": [float(bad_target[0]) + pitch * 0.85, float(bad_target[1])],
+                            "left_front": [float(good_target[0]), float(good_target[1])],
+                        },
+                        "visibility_by_view": {"top": 2, "left_front": 2},
+                        "score_by_view": {"top": 0.95, "left_front": 0.85},
+                        "source_by_view": {"top": "model", "left_front": "model"},
+                        "confidence": 0.95,
+                        "source": "model",
+                        "metadata": {
+                            "per_view": {
+                                "top": {"roi_source": "detected_bbox"},
+                                "left_front": {"roi_source": "associated_bbox_candidate"},
+                            }
+                        },
+                    }
+                ],
+            }
+        ]
+
+        result = run_mapping(
+            components=components,
+            calibrator=calibrator,
+            image_shape=(480, 640),
+            images_b64=[image_to_b64(make_blank_image()) for _ in range(2)],
+        )
+
+        pin = result["components"][0]["pins"][0]
+        assert pin["hole_id"] == "B13"
+        assert pin["evidence_source"] == "left_front"
+        # 决定性视图的 snap_confidence 应明显高于 top
+        left_obs = next(obs for obs in pin["observations"] if obs["view_id"] == "left_front")
+        top_obs = next(obs for obs in pin["observations"] if obs["view_id"] == "top")
+        assert left_obs["snap_confidence"] > top_obs["snap_confidence"]
+
     def test_t5_8a_top_occluded_side_takes_over(self):
         """top 完全被遮挡时，side 视图应接管决策并标记 evidence_source。"""
         from app.pipeline.stages.s2_mapping import run_mapping

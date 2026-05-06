@@ -456,6 +456,63 @@ class BreadboardCalibrator:
         board_x, board_y = self.frame_pixel_to_board_point(px, py)
         return self.board_point_to_logic_candidates(board_x, board_y, k=k)
 
+    def representative_pitch_px(self) -> float:
+        """Median grid pitch in board-plane pixels, used to normalize snap distance."""
+        if self._row_coords is None or self._col_coords is None:
+            return 10.0
+        row_pitch = self._median_pitch(self._row_coords)
+        col_pitch = self._median_pitch(self._col_coords)
+        pitch = min(row_pitch, col_pitch)
+        return float(pitch) if pitch > 1e-3 else 10.0
+
+    def board_point_to_logic_candidates_scored(
+        self, board_x: float, board_y: float, k: int = 5,
+    ) -> List[Tuple[Tuple[str, str], float]]:
+        """Like board_point_to_logic_candidates, but each item carries the snap distance.
+
+        Returns a list of `(logic_loc, distance_px)` tuples in the same order as
+        the unscored API. Distance is the Euclidean distance from the input
+        board-plane point to the candidate hole's stored grid coordinate; if a
+        candidate has no resolvable board point, distance is `inf` so it sorts
+        last but stays available as a fallback.
+        """
+        candidates = self.board_point_to_logic_candidates(board_x, board_y, k=k)
+        if not candidates:
+            return []
+        scored: List[Tuple[Tuple[str, str], float]] = []
+        for logic_loc in candidates:
+            target = self.logic_to_board_point(logic_loc)
+            if target is None:
+                scored.append((logic_loc, float("inf")))
+                continue
+            dx = float(target[0]) - float(board_x)
+            dy = float(target[1]) - float(board_y)
+            scored.append((logic_loc, float((dx * dx + dy * dy) ** 0.5)))
+        return scored
+
+    def frame_pixel_to_logic_candidates_scored(
+        self, px: float, py: float, k: int = 5,
+    ) -> List[Tuple[Tuple[str, str], float]]:
+        """Frame-pixel variant of `board_point_to_logic_candidates_scored`.
+
+        Routes through the unscored API so test/runtime monkey-patches still apply,
+        then computes the snap distance in the board plane.
+        """
+        candidates = self.frame_pixel_to_logic_candidates(px, py, k=k)
+        if not candidates:
+            return []
+        board_x, board_y = self.frame_pixel_to_board_point(px, py)
+        scored: List[Tuple[Tuple[str, str], float]] = []
+        for logic_loc in candidates:
+            target = self.logic_to_board_point(logic_loc)
+            if target is None:
+                scored.append((logic_loc, float("inf")))
+                continue
+            dx = float(target[0]) - float(board_x)
+            dy = float(target[1]) - float(board_y)
+            scored.append((logic_loc, float((dx * dx + dy * dy) ** 0.5)))
+        return scored
+
     def logic_to_board_point(self, logic_loc: Tuple[str, str]) -> Optional[Tuple[float, float]]:
         """Map a logic location to its calibrated 2D board-plane point."""
         if self._row_coords is None or self._col_coords is None:

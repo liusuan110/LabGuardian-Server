@@ -37,11 +37,32 @@ LabGuardian 不把事实判断交给大模型。
 - 回归测试 `test_t5_8a_top_occluded_side_takes_over` /
   `test_t5_8b_fused_when_views_agree`
 
+### 孔洞吸附质量 (Phase 0.6)
+
+状态：已完成第一轮。
+
+交付物：
+
+- `BreadboardCalibrator.{board_point,frame_pixel}_to_logic_candidates_scored`
+  返回 `(logic_loc, distance_px)`，路由穿过 unscored API 兼容 monkey-patch
+- `representative_pitch_px()` 暴露代表 grid pitch
+- `_snap_confidence_from_distance` (二次衰减 `1 - (d/pitch)^2`) 形成 [0,1] 置信度
+- observation / pin 上 `snap_distance_px` / `snap_confidence` / `snap_normalized`
+  / `pitch_px` / `candidate_distances_px` 全部展开
+- `_snap_weight` 把吸附质量乘进多视图投票权重，最低 0.4 防止完全失声
+- `low_snap_confidence` 进入 ambiguity reasons
+- 回归测试: `test_t5_snap_confidence_high_when_pixel_on_grid` /
+  `test_t5_snap_confidence_low_when_pixel_far_from_hole` /
+  `test_t5_snap_low_confidence_loses_vote_to_well_snapped_view`
+
 下一步：
 
 - 用真实多视图样本跑 top-only vs multi-view A/B，作为 Phase 8 论文的消融数据
 - 加 cross-view 几何一致性约束（同一 hole 的 top 与 side 投影必须落在同一 rail/segment）
-- evidence overlay：把 `decisive_view_id` 和 `per_view_contribution` 渲染到前端
+- evidence overlay：把 `decisive_view_id` / `per_view_contribution` /
+  `snap_distance_px` 渲染到前端
+- 标定误差分解：在已检测网格上计算 keypoint→hole 的系统偏移分布
+  (mean / p50 / p95)，沉淀为 `tests/manual/smoke/test_snap_quality_distribution.py`
 
 交付物：
 
