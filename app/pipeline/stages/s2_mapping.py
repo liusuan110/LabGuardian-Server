@@ -156,6 +156,11 @@ def _map_component_pins(
                 "ambiguity_reasons": ambiguity_reasons,
                 "is_anchor_pin": bool(pin.get("is_anchor_pin", False)),
                 "source": str(pin.get("source") or "unknown"),
+                "evidence_source": vote_result.get("evidence_source", "unknown"),
+                "decisive_view_id": vote_result.get("decisive_view_id", ""),
+                "fusion_confidence": vote_result.get("normalized_confidence", 0.0),
+                "fusion_margin": vote_result.get("margin", 0.0),
+                "cross_view_agreement": vote_result.get("cross_view_agreement", 0.0),
                 "metadata": {
                     **pin_metadata,
                     "mapping_interface_version": "hole_mapping_v1",
@@ -166,6 +171,16 @@ def _map_component_pins(
                         if selected_board_point is not None
                         else None
                     ),
+                    "fusion": {
+                        "evidence_source": vote_result.get("evidence_source", "unknown"),
+                        "decisive_view_id": vote_result.get("decisive_view_id", ""),
+                        "normalized_confidence": vote_result.get("normalized_confidence", 0.0),
+                        "margin": vote_result.get("margin", 0.0),
+                        "cross_view_agreement": vote_result.get("cross_view_agreement", 0.0),
+                        "per_view_contribution": vote_result.get("per_view_contribution", {}),
+                        "per_view_top1": vote_result.get("per_view_top1", {}),
+                        "occlusion_boost": vote_result.get("occlusion_boost", {}),
+                    },
                 },
             }
         )
@@ -581,7 +596,20 @@ def _vote_hole_from_observations(
     explicit_hole_id: str | None,
     fallback_candidates: List[str],
 ) -> Dict[str, Any]:
+    """多视图加权投票：选择最终 hole 并产出可解释的融合元信息。
+
+    输出 vote_scores 同时附带：
+    - normalized_confidence: 归一化到 [0,1] 的赢家得分
+    - margin: 赢家与第二名的差值（同样归一化）
+    - cross_view_agreement: 各可见视图 top-1 与赢家一致的比例
+    - per_view_contribution: 每个视图贡献给赢家的分数
+    - decisive_view_id / evidence_source: top|left_front|right_front|fused
+    """
+    occlusion_boost = _compute_occlusion_boost(observations)
+
     vote_scores: Dict[str, float] = {}
+    per_view_contribution: Dict[str, float] = {}
+    per_view_top1: Dict[str, str] = {}
     for obs in observations:
         visibility = int(obs.get("visibility", 0))
         if visibility <= 0:
@@ -589,13 +617,18 @@ def _vote_hole_from_observations(
         confidence = float(obs.get("confidence", 0.0))
         if confidence <= 0.0:
             continue
-        view_weight = _view_weight(str(obs.get("view_id", "")))
+        view_id = str(obs.get("view_id", ""))
+        view_weight = _view_weight(view_id) * occlusion_boost.get(view_id, 1.0)
         source_weight = _prediction_source_weight(str(obs.get("source", "")))
         roi_weight = _roi_source_weight(str(obs.get("roi_source", "")))
         base = confidence * _visibility_weight(visibility) * view_weight * source_weight * roi_weight
         for rank, hole_id in enumerate(obs.get("candidate_hole_ids") or []):
             normalized = board_schema.normalize_hole_id(str(hole_id))
-            vote_scores[normalized] = vote_scores.get(normalized, 0.0) + base * (0.72 ** rank)
+            contribution = base * (0.72 ** rank)
+            vote_scores[normalized] = vote_scores.get(normalized, 0.0) + contribution
+            if rank == 0 and view_id:
+                per_view_top1[view_id] = normalized
+                per_view_contribution[view_id] = per_view_contribution.get(view_id, 0.0) + contribution
 
     if explicit_hole_id:
         normalized = board_schema.normalize_hole_id(str(explicit_hole_id))
@@ -607,12 +640,87 @@ def _vote_hole_from_observations(
 
     ordered = [item[0] for item in sorted(vote_scores.items(), key=lambda item: item[1], reverse=True)]
     selected = ordered[0] if ordered else (board_schema.normalize_hole_id(str(explicit_hole_id)) if explicit_hole_id else None)
+
+    total_score = sum(vote_scores.values()) or 0.0
+    winner_score = vote_scores.get(selected, 0.0) if selected else 0.0
+    runner_up = vote_scores[ordered[1]] if len(ordered) >= 2 else 0.0
+    normalized_confidence = (winner_score / total_score) if total_score > 0 else 0.0
+    margin = ((winner_score - runner_up) / total_score) if total_score > 0 else 0.0
+
+    decisive_view_id = ""
+    if selected:
+        contributing = {
+            vid: amount for vid, amount in per_view_contribution.items()
+            if per_view_top1.get(vid) == selected
+        }
+        if contributing:
+            decisive_view_id = max(contributing.items(), key=lambda kv: kv[1])[0]
+
+    visible_views = [str(obs.get("view_id", "")) for obs in observations if int(obs.get("visibility", 0)) > 0]
+    visible_views = [vid for vid in visible_views if vid]
+    if selected and visible_views:
+        agreeing = sum(1 for vid in visible_views if per_view_top1.get(vid) == selected)
+        cross_view_agreement = agreeing / len(visible_views)
+    else:
+        cross_view_agreement = 0.0
+
+    if not selected:
+        evidence_source = "none"
+    elif len([vid for vid in visible_views if per_view_top1.get(vid) == selected]) >= 2:
+        evidence_source = "fused"
+    elif decisive_view_id:
+        evidence_source = decisive_view_id
+    else:
+        evidence_source = "explicit_or_fallback"
+
     return {
         "selected_hole_id": selected,
         "candidate_hole_ids": ordered,
         "vote_scores": {key: round(val, 6) for key, val in sorted(vote_scores.items(), key=lambda item: item[1], reverse=True)},
         "selected_by": "multi_view_weighted_vote" if ordered else "explicit_or_empty",
+        "normalized_confidence": round(normalized_confidence, 6),
+        "margin": round(margin, 6),
+        "cross_view_agreement": round(cross_view_agreement, 6),
+        "decisive_view_id": decisive_view_id,
+        "evidence_source": evidence_source,
+        "per_view_contribution": {vid: round(val, 6) for vid, val in per_view_contribution.items()},
+        "per_view_top1": dict(per_view_top1),
+        "occlusion_boost": {vid: round(val, 6) for vid, val in occlusion_boost.items()},
     }
+
+
+def _compute_occlusion_boost(observations: List[Dict[str, Any]]) -> Dict[str, float]:
+    """当 top 视图被遮挡或缺失时，把侧视图权重动态抬高。
+
+    规则:
+    - top visibility >= 2 且置信度合理 -> 不调整 (boost=1.0)
+    - top visibility == 1 -> side 视图 *= 1.25
+    - top visibility == 0 或 confidence <= 0 -> side 视图 *= 1.6, top *= 0.4
+    这样 side 在 top 完全失效时能压倒 top 的低权重残留。
+    """
+    boost: Dict[str, float] = {}
+    top_obs = next((obs for obs in observations if str(obs.get("view_id", "")) == "top"), None)
+    if top_obs is None:
+        return boost
+    top_visibility = int(top_obs.get("visibility", 0))
+    top_confidence = float(top_obs.get("confidence", 0.0))
+    if top_visibility >= 2 and top_confidence > 0.3:
+        return boost
+    if top_visibility >= 1 and top_confidence > 0.0:
+        side_factor = 1.25
+        top_factor = 1.0
+    else:
+        side_factor = 1.6
+        top_factor = 0.4
+    for obs in observations:
+        vid = str(obs.get("view_id", ""))
+        if not vid:
+            continue
+        if vid == "top":
+            boost[vid] = top_factor
+        else:
+            boost[vid] = side_factor
+    return boost
 
 
 def _first_logic_for_hole(

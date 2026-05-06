@@ -33,6 +33,8 @@ RAG、PCM Agent、VLM 和前端指导都应消费这条主链输出，不应绕�
 - S1 默认主路径：`YOLO-Detect`
 - S1.5 默认主路径：`YOLO-Pose full-image pin detect`
 - S2 原生输出 `components[].pins[]`
+- S2 多视图融合：动态遮挡感知重权 + 归一化 `fusion_confidence` / `fusion_margin`
+  + `cross_view_agreement` + `evidence_source` (`top|left_front|right_front|fused|...`)
 - S3 / S4 已消费结构化 pins 输入
 - `topology_input.py` 已将正式主输入收口到结构化 `components[].pins[]`
 - OBB 仅作为历史权重兼容解析分支，不再是默认检测路线
@@ -135,8 +137,10 @@ Agent 设计详见：
 ### Pipeline / Vision
 
 - 用真实图片继续 A/B 比较 `pose_roi_context_v12` 和 `train_demo/models`
-- 增强 side-view observation，不再只停留在轻量占位
-- 将真实多视图 pin 证据更完整地接到 S2 vote metadata
+- 拍摄含遮挡的真实样本, 把 `fusion_confidence` / `cross_view_agreement` 作为
+  hole mapping 准确率的代理指标, 跑 top-only vs multi-view 的 A/B
+- 把 `metadata.fusion.per_view_contribution` 接入 evidence overlay, 给前端展示
+  "哪个视图救了这一针"
 - 继续优化 `calibrator.py` 的实物板网格拟合策略
 - 若比赛实物板和默认 schema 有差异，补正式 board schema JSON
 
