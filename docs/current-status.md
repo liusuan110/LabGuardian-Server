@@ -38,6 +38,21 @@ RAG、PCM Agent、VLM 和前端指导都应消费这条主链输出，不应绕�
 - S2 孔洞吸附质量：`snap_distance_px` / `snap_confidence` / `snap_normalized`
   per observation 与 pin, 吸附质量进入投票权重并触发 `low_snap_confidence`
   ambiguity reason
+- Phase 6 — VLM 微观缺陷接口 + 白盒门控：`app/services/vlm/` 增量包
+  (defect_types / micro_defect helper)，`app/agent/nodes/vlm_explain.py`
+  仅在 `verify_draft_answer` 报 `needs_micro_inspection=True` 时被路由
+  (短路 / 极性等白盒 family 永远不触发)；`vlm_explanation_v1` schema 三
+  provider 一致；DK-2500 NPU smoke 脚本 `scripts/manual/tools/vlm/smoke_npu_vlm.py`
+  独立可跑 (不进 CI)
+- Phase 5 — 硬件遥测后端：`app/services/telemetry/` (cpu/igpu/npu samplers
+  + 5Hz async loop + ring buffer + pub/sub fanout) + `/ws/telemetry/system`
+  WebSocket + `/api/v1/telemetry/latest` REST，`telemetry_frame_v1` schema
+  对前端可契约化消费；macOS / 容器无 sysfs 时优雅降级 `unavailable`
+- Phase 4 — Diagnostic Agent 升级到 ReAct + Self-Reflection 循环：
+  `app/agent/nodes/` (10 节点) + `app/agent/llm/` (template provider，
+  openvino_genai_text 留 stub)，`DiagnosticState.react_trace` 完整记录每步
+  Plan/Act/Observe/Reflect，硬上限 `REACT_MAX_ITERATIONS=4`，工具白名单
+  来自 `ContextPack.allowed_tools`
 - S3 / S4 已消费结构化 pins 输入
 - `topology_input.py` 已将正式主输入收口到结构化 `components[].pins[]`
 - OBB 仅作为历史权重兼容解析分支，不再是默认检测路线

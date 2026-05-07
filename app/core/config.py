@@ -158,6 +158,17 @@ class Settings(BaseSettings):
     VLM_OPENVINO_CACHE_DIR: str | None = None
     VLM_MAX_NEW_TOKENS: int = 256
 
+    # ---- Diagnostic Agent ReAct loop (Phase 4) ----
+    AGENT_LLM_PROVIDER: str = "template"  # template | openvino_genai_text (Phase 7+)
+    REACT_MAX_ITERATIONS: int = 4
+    AGENT_LLM_OPENVINO_MODEL_DIR: str | None = None
+    AGENT_LLM_OPENVINO_DEVICE: str = "GPU"
+
+    # ---- Hardware telemetry (Phase 5) ----
+    TELEMETRY_ENABLED: bool = True
+    TELEMETRY_HZ: float = 5.0
+    TELEMETRY_RING_SECONDS: int = 120
+
     @field_validator("DEBUG", mode="before")
     @classmethod
     def _parse_debug(cls, value):

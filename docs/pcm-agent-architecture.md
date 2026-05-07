@@ -48,19 +48,35 @@ ClassroomState station
 -> final_answer
 ```
 
-第一版完全规则化，便于测试和论文消融。当前 LangGraph 壳子已经落地为：
+第一版完全规则化，便于测试和论文消融。**Phase 4 已经把单次 generate_draft
+升级为 ReAct 循环 (Plan → Act → Observe → Reflect)**：
 
 ```text
 START
 -> classify_error
 -> build_context_pack
--> run_tools
--> generate_draft
+-> react_plan ──→ react_observe ──→ react_reflect ─┬─(continue)→ react_plan
+                                                     └─(finalize)→ verify_answer
 -> verify_answer
 -> repair_answer?
 -> final_answer
 END
 ```
+
+ReAct 节点拆分到 `app/agent/nodes/`，LLM provider 抽到
+`app/agent/llm/`：
+
+- `react_plan_node` 用 `LLMProvider.plan()` 决定下一个工具，**强制限制在
+  `ContextPack.allowed_tools` 白名单内**（防幻觉）
+- `react_observe_node` 调度该工具并把 `ToolResult` 摘要写回 `ReActStep.observation`
+- `react_reflect_node` 用 `LLMProvider.reflect()`（默认 = `verify_draft_answer`
+  规则评分）形成 `ReflectionResult`，并据此决定循环控制
+- 终止条件：planner 返回 `tool_call=None`（已没有更多工具可用）或迭代到
+  `max_react_iterations` 上限（默认 4）
+- 每个迭代写入 `DiagnosticState.react_trace` 一个 `ReActStep`
+  + `graph_metrics` 一条 `react_{plan|observe|reflect}_{i}` 度量
+- Phase 4 默认 `AGENT_LLM_PROVIDER=template` 走确定性模板 provider；
+  `openvino_genai_text` 已留 stub，等 Phase 7+ DK-2500 NPU 验证后接入
 
 ## Error Routing
 
@@ -106,10 +122,15 @@ LangGraph 已经只承担编排职责，不重新判断事实。LLM 适配器和
 
 ## Next Step
 
-1. 增加 graph metrics：节点耗时、context facts count、tool call count。
-2. 为 verifier 失败后进入 `repair_answer` 的分支补 golden tests。
-3. 在 feature flag 后接入可选 LLM `generate_draft` node。
-4. 增加 `datasheet_lookup_tool` 本地 fallback，再进入外部文档检索。
+1. ✅ 增加 graph metrics：节点耗时、context facts count、tool call count。
+2. ✅ 为 verifier 失败后进入 `repair_answer` 的分支补 golden tests。
+3. ✅ Phase 4 — 把 generate_draft 升级为 ReAct + Self-Reflection 循环（template provider）。
+4. ✅ Phase 6 — 在 `verify_answer` 后插入 `vlm_explain_node`，仅在
+   `verification_report.needs_micro_inspection=True` 时触发（白盒优先）。
+   微观缺陷类型见 `app/services/vlm/defect_types.py`。
+   DK-2500 NPU smoke 见 `scripts/manual/tools/vlm/smoke_npu_vlm.py`。
+5. Phase 7+ — 接入 `openvino_genai_text` 真实 LLM provider，DK-2500 NPU 验证后启用。
+6. 增加 `datasheet_lookup_tool` 本地 fallback，再进入外部文档检索。
 
 ## Roadmap Link
 

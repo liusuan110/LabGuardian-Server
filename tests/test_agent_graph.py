@@ -46,18 +46,23 @@ def test_diagnostic_graph_runs_white_box_short_circuit_path() -> None:
     assert state.verification_report is not None
     assert state.verification_report.passed is True
     metric_names = [metric.node_name for metric in state.graph_metrics]
-    assert metric_names == [
-        "classify_error",
-        "build_context_pack",
-        "run_tools",
-        "generate_draft",
-        "verify_answer",
-        "finalize_answer",
-    ]
-    run_tools_metric = next(
-        metric for metric in state.graph_metrics if metric.node_name == "run_tools"
-    )
-    assert run_tools_metric.payload["tool_count"] == len(tool_names)
+    # Phase 4 ReAct loop: classify → context → (plan/observe/reflect)*N → verify → finalize.
+    # We assert presence + ordering of the deterministic boundary nodes; ReAct iterations
+    # vary by tool count, so we only assert the loop ran at least once.
+    assert metric_names[:2] == ["classify_error", "build_context_pack"]
+    assert "react_plan_0" in metric_names
+    assert "react_observe_0" in metric_names
+    assert "react_reflect_0" in metric_names
+    assert metric_names[-2:] == ["verify_answer", "finalize_answer"]
+    # ReAct trace should record at least one step and terminate cleanly.
+    assert state.react_iterations >= 1
+    assert state.react_iterations <= state.max_react_iterations
+    assert state.react_terminate_reason in {
+        "no_more_tools",
+        "verifier_passed_no_more_tools",
+        "max_iterations_reached",
+    }
+    assert len(state.react_trace) >= 1
     context_metric = next(
         metric for metric in state.graph_metrics if metric.node_name == "build_context_pack"
     )
@@ -103,8 +108,9 @@ def test_diagnostic_graph_routes_failed_verification_to_repair(monkeypatch) -> N
         error_tag_service=ErrorTagService(),
     )
 
+    # Phase 4: build_diagnostic_template_answer is now invoked from react_reflect_node.
     monkeypatch.setattr(
-        "app.agent.graph.build_diagnostic_template_answer",
+        "app.agent.nodes.react_reflect.build_diagnostic_template_answer",
         lambda **_kwargs: "这个电路可能有问题。",
     )
 

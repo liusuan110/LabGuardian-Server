@@ -13,8 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.deps import get_version_service
-from app.api.v1 import angnt, classroom, kb, pipeline, websocket
+from app.api.v1 import angnt, classroom, kb, pipeline, telemetry_ws, websocket
 from app.schemas.version import VersionInfoResponse
+from app.services.telemetry import get_telemetry_service
 from app.services.version_service import VersionService
 
 
@@ -22,8 +23,13 @@ from app.services.version_service import VersionService
 async def lifespan(app: FastAPI):
     """应用生命周期: 启动/关闭时执行的逻辑"""
     # startup
-    yield
-    # shutdown
+    telemetry = get_telemetry_service()
+    await telemetry.start()
+    try:
+        yield
+    finally:
+        # shutdown
+        await telemetry.stop()
 
 
 app = FastAPI(
@@ -50,6 +56,7 @@ app.include_router(pipeline.router, prefix=settings.API_V1_PREFIX)
 app.include_router(angnt.router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb.router, prefix=settings.API_V1_PREFIX)
 app.include_router(websocket.router)
+app.include_router(telemetry_ws.router)
 
 
 @app.get("/health")
