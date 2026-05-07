@@ -42,6 +42,9 @@
 - [edge-deployment.md](edge-deployment.md)  
   板端模型路径、默认推理尺寸、runtime metadata 和 edge 后续优化方向。
 
+- [telemetry-protocol.md](telemetry-protocol.md)  
+  DK-2500 硬件遥测 WebSocket / REST 协议、`telemetry_frame_v1` schema、配置与降级行为。
+
 ## Maintenance Rule
 
 - 改 pipeline 协议时，同步更新 `vision-stage-contracts.md` 和 `tests/pipeline/`。

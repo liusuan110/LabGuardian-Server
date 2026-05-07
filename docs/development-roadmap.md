@@ -37,6 +37,93 @@ LabGuardian 不把事实判断交给大模型。
 - 回归测试 `test_t5_8a_top_occluded_side_takes_over` /
   `test_t5_8b_fused_when_views_agree`
 
+### Phase 6 — VLM 微观缺陷接入 + 白盒门控
+
+状态：已完成第一轮 (增量包；vlm_service.py 保留向后兼容)。
+
+交付物：
+
+- `app/services/vlm/` 增量包：
+  - `defect_types.MicroDefectType` 三类枚举 + 中英别名 + 每类 prompt
+  - `suggest_defect_types()` 按 error_tags 反推 likely defect
+  - `analyze_micro_defect()` 复用 `VlmService.explain_rc_pack`，
+    在 prompt 前缀加缺陷指引，输出 schema 不变 + 加 `defect_type` 字段
+- `app/agent/contracts.py` `VerificationReport` 加
+  `needs_micro_inspection / suspected_defect_types`；新 `VlmFinding` 模型；
+  `DiagnosticState.vlm_findings` 字段
+- `app/agent/verification.py` 白盒门控：仅在 missing_component /
+  incomplete_circuit / unknown family + 有 finding 或显式微观 tag 时开启
+- `app/agent/nodes/vlm_explain.py` 新节点，门关闭时 no-op，门开时
+  按建议缺陷类型逐一调用 VLM 并把简短结论 append 到 draft
+- `app/agent/graph.py` `verify_answer` 后条件边扩成三向
+  (`pass→finalize / fail→repair / passed+needs_vlm→vlm_explain`)
+- `scripts/manual/tools/vlm/smoke_npu_vlm.py` DK-2500 NPU smoke
+  (NOT in CI)，参数 `--device NPU/GPU/CPU`，输出 `vlm_explanation_v1` JSON
+- 回归测试 `tests/test_vlm_provider_contract.py` 10 条覆盖：
+  schema 一致性、defect prompt 完备、tag→defect 推断、白盒门控正反例、
+  节点 no-op 路径、三向 routing
+
+下一步：
+
+- Phase 7+ 真机 NPU 验证：跑 smoke_npu_vlm.py 比对 template baseline
+- 加微观缺陷标注 fixture 数据集，做端到端定量测试
+- (stretch) 把 `vlm_service.py` 拆 provider 包 (base/template/openai/openvino)，
+  本轮为最小风险保留单文件
+
+### Phase 5 — 硬件遥测后端 + WebSocket
+
+状态：已完成第一轮 (后端 + schema + 集成测试 + 协议文档；前端独立)。
+
+交付物：
+
+- `app/services/telemetry/{schema,service,samplers}.py` — 5Hz 异步采样、
+  ring buffer、pub/sub fanout (慢消费者丢老不阻塞采样)
+- `samplers/{cpu,igpu,npu}.py` — psutil + sysfs 优先、defensive、缺失时
+  返回 `None` 不抛
+- `app/api/v1/telemetry_ws.py` — `/ws/telemetry/system` WS 推流
+  + `/api/v1/telemetry/latest` REST smoke
+- `app/main.py` lifespan 启停；feature flag `TELEMETRY_ENABLED`
+- 配置项 `TELEMETRY_ENABLED / TELEMETRY_HZ / TELEMETRY_RING_SECONDS`
+- `docs/telemetry-protocol.md` — `telemetry_frame_v1` schema、curl/wscat
+  示例、降级行为、性能预算
+- `tests/test_telemetry_service.py` 7 条覆盖：
+  start/stop、disabled 短路、subscriber 收帧、mark_stage 透传、
+  macOS 降级、WS 端到端、REST 拉最新
+
+下一步：
+
+- DK-2500 现场 1h soak (RSS / CPU 自身占用) 数据沉淀
+- NPU sysfs 路径在 DK-2500 验证后细化 `samplers/npu.py`
+- pipeline orchestrator 加 `mark_stage` 钩子 (一行调用)
+
+### Phase 4 — Diagnostic Agent ReAct + Self-Reflection
+
+状态：已完成第一轮 (template provider, 无真实 LLM)。
+
+交付物：
+
+- `app/agent/contracts.py` 新增 `ToolCall / ReActStep / ReflectionResult`
+  以及 `DiagnosticState.{react_trace, react_iterations, max_react_iterations,
+  react_terminate_reason}` 字段
+- `app/agent/llm/` 抽象层：`base.LLMProvider` ABC、`template_provider`
+  (规则 emulator)、`openvino_genai_text` stub (Phase 7+ 接入)、`factory`
+  自动 fallback
+- `app/agent/nodes/` 节点拆分：classify / context / tools_node /
+  react_plan / react_observe / react_reflect / verify / repair / finalize
+- `app/agent/graph.py` 重构：3 节点 ReAct 子循环，硬上限 + planner 主动
+  声明无更多工具时终止，verifier-pass 仅记录不短路终止 (避免漏掉
+  fault_case / safety 等后续工具上下文)
+- 配置项 `AGENT_LLM_PROVIDER`, `REACT_MAX_ITERATIONS`,
+  `AGENT_LLM_OPENVINO_MODEL_DIR`, `AGENT_LLM_OPENVINO_DEVICE`
+- 回归测试 `tests/test_agent_react_loop.py` 10 条覆盖：硬上限触发、
+  无工具时早终止、planner 工具白名单、坏 provider 工具被丢弃、
+  trace 形态、template provider plan/reflect 契约、sequential fallback
+
+下一步：
+
+- Phase 7+ 在 DK-2500 NPU validated 后接 `openvino_genai_text`
+  小 LLM (Qwen2.5-1.5B-Int4 候选)，complex 路径下取代规则 plan/reflect
+
 ### 孔洞吸附质量 (Phase 0.6)
 
 状态：已完成第一轮。

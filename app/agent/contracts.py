@@ -114,6 +114,23 @@ class VerificationReport(BaseModel):
     passed: bool
     issues: list[str] = Field(default_factory=list)
     required_rewrite_hint: str = ""
+    # Phase 6 — white-box gate for VLM micro-defect inspection.
+    # Set True ONLY when validator confidence is low and error context
+    # plausibly maps to a micro defect (BURN_MARK / UNSTRIPPED_WIRE / COLD_SOLDER).
+    needs_micro_inspection: bool = False
+    suspected_defect_types: list[str] = Field(default_factory=list)
+
+
+class VlmFinding(BaseModel):
+    """One VLM-attributed finding produced by `vlm_explain_node`."""
+
+    defect_type: str
+    provider: str = "template"
+    status: str = "completed"
+    conclusion: str = ""
+    evidence: str = ""
+    fix_steps: list[str] = Field(default_factory=list)
+    raw: dict[str, Any] = Field(default_factory=dict)
 
 
 class GraphNodeMetric(BaseModel):
@@ -123,6 +140,42 @@ class GraphNodeMetric(BaseModel):
     duration_ms: float = 0.0
     status: str = "ok"
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolCall(BaseModel):
+    """A single planned tool invocation emitted by the LLM/template planner.
+
+    The planner is restricted to `ContextPack.allowed_tools` to prevent the
+    agent from inventing tool names (white-box defense).
+    """
+
+    tool_name: ToolName | str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    rationale: str = ""
+
+
+class ReActStep(BaseModel):
+    """One iteration of the Plan → Act → Observe → Reflect ReAct loop.
+
+    The shape is provider-agnostic: a deterministic template provider and
+    a future OpenVINO-backed text LLM both produce the same schema.
+    """
+
+    iteration: int
+    thought: str = ""
+    tool_call: ToolCall | None = None
+    observation: dict[str, Any] = Field(default_factory=dict)
+    reflection: str = ""
+    terminate: bool = False
+    duration_ms: float = 0.0
+
+
+class ReflectionResult(BaseModel):
+    """Critic outcome that decides whether the ReAct loop should terminate."""
+
+    passed: bool
+    reason: str = ""
+    next_hint: str = ""
 
 
 class DiagnosticState(BaseModel):
@@ -140,6 +193,13 @@ class DiagnosticState(BaseModel):
     verification_report: VerificationReport | None = None
     final_answer: str = ""
     graph_metrics: list[GraphNodeMetric] = Field(default_factory=list)
+    # Phase 4 ReAct trace (Plan → Act → Observe → Reflect)
+    react_trace: list[ReActStep] = Field(default_factory=list)
+    react_iterations: int = 0
+    max_react_iterations: int = 4
+    react_terminate_reason: str = ""
+    # Phase 6 — VLM micro-defect findings (only populated when verifier gates allow it)
+    vlm_findings: list[VlmFinding] = Field(default_factory=list)
 
 
 DiagnosticState.model_rebuild()
