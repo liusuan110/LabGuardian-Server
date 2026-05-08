@@ -132,6 +132,19 @@ class Settings(BaseSettings):
     PIN_CANDIDATE_K: int = 5
     REFERENCE_CIRCUIT_PATH: str | None = None
 
+    # ---- S2 引脚孔位吸附调参 (Tier 1) ----
+    # 距离门：在 calibrator.board_point_to_logic_candidates 中限制候选孔范围
+    # gate = min(min_dist + max(pitch * LOWER, 3.0), max(pitch * UPPER, 8.0))
+    # 默认 (0.35, 0.95) 偏宽，把 0.95 收到 0.65 后相邻孔不再无条件入选；
+    # 透视形变严重时 (>30°) 可放回 (0.30, 0.85)
+    MAPPING_DIST_GATE_LOWER: float = 0.25
+    MAPPING_DIST_GATE_UPPER: float = 0.65
+    # 多视图加权投票时的 rank 衰减底数：base ** rank
+    # 0.72 偏柔和易翻盘；0.45 让 top-1 几乎垄断票权
+    MAPPING_VOTE_RANK_DECAY: float = 0.45
+    # close_vote_margin 阈值：top-1 与 top-2 票数差小于该值即标 ambiguous
+    MAPPING_AMBIGUOUS_MARGIN: float = 0.35
+
     # ---- 课堂 ----
     STATION_ONLINE_TIMEOUT: float = 10.0
 

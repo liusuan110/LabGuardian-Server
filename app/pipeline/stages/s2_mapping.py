@@ -10,6 +10,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.core.config import settings
 from app.domain.board_schema import BoardSchema
 from app.pipeline.vision.image_io import decode_images_b64, decode_summary
 from app.pipeline.vision.calibrator import BreadboardCalibrator
@@ -195,6 +196,14 @@ def _map_component_pins(
     )
 
 
+# Tier 2A: 把 axial 2-pin 元件也纳入 pair selector
+# - TWO_PIN_AXIAL：刚性轴向，受 bbox 长度强约束、限制同 row band
+# - TWO_PIN_FREE：跳线 / 电解电容，方向松、不限 row band
+TWO_PIN_AXIAL = {"Resistor", "Diode", "CapacitorCeramic", "Inductor"}
+TWO_PIN_FREE = {"Wire", "CapacitorElectrolytic"}
+TWO_PIN_PAIRED = TWO_PIN_AXIAL | TWO_PIN_FREE
+
+
 def _apply_component_pair_selector(
     *,
     comp: dict,
@@ -203,17 +212,19 @@ def _apply_component_pair_selector(
     board_schema: BoardSchema,
 ) -> List[Dict[str, Any]]:
     component_type = normalize_component_type(str(comp.get("component_type") or comp.get("class_name") or "UNKNOWN"))
-    if component_type not in {"Wire", "CapacitorElectrolytic"}:
+    if component_type not in TWO_PIN_PAIRED:
         return mapped_pins
     if len(mapped_pins) < 2:
         return mapped_pins
 
     pair = mapped_pins[:2]
+    bbox_prior = _bbox_layout_prior(comp, component_type, calibrator)
     resolved = _resolve_two_pin_hole_pair(
         pins=pair,
         component_type=component_type,
         calibrator=calibrator,
         board_schema=board_schema,
+        bbox_prior=bbox_prior,
     )
     if resolved is None:
         return mapped_pins
@@ -368,12 +379,113 @@ def _candidate_node_ids(candidate_holes: List[str], board_schema: BoardSchema) -
     return ordered
 
 
+# 不同类型元件的 bbox→pin_spacing 关系不同：
+#   * 刚性轴向 (Resistor / Diode / Inductor)：
+#       YOLO bbox 紧贴 body，leads 在 bbox 边缘 90° 弯下入孔
+#       → pin_spacing ≈ bbox 长边 (lead margin ≈ 0)
+#   * 瓷片电容 (CapacitorCeramic)：
+#       bbox 覆盖整个元件，pin 在 bbox 内偏底部 1 pitch
+#       → pin_spacing ≈ bbox 长边
+#   * 电解电容 (CapacitorElectrolytic)：
+#       bbox 覆盖圆柱，axial leads 略超 bbox
+#       → pin_spacing ≈ bbox 长边 + 0~0.4 pitch  (放宽容差搞定)
+#   * 跳线 (Wire)：
+#       bbox 包住弯曲的整段线，pin_spacing < bbox 长边，差值不可预测
+#       → 不用 bbox prior，回退 seed 距离
+LEAD_MARGIN_PITCHES = {
+    "Resistor": 0.0,
+    "Diode": 0.0,
+    "Inductor": 0.0,
+    "CapacitorCeramic": 0.0,
+    "CapacitorElectrolytic": 0.0,
+}
+
+
+def _bbox_layout_prior(
+    comp: dict,
+    component_type: str,
+    calibrator: BreadboardCalibrator,
+) -> Optional[Dict[str, Any]]:
+    """从 component bbox 推导 axial / paired 元件的几何 prior。
+
+    返回 None 表示不适用 (跳线 / bbox 缺失 / 校准未就绪)，调用方退回 seed_points 逻辑。
+    返回字典含：
+      expected_distance_px : 两 pin 在 board-plane 上的期望欧氏距离 (≈ bbox 长边)
+      axis                 : "horizontal" / "vertical" — bbox 在 board-plane 上的长边方向
+      tolerance_px         : 允许误差 (≈ 半个 pitch)
+      pitch_px             : 当前 pitch，用于评分归一
+    """
+    # 跳线不适用 bbox prior：bbox 包住弯线，pin_spacing 远小于 bbox 长度
+    if component_type not in LEAD_MARGIN_PITCHES:
+        return None
+    bbox = comp.get("bbox")
+    if not bbox or len(bbox) < 4:
+        return None
+    try:
+        x1, y1, x2, y2 = (float(v) for v in bbox[:4])
+    except (TypeError, ValueError):
+        return None
+    if not hasattr(calibrator, "frame_pixel_to_board_point"):
+        return None
+    try:
+        b_top_left = calibrator.frame_pixel_to_board_point(x1, y1)
+        b_bot_right = calibrator.frame_pixel_to_board_point(x2, y2)
+    except Exception as exc:
+        logger.debug("S2 bbox prior projection failed (%s): %s", component_type, exc)
+        return None
+    if b_top_left is None or b_bot_right is None:
+        return None
+    dx = abs(float(b_bot_right[0]) - float(b_top_left[0]))
+    dy = abs(float(b_bot_right[1]) - float(b_top_left[1]))
+    long_side = max(dx, dy)
+    if long_side <= 1e-3:
+        return None
+    pitch = _mapping_pitch(calibrator)
+    if pitch <= 1e-3:
+        return None
+    # 关键修正：刚性轴向元件 pin_spacing 直接等于 bbox 长边（leads 在 bbox 边缘弯下）
+    # 不再扣除 lead margin —— 之前 max(long_side - pitch, pitch) 把期望间距拉小了 1 col，
+    # 导致 R2 这类 case 持续偏 1 列。
+    margin_pitches = LEAD_MARGIN_PITCHES.get(component_type, 0.0)
+    expected_distance_px = max(long_side - 2 * margin_pitches * pitch, pitch)
+    axis = "horizontal" if dx >= dy else "vertical"
+    tolerance_px = pitch * 0.5
+    return {
+        "expected_distance_px": expected_distance_px,
+        "axis": axis,
+        "tolerance_px": tolerance_px,
+        "pitch_px": pitch,
+    }
+
+
+def _row_band(logic_loc: Optional[Tuple[str, str]]) -> str:
+    """把 logic_loc 的行字母分到 TOP/BOT/RAIL_*/OTHER 几个语义带。
+
+    logic_loc 形如 ("5", "b") — 第二项是行字母 (a-j) 或电源轨记号 (+/-)。
+    """
+    if not logic_loc or len(logic_loc) < 2:
+        return "UNKNOWN"
+    row_letter = (str(logic_loc[1]) or "").lower().strip()
+    if not row_letter:
+        return "UNKNOWN"
+    if row_letter in {"a", "b", "c", "d", "e"}:
+        return "TOP"
+    if row_letter in {"f", "g", "h", "i", "j"}:
+        return "BOT"
+    if row_letter in {"+", "-"}:
+        return f"RAIL_{row_letter}"
+    if row_letter.startswith("rail_"):
+        return row_letter.upper()
+    return "OTHER"
+
+
 def _resolve_two_pin_hole_pair(
     *,
     pins: List[Dict[str, Any]],
     component_type: str,
     calibrator: BreadboardCalibrator,
     board_schema: BoardSchema,
+    bbox_prior: Optional[Dict[str, Any]] = None,
 ) -> Optional[List[Dict[str, Any]]]:
     if len(pins) < 2:
         return None
@@ -398,7 +510,7 @@ def _resolve_two_pin_hole_pair(
                 logic_loc = board_schema.hole_id_to_logic_loc(normalized)
                 board_point = _hole_id_to_board_point(normalized, board_schema, calibrator)
                 ranked_candidates.insert(0, (normalized, logic_loc, board_point, 0))
-        candidates_per_pin.append(ranked_candidates[:4])
+        candidates_per_pin.append(ranked_candidates[:6])
 
     if not candidates_per_pin[0] or not candidates_per_pin[1]:
         return None
@@ -407,6 +519,10 @@ def _resolve_two_pin_hole_pair(
     desired_distance = _pair_seed_distance(seed_points[0], seed_points[1])
     pair_orientation = _pair_seed_orientation(seed_points[0], seed_points[1])
     pitch = _mapping_pitch(calibrator)
+    is_axial = component_type in TWO_PIN_AXIAL
+    prior_axis = (bbox_prior or {}).get("axis")
+    prior_distance = (bbox_prior or {}).get("expected_distance_px")
+    prior_tolerance = (bbox_prior or {}).get("tolerance_px")
     for cand1 in candidates_per_pin[0]:
         for cand2 in candidates_per_pin[1]:
             hole1, logic1, point1, rank1 = cand1
@@ -414,13 +530,36 @@ def _resolve_two_pin_hole_pair(
             if hole1 == hole2:
                 continue
             score = (rank1 + rank2) * 0.55
-            if point1 is not None and point2 is not None and desired_distance is not None:
+            if point1 is not None and point2 is not None:
                 actual_distance = _euclidean(point1, point2)
-                score += abs(actual_distance - desired_distance) / max(pitch, 1.0) * 0.28
-                if pair_orientation == "horizontal" and point1[0] >= point2[0]:
+
+                # 1. 距离约束：bbox prior 优先，否则退回 seed_points
+                if prior_distance is not None and prior_tolerance is not None:
+                    deviation = abs(actual_distance - prior_distance)
+                    norm_dev = deviation / max(pitch, 1.0)
+                    if deviation > prior_tolerance:
+                        # 超容差，惩罚平方陡增 → 1 列偏差被淘汰
+                        score += (norm_dev ** 2) * 1.5
+                    else:
+                        score += norm_dev * 0.30
+                elif desired_distance is not None:
+                    score += abs(actual_distance - desired_distance) / max(pitch, 1.0) * 0.28
+
+                # 2. 方向约束：bbox axis 优先
+                axis = prior_axis or pair_orientation
+                if axis == "horizontal" and point1[0] >= point2[0]:
                     score += 6.0
-                elif pair_orientation == "vertical" and point1[1] >= point2[1]:
+                elif axis == "vertical" and point1[1] >= point2[1]:
                     score += 6.0
+
+                # 3. 轴向元件：同 row band 硬约束 (Resistor / Diode / Inductor 不允许跨 A-E↔F-J)
+                if is_axial and component_type != "CapacitorCeramic":
+                    band1 = _row_band(logic1)
+                    band2 = _row_band(logic2)
+                    if band1 != "UNKNOWN" and band2 != "UNKNOWN" and band1 != band2:
+                        score += 50.0
+
+                # 4. 电解电容极性偏置
                 if component_type == "CapacitorElectrolytic":
                     score += abs(point1[1] - point2[1]) / max(pitch, 1.0) * 0.12
             elif desired_distance is not None:
@@ -733,7 +872,8 @@ def _pin_ambiguity_reasons(
         reasons.append("multi_view_vote_conflict")
     if len(vote_scores) >= 2:
         ordered = sorted(vote_scores.values(), reverse=True)
-        if ordered[0] - ordered[1] < 0.2:
+        # 票数差阈值 — 由 settings.MAPPING_AMBIGUOUS_MARGIN 调参 (Tier 1)
+        if ordered[0] - ordered[1] < float(settings.MAPPING_AMBIGUOUS_MARGIN):
             reasons.append("close_vote_margin")
     if selected_hole_id and _best_snap_confidence(observations, selected_hole_id) < 0.5:
         reasons.append("low_snap_confidence")
@@ -767,9 +907,11 @@ def _vote_hole_from_observations(
         if confidence <= 0.0:
             continue
         base = _observation_vote_base(obs, occlusion_boost)
+        # 多视图加权投票 rank 衰减 — 由 settings.MAPPING_VOTE_RANK_DECAY 调参 (Tier 1)
+        rank_decay = float(settings.MAPPING_VOTE_RANK_DECAY)
         for rank, hole_id in enumerate(obs.get("candidate_hole_ids") or []):
             normalized = board_schema.normalize_hole_id(str(hole_id))
-            contribution = base * (0.72 ** rank)
+            contribution = base * (rank_decay ** rank)
             vote_scores[normalized] = vote_scores.get(normalized, 0.0) + contribution
 
     if explicit_hole_id:

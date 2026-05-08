@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 _BREAD_DETECT_DIR = Path(__file__).resolve().parents[3] / "bread_detect"
@@ -399,9 +401,12 @@ class BreadboardCalibrator:
             return []
         scored.sort(key=lambda x: x[0])
         min_dist = float(np.sqrt(scored[0][0]))
+        # 距离门 — 由 settings.MAPPING_DIST_GATE_{LOWER,UPPER} 调参 (Tier 1)
+        gate_lower = float(settings.MAPPING_DIST_GATE_LOWER)
+        gate_upper = float(settings.MAPPING_DIST_GATE_UPPER)
         distance_gate = min(
-            min_dist + max(main_pitch * 0.35, 3.0),
-            max(main_pitch * 0.95, 8.0),
+            min_dist + max(main_pitch * gate_lower, 3.0),
+            max(main_pitch * gate_upper, 8.0),
         )
         filtered = [
             (r, c)
