@@ -1,0 +1,29 @@
+{
+  "format": "logical_reference_v1",
+  "reference_id": "test_rc_v1",
+  "name": "Test RC",
+  "description": "Test fixture RC circuit",
+  "components": [
+    {
+      "ref_id": "R1",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "VIN" },
+        { "pin": "pin2", "net": "VC" }
+      ]
+    },
+    {
+      "ref_id": "C1",
+      "type": "CapacitorCeramic",
+      "pins": [
+        { "pin": "pin1", "net": "VC" },
+        { "pin": "pin2", "net": "GND" }
+      ]
+    }
+  ],
+  "nets": [
+    { "net": "VIN", "role": "input" },
+    { "net": "VC", "role": "signal" },
+    { "net": "GND", "role": "ground" }
+  ]
+}

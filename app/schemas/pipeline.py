@@ -41,6 +41,7 @@ class PipelineRequest(BaseModel):
     conf: float = 0.25
     iou: float = 0.5
     imgsz: int = 960
+    reference_id: str | None = None
     reference_circuit: dict[str, Any] | None = None
     rail_assignments: dict[str, str] | None = Field(
         default=None,
@@ -70,6 +71,7 @@ class CorrectedRecomputeRequest(BaseModel):
     components: list[dict[str, Any]] = Field(default_factory=list)
     corrections: list[ManualCorrectionPatch] = Field(default_factory=list)
     rail_assignments: dict[str, str] | None = None
+    reference_id: str | None = None
     reference_circuit: dict[str, Any] | None = None
 
 

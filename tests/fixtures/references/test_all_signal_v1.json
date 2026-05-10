@@ -1,0 +1,29 @@
+{
+  "format": "logical_reference_v1",
+  "reference_id": "test_all_signal_v1",
+  "name": "Test All Signal",
+  "description": "Reference with only signal nets for testing",
+  "components": [
+    {
+      "ref_id": "R1",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "NET_A" },
+        { "pin": "pin2", "net": "NET_B" }
+      ]
+    },
+    {
+      "ref_id": "LED1",
+      "type": "LED",
+      "pins": [
+        { "pin": "anode", "net": "NET_B" },
+        { "pin": "cathode", "net": "NET_C" }
+      ]
+    }
+  ],
+  "nets": [
+    { "net": "NET_A", "role": "signal" },
+    { "net": "NET_B", "role": "signal" },
+    { "net": "NET_C", "role": "signal" }
+  ]
+}

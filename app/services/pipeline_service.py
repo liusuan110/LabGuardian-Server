@@ -33,6 +33,7 @@ from app.schemas.pipeline import (
 )
 from app.services.classroom_state import ClassroomState
 from app.services.guidance_service import GuidanceService
+from app.services.reference_service import ReferenceService
 
 
 class PipelineService:
@@ -124,6 +125,40 @@ class PipelineService:
             }
         )
 
+    def _resolve_reference(
+        self,
+        *,
+        reference_id: str | None = None,
+        reference_circuit: dict[str, Any] | str | None = None,
+    ) -> tuple[dict[str, Any] | str | None, dict[str, Any]]:
+        """根据请求优先级解析参考电路并返回元数据。
+
+        优先级：reference_id > reference_circuit > settings fallback > none
+        """
+        ref_meta: dict[str, Any] = {"source": "none"}
+
+        if reference_id:
+            service = ReferenceService()
+            ref_payload = service.load_reference(reference_id)
+            ref_meta = {
+                "source": "reference_id",
+                "reference_id": reference_id,
+                "format": ref_payload.get("format"),
+                "name": ref_payload.get("name"),
+            }
+            return ref_payload, ref_meta
+
+        if reference_circuit:
+            ref_meta = {
+                "source": "inline_payload",
+                "format": reference_circuit.get("format")
+                if isinstance(reference_circuit, dict)
+                else None,
+            }
+            return reference_circuit, ref_meta
+
+        return None, ref_meta
+
     def run_sync(
         self,
         request: PipelineRequest,
@@ -131,14 +166,23 @@ class PipelineService:
         guidance_service: GuidanceService,
     ) -> PipelineResult:
         job_id = str(uuid.uuid4())
+        reference_circuit, ref_meta = self._resolve_reference(
+            reference_id=request.reference_id,
+            reference_circuit=request.reference_circuit,
+        )
         raw = run_pipeline(
             images_b64=request.images_b64,
-            reference_circuit=request.reference_circuit,
+            reference_circuit=reference_circuit,
             conf=request.conf,
             iou=request.iou,
             imgsz=request.imgsz,
             rail_assignments=request.rail_assignments,
         )
+        # 将 reference 来源信息写入 runtime_metadata
+        runtime_metadata = raw.get("runtime_metadata", {})
+        runtime_metadata["reference"] = ref_meta
+        raw["runtime_metadata"] = runtime_metadata
+
         result = self.build_pipeline_result(job_id=job_id, request=request, raw=raw)
         self.sync_result_to_classroom(
             classroom=classroom,
@@ -157,6 +201,12 @@ class PipelineService:
             raise ValueError("Corrected recompute requires mapping components.")
         if not request.corrections:
             raise ValueError("Corrected recompute requires at least one correction.")
+
+        # 统一解析参考电路（支持 reference_id 和 inline payload）
+        reference_circuit, ref_meta = self._resolve_reference(
+            reference_id=request.reference_id,
+            reference_circuit=request.reference_circuit,
+        )
 
         t0 = time.time()
         board_schema = BoardSchema.default_breadboard()
@@ -203,13 +253,13 @@ class PipelineService:
         s3 = run_topology(components, rail_assignments=request.rail_assignments)
         s4 = run_validate(
             s3["topology_graph"],
-            reference_circuit=request.reference_circuit,
+            reference_circuit=reference_circuit,
             components=components,
         )
         s5 = run_semantic_analysis(
             s3.get("netlist_v2"),
             topology_graph=s3.get("topology_graph"),
-            reference_circuit=request.reference_circuit,
+            reference_circuit=reference_circuit,
         )
 
         mapping_stage = {
@@ -219,6 +269,15 @@ class PipelineService:
             "duration_ms": 0.0,
         }
         total_ms = (time.time() - t0) * 1000
+
+        # 组装 runtime_metadata：保留手动修正信息 + 增加 reference 来源信息
+        runtime_metadata: dict[str, Any] = {
+            "manual_corrections_applied": True,
+            "manual_corrections": [item.model_dump() for item in request.corrections],
+            "source_job_id": request.job_id,
+            "reference": ref_meta,
+        }
+
         raw = {
             "stages": {
                 "mapping": mapping_stage,
@@ -227,11 +286,7 @@ class PipelineService:
                 "semantic_analysis": s5,
             },
             "total_duration_ms": total_ms,
-            "runtime_metadata": {
-                "manual_corrections_applied": True,
-                "manual_corrections": [item.model_dump() for item in request.corrections],
-                "source_job_id": request.job_id,
-            },
+            "runtime_metadata": runtime_metadata,
         }
         job_id = f"{request.job_id}-corrected" if request.job_id else str(uuid.uuid4())
         return self.build_pipeline_result(job_id=job_id, request=request, raw=raw)
@@ -239,10 +294,14 @@ class PipelineService:
     def submit_async(self, request: PipelineRequest) -> JobStatusResponse:
         from app.worker.tasks import run_pipeline_task
 
+        reference_circuit, _ = self._resolve_reference(
+            reference_id=request.reference_id,
+            reference_circuit=request.reference_circuit,
+        )
         task = run_pipeline_task.delay(
             station_id=request.station_id,
             images_b64=request.images_b64,
-            reference_circuit=request.reference_circuit,
+            reference_circuit=reference_circuit,
             rail_assignments=request.rail_assignments,
             conf=request.conf,
             iou=request.iou,
@@ -305,14 +364,21 @@ class PipelineService:
         job_id = str(uuid.uuid4())
         
         # 执行完整 pipeline
+        reference_circuit, ref_meta = self._resolve_reference(
+            reference_id=request.reference_id,
+            reference_circuit=request.reference_circuit,
+        )
         raw = run_pipeline(
             images_b64=request.images_b64,
-            reference_circuit=request.reference_circuit,
+            reference_circuit=reference_circuit,
             conf=request.conf,
             iou=request.iou,
             imgsz=request.imgsz,
             rail_assignments=request.rail_assignments,
         )
+        runtime_metadata = raw.get("runtime_metadata", {})
+        runtime_metadata["reference"] = ref_meta
+        raw["runtime_metadata"] = runtime_metadata
         
         # 构建 PipelineResult
         pipeline_result = self.build_pipeline_result(job_id=job_id, request=request, raw=raw)

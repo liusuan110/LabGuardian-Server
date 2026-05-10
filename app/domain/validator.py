@@ -11,7 +11,7 @@ import logging
 import math
 from collections import Counter
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import networkx as nx
 from networkx.readwrite import json_graph
@@ -166,6 +166,10 @@ class CircuitValidator:
         except Exception:
             self.ref_topology = None
 
+    def _deprecated_legacy_logic_reference(self, file_path: str):
+        """加载纯逻辑参考电路（不含物理孔位，仅描述逻辑连接关系）。"""
+        raise ValueError("legacy logic references are deprecated; use logical_reference_v1")
+
     def compare(self, curr_analyzer: CircuitAnalyzer) -> Dict:
         """分级比对管线：L0→L1→L2→L2.5→L3，生成结构化诊断报告。
 
@@ -257,28 +261,29 @@ class CircuitValidator:
         v2_exact = None
         v2_hole_only = False
         has_v2_polarity = False
-        v2_cmp = self._compare_component_instances(curr_analyzer.component_instances)
-        result["matched_components"] = v2_cmp["matched_components"]
-        result["matched_component_pairs"] = v2_cmp["matched_component_pairs"]
-        result["pin_mismatches"].extend(v2_cmp["pin_mismatches"])
-        result["hole_mismatches"].extend(v2_cmp["hole_mismatches"])
-        result["node_mismatches"].extend(v2_cmp["node_mismatches"])
-        result["component_mismatches"].extend(v2_cmp["component_mismatches"])
-        for item in v2_cmp["component_diagnostics"]:
-            _append_diagnostic(result, item)
-        for item in v2_cmp["node_diagnostics"]:
-            _append_diagnostic(result, item)
-        for item in v2_cmp["hole_diagnostics"]:
-            _append_diagnostic(result, item)
-        for item in v2_cmp["polarity_diagnostics"]:
-            _append_diagnostic(result, item)
-        if result.get("progress", 0.0) < v2_cmp["progress"]:
-            result["progress"] = v2_cmp["progress"]
-        if result.get("similarity", 0.0) < v2_cmp["similarity"]:
-            result["similarity"] = v2_cmp["similarity"]
-        v2_exact = v2_cmp["is_exact_match"]
-        v2_hole_only = v2_cmp["is_hole_placement_only_mismatch"]
-        has_v2_polarity = bool(v2_cmp["polarity_diagnostics"])
+        if True:
+            v2_cmp = self._compare_component_instances(curr_analyzer.component_instances)
+            result["matched_components"] = v2_cmp["matched_components"]
+            result["matched_component_pairs"] = v2_cmp["matched_component_pairs"]
+            result["pin_mismatches"].extend(v2_cmp["pin_mismatches"])
+            result["hole_mismatches"].extend(v2_cmp["hole_mismatches"])
+            result["node_mismatches"].extend(v2_cmp["node_mismatches"])
+            result["component_mismatches"].extend(v2_cmp["component_mismatches"])
+            for item in v2_cmp["component_diagnostics"]:
+                _append_diagnostic(result, item)
+            for item in v2_cmp["node_diagnostics"]:
+                _append_diagnostic(result, item)
+            for item in v2_cmp["hole_diagnostics"]:
+                _append_diagnostic(result, item)
+            for item in v2_cmp["polarity_diagnostics"]:
+                _append_diagnostic(result, item)
+            if result.get("progress", 0.0) < v2_cmp["progress"]:
+                result["progress"] = v2_cmp["progress"]
+            if result.get("similarity", 0.0) < v2_cmp["similarity"]:
+                result["similarity"] = v2_cmp["similarity"]
+            v2_exact = v2_cmp["is_exact_match"]
+            v2_hole_only = v2_cmp["is_hole_placement_only_mismatch"]
+            has_v2_polarity = bool(v2_cmp["polarity_diagnostics"])
 
         # L1-L3
         polarity_checked = has_v2_polarity
@@ -943,6 +948,84 @@ def _component_instance_from_dict(item: Dict) -> ComponentInstance:
         confidence=float(item.get("confidence", 1.0)),
         metadata=dict(item.get("metadata") or {}),
     )
+
+
+def _build_topology_from_logic_ref(payload: Dict) -> Tuple[nx.Graph, List[Dict]]:
+    """将旧版纯逻辑参考转换为拓扑图。
+
+    输出格式与 CircuitAnalyzer.build_topology_graph() 完全一致：
+    - comp 节点: kind='comp', ctype=..., polarity=..., pins=N
+    - net 节点: kind='net', power=...(可选)
+    - 边: role=pin_name, pin_role=pin_name
+    """
+    components = payload.get("components", [])
+    nets = payload.get("nets", [])
+
+    # net_label -> 内部 net_id (N0, N1, ...)
+    net_label_to_id: Dict[str, str] = {}
+    for i, net in enumerate(nets):
+        label = net.get("net_label") or net.get("net_id") or f"NET_{i}"
+        net_label_to_id[label] = f"N{i}"
+
+    topo = nx.Graph()
+    logic_components: List[Dict] = []
+
+    # 添加 net 节点
+    for net in nets:
+        label = net.get("net_label") or net.get("net_id")
+        net_id = net_label_to_id.get(label, label)
+        attrs: Dict[str, Any] = {"kind": "net"}
+        power_role = net.get("power_role", "")
+        if power_role:
+            attrs["power"] = power_role
+        topo.add_node(net_id, **attrs)
+
+    # 添加 comp 节点和边
+    for comp in components:
+        instance_id = comp.get("instance_id") or comp.get("component_id", "UNKNOWN")
+        ctype = norm_component_type(comp.get("component_type", "UNKNOWN"))
+        polarity = str(comp.get("polarity", "none"))
+        package_type = str(comp.get("package_type", ""))
+
+        pin_map: Dict[str, str] = {}
+        net_ids: List[str] = []
+        net_roles: Dict[str, str] = {}
+
+        for pin in comp.get("pins", []):
+            pin_name = pin.get("pin_name") or "generic"
+            net_label = pin.get("net_label") or pin.get("net", "")
+            net_id = net_label_to_id.get(net_label, net_label)
+            pin_map[pin_name] = net_id
+            net_ids.append(net_id)
+            if net_id not in net_roles:
+                net_roles[net_id] = pin_name
+
+        unique_nets = list(dict.fromkeys(net_ids))
+        node_attrs = {
+            "kind": "comp",
+            "ctype": ctype,
+            "polarity": polarity,
+            "pins": len(comp.get("pins", [])),
+        }
+        if len(unique_nets) == 1 and len(net_ids) > 1:
+            node_attrs["same_net"] = True
+        topo.add_node(instance_id, **node_attrs)
+
+        for net_id in unique_nets:
+            role = net_roles.get(net_id, "generic")
+            topo.add_edge(instance_id, net_id, role=role, pin_role=role)
+
+        logic_components.append({
+            "instance_id": instance_id,
+            "component_type": ctype,
+            "package_type": package_type,
+            "polarity": polarity,
+            "symmetry_group": [list(g) for g in comp.get("symmetry_group", [])],
+            "pins": pin_map,
+            "raw_pins": comp.get("pins", []),
+        })
+
+    return topo, logic_components
 
 
 def _needs_polarity_check(comp: ComponentInstance) -> bool:

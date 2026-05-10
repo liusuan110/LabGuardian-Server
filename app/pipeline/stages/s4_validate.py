@@ -12,6 +12,8 @@ from typing import Any, Dict, List
 
 from app.domain.board_schema import BoardSchema
 from app.domain.circuit import CircuitAnalyzer
+from app.domain.graph_compare import compare_logical_graphs
+from app.domain.logical_reference import current_netlist_v2_to_graph, logical_reference_to_graph
 from app.domain.risk import RiskLevel, classify_risk
 from app.domain.validator import CircuitValidator
 from app.pipeline.topology_input import build_analyzer_from_components
@@ -49,6 +51,14 @@ def run_validate(
         "topology_node_count": len(topology_graph.get("nodes", [])) if isinstance(topology_graph, dict) else 0,
         "topology_edge_count": len(topology_graph.get("links", [])) if isinstance(topology_graph, dict) else 0,
     }
+
+    if isinstance(reference_circuit, dict) and reference_circuit.get("format") == "logical_reference_v1":
+        return _run_logical_reference_validate(
+            reference_circuit=reference_circuit,
+            components=components,
+            topology_meta=topology_meta,
+            started_at=t0,
+        )
 
     if reference_circuit:
         try:
@@ -169,3 +179,135 @@ def _rebuild_analyzer(components: List[dict]) -> CircuitAnalyzer:
         board_schema=board_schema,
     )
     return analyzer
+
+
+def _run_logical_reference_validate(
+    *,
+    reference_circuit: Dict[str, Any],
+    components: List[dict] | None,
+    topology_meta: Dict[str, Any],
+    started_at: float,
+) -> Dict[str, Any]:
+    if not components:
+        item = {
+            "error_code": "INCOMPLETE_CIRCUIT",
+            "error_family": "incomplete_circuit",
+            "severity": "error",
+            "message": "无法从检测结果重建当前电路，无法进行逻辑参考比较。",
+            "expected": {"components": "non_empty"},
+            "actual": {"components": 0},
+            "suggested_action": "请先确认图像识别结果中包含元件与引脚。",
+        }
+        comparison_report = _logical_error_report(item, similarity=0.0)
+        return _logical_s4_response(
+            is_correct=False,
+            diagnosis=item["message"],
+            diagnostics=[item["message"]],
+            comparison_report=comparison_report,
+            similarity=0.0,
+            progress=0.0,
+            details={"comparison_mode": "logical_graph", **topology_meta},
+            started_at=started_at,
+        )
+
+    try:
+        curr_analyzer = _rebuild_analyzer(components)
+        current_netlist_v2 = curr_analyzer.export_netlist_v2()
+        reference_graph = logical_reference_to_graph(reference_circuit)
+        current_graph = current_netlist_v2_to_graph(current_netlist_v2)
+        result = compare_logical_graphs(
+            reference_graph,
+            current_graph,
+            ref_payload=reference_circuit,
+            cur_netlist_v2=current_netlist_v2,
+        )
+    except Exception as exc:
+        logger.warning("logical reference validation failed: %s", exc)
+        item = {
+            "error_code": "REFERENCE_INVALID",
+            "error_family": "reference_format",
+            "severity": "error",
+            "message": f"logical_reference_v1 参考电路格式无效: {exc}",
+            "expected": {"format": "logical_reference_v1"},
+            "actual": {},
+            "suggested_action": "请检查上传的参考电路 JSON 格式。",
+        }
+        comparison_report = _logical_error_report(item, similarity=0.0)
+        return _logical_s4_response(
+            is_correct=False,
+            diagnosis=item["message"],
+            diagnostics=[item["message"]],
+            comparison_report=comparison_report,
+            similarity=0.0,
+            progress=0.0,
+            details={"comparison_mode": "logical_graph", **topology_meta},
+            started_at=started_at,
+        )
+
+    comparison_report = dict(result.get("report", {}))
+    report_items = list(comparison_report.get("items", []))
+    diagnostics = [str(item.get("message")) for item in report_items if item.get("message")]
+    if not diagnostics:
+        diagnostics = [str(result.get("message") or "电路逻辑连接与参考电路一致")]
+
+    return _logical_s4_response(
+        is_correct=bool(result.get("logic_correct", False)),
+        diagnosis="\n".join(diagnostics),
+        diagnostics=diagnostics,
+        comparison_report=comparison_report,
+        similarity=float(result.get("similarity", 0.0)),
+        progress=float(result.get("progress", 0.0)),
+        details={**result.get("details", {}), "comparison_mode": "logical_graph", **topology_meta},
+        started_at=started_at,
+    )
+
+
+def _logical_error_report(item: Dict[str, Any], *, similarity: float) -> Dict[str, Any]:
+    return {
+        "version": "validator_report_v2",
+        "summary": {
+            "total_item_count": 1,
+            "logic_correct": False,
+            "similarity": similarity,
+            "comparison_mode": "logical_graph",
+        },
+        "items": [item],
+        "topology_errors": [],
+        "node_errors": [],
+        "hole_errors": [],
+        "component_errors": [],
+        "polarity_errors": [],
+    }
+
+
+def _logical_s4_response(
+    *,
+    is_correct: bool,
+    diagnosis: str,
+    diagnostics: List[str],
+    comparison_report: Dict[str, Any],
+    similarity: float,
+    progress: float,
+    details: Dict[str, Any],
+    started_at: float,
+) -> Dict[str, Any]:
+    risk_level, risk_reasons = classify_risk(diagnostics)
+    return {
+        "is_correct": is_correct,
+        "diagnosis": diagnosis,
+        "risk_level": risk_level.value,
+        "similarity": similarity,
+        "progress": progress,
+        "diagnostics": diagnostics,
+        "comparison_report": comparison_report,
+        "risk_reasons": risk_reasons,
+        "details": {
+            **details,
+            "topology_errors": comparison_report.get("topology_errors", []),
+            "node_errors": comparison_report.get("node_errors", []),
+            "hole_errors": comparison_report.get("hole_errors", []),
+            "polarity_errors": comparison_report.get("polarity_errors", []),
+            "component_errors": comparison_report.get("component_errors", []),
+        },
+        "duration_ms": (time.time() - started_at) * 1000,
+    }
