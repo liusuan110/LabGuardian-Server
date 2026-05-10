@@ -866,6 +866,7 @@ class CircuitValidator:
         power_short_issue = CircuitValidator._detect_power_rail_short(analyzer)
         if power_short_issue is not None:
             issues.append(power_short_issue)
+        issues.extend(CircuitValidator._detect_direct_vcc_gnd_bridge(analyzer))
 
         for comp in analyzer.component_instances:
             ctype = norm_component_type(comp.component_type)
@@ -990,7 +991,7 @@ class CircuitValidator:
             if ctype == "Wire":
                 for pin in comp.pins:
                     node = pin.electrical_node_id or analyzer.board_schema.resolve_hole_to_node(pin.hole_id)
-                    if node in power_nodes:
+                    if node in power_nodes or CircuitValidator._is_power_rail_pin(analyzer, pin):
                         continue
                     if node in g and g.degree(node) == 1:
                         issues.append(
@@ -1019,7 +1020,7 @@ class CircuitValidator:
                 continue
             for pin in comp.pins:
                 node = pin.electrical_node_id or analyzer.board_schema.resolve_hole_to_node(pin.hole_id)
-                if node in power_nodes:
+                if node in power_nodes or CircuitValidator._is_power_rail_pin(analyzer, pin):
                     continue
                 if node in g and g.degree(node) == 1:
                     issues.append(
@@ -1121,6 +1122,60 @@ class CircuitValidator:
         )
 
     @staticmethod
+    def _detect_direct_vcc_gnd_bridge(analyzer: CircuitAnalyzer) -> List[Dict]:
+        """检测单个导线/元件两端直接跨接 VCC 与 GND 的场景。"""
+        issues: List[Dict] = []
+        for comp in analyzer.component_instances:
+            if len(comp.pins) < 2:
+                continue
+            role_hits: Dict[str, List[PinAssignment]] = {"VCC": [], "GND": []}
+            for pin in comp.pins:
+                role = CircuitValidator._pin_power_role(analyzer, pin)
+                if role in role_hits:
+                    role_hits[role].append(pin)
+
+            if not role_hits["VCC"] or not role_hits["GND"]:
+                continue
+
+            ctype = norm_component_type(comp.component_type)
+            vcc_pin = role_hits["VCC"][0]
+            gnd_pin = role_hits["GND"][0]
+            issues.append(
+                _make_diagnostic(
+                    category="node_errors",
+                    error_code="POWER_RAIL_SHORT",
+                    message=(
+                        f"{comp.component_id}: {ctype} 两端直接跨接 VCC 与 GND "
+                        f"({vcc_pin.hole_id} <-> {gnd_pin.hole_id})，判定为短路"
+                    ),
+                    severity="error",
+                    component_id=comp.component_id,
+                    expected="isolated_power_rails",
+                    actual="direct_vcc_gnd_bridge",
+                    context={
+                        "component_type": ctype,
+                        "current_hole_id": [vcc_pin.hole_id, gnd_pin.hole_id],
+                        "current_node_id": [
+                            vcc_pin.electrical_node_id or analyzer.board_schema.resolve_hole_to_node(vcc_pin.hole_id),
+                            gnd_pin.electrical_node_id or analyzer.board_schema.resolve_hole_to_node(gnd_pin.hole_id),
+                        ],
+                        "vcc_nodes": [
+                            vcc_pin.electrical_node_id or analyzer.board_schema.resolve_hole_to_node(vcc_pin.hole_id)
+                        ],
+                        "gnd_nodes": [
+                            gnd_pin.electrical_node_id or analyzer.board_schema.resolve_hole_to_node(gnd_pin.hole_id)
+                        ],
+                        "current_observation_refs": _observation_refs_for_pins(
+                            comp.component_id,
+                            [vcc_pin, gnd_pin],
+                        ),
+                        "current_component_bbox": comp.metadata.get("bbox"),
+                    },
+                )
+            )
+        return issues
+
+    @staticmethod
     def _detect_missing_required_path(analyzer: CircuitAnalyzer) -> Optional[Dict]:
         vcc_nodes, gnd_nodes = CircuitValidator._power_nodes_by_role(analyzer)
         if not vcc_nodes or not gnd_nodes:
@@ -1157,6 +1212,45 @@ class CircuitValidator:
                 },
             },
         )
+
+    @staticmethod
+    def _is_power_rail_pin(analyzer: CircuitAnalyzer, pin: PinAssignment) -> bool:
+        """按孔位判定是否位于四条电源轨，不依赖 VCC/GND 角色识别。"""
+        spec = analyzer.board_schema.hole_to_spec(pin.hole_id)
+        return spec.group_type in {"track", "power", "rail"}
+
+    @staticmethod
+    def _pin_power_role(analyzer: CircuitAnalyzer, pin: PinAssignment) -> Optional[str]:
+        """返回 pin 的电源角色（VCC/GND），优先 node 识别，再回退孔位轨道映射。"""
+        analyzer._identify_power_nets()
+        node_id = pin.electrical_node_id or analyzer.board_schema.resolve_hole_to_node(pin.hole_id)
+        if node_id in analyzer.power_nets:
+            return analyzer.power_nets[node_id]
+
+        spec = analyzer.board_schema.hole_to_spec(pin.hole_id)
+        track_col = str(spec.col or "").upper()
+        track_to_assignment = {
+            "LP": "top_plus",
+            "LN": "top_minus",
+            "RP": "bot_plus",
+            "RN": "bot_minus",
+        }
+        if track_col in track_to_assignment:
+            label = analyzer.rail_assignments.get(track_to_assignment[track_col], "")
+            role = analyzer._parse_rail_label(label)
+            if role in ("VCC", "GND"):
+                return role
+            # 默认口径：顶部两排(VCC)，底部两排(GND)
+            if track_col in {"LP", "LN"}:
+                return "VCC"
+            if track_col in {"RP", "RN"}:
+                return "GND"
+
+        if str(spec.col or "") == "+":
+            return "VCC"
+        if str(spec.col or "") == "-":
+            return "GND"
+        return None
 
     @staticmethod
     def _detect_wire_self_loop_or_redundant(analyzer: CircuitAnalyzer) -> List[Dict]:

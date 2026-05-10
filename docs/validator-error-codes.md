@@ -181,7 +181,7 @@
 - `COMPONENT_SHORTED_SAME_NET`
   - 元件两脚落在同一导通组，疑似短路
 - `POWER_RAIL_SHORT`
-  - `VCC` 与 `GND` 落在同一导通网络，属于电路级短路
+  - `VCC` 与 `GND` 落在同一导通网络，或单个导线/元件两端直接跨接 `VCC-GND`，属于电路级短路
 - `UNEXPECTED_NET_BRIDGE`
   - 本应隔离的两网被意外桥接到同一导通网络
 

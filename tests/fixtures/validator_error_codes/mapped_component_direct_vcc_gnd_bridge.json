@@ -1,0 +1,30 @@
+[
+  {
+    "component_id": "R3",
+    "component_type": "Resistor",
+    "class_name": "Resistor",
+    "package_type": "axial_2pin",
+    "symmetry_group": [["pin1", "pin2"]],
+    "confidence": 1.0,
+    "pins": [
+      {
+        "pin_id": 1,
+        "pin_name": "pin1",
+        "logic_loc": ["2", "rail_top+"],
+        "hole_id": "LP2",
+        "electrical_node_id": "TRACK_LP",
+        "confidence": 1.0,
+        "is_ambiguous": false
+      },
+      {
+        "pin_id": 2,
+        "pin_name": "pin2",
+        "logic_loc": ["2", "rail_bot+"],
+        "hole_id": "RP2",
+        "electrical_node_id": "TRACK_RP",
+        "confidence": 1.0,
+        "is_ambiguous": false
+      }
+    ]
+  }
+]

@@ -188,6 +188,10 @@ def main() -> int:
         "POWER_RAIL_SHORT",
     )
     _assert_diagnose_code(
+        fixture_dir / "mapped_component_direct_vcc_gnd_bridge.json",
+        "POWER_RAIL_SHORT",
+    )
+    _assert_diagnose_code(
         fixture_dir / "mapped_missing_required_path.json",
         "MISSING_REQUIRED_PATH",
     )
@@ -206,6 +210,10 @@ def main() -> int:
     _assert_diagnose_code_absent(
         fixture_dir / "mapped_power_pins_only.json",
         "FLOATING_PIN",
+    )
+    _assert_diagnose_code_absent(
+        fixture_dir / "mapped_wire_rail_pin_exempt.json",
+        "WIRE_ENDPOINT_UNCONNECTED",
     )
     return 0
 
