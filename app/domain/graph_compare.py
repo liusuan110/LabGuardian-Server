@@ -10,6 +10,7 @@ from app.domain.logical_reference import normalize_component_type, normalize_net
 
 
 STRICT_NET_ROLES = {"ground", "power", "input", "output"}
+PASSIVE_TWO_PIN_TYPES = {"Resistor", "Capacitor", "CapacitorCeramic", "Wire"}
 
 
 def compare_logical_graphs(
@@ -149,8 +150,12 @@ def _node_match(a: dict[str, Any], b: dict[str, Any]) -> bool:
     return True
 
 
-def _edge_match(_a: dict[str, Any], _b: dict[str, Any]) -> bool:
-    return True
+def _edge_match(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    comp_type_a = a.get("comp_type", "")
+    comp_type_b = b.get("comp_type", "")
+    if comp_type_a in PASSIVE_TWO_PIN_TYPES and comp_type_b in PASSIVE_TWO_PIN_TYPES:
+        return True
+    return a.get("pin") == b.get("pin")
 
 
 def _result(
@@ -169,6 +174,10 @@ def _result(
         "logic_correct": logic_correct,
         "similarity": round(float(max(0.0, min(1.0, similarity))), 3),
         "comparison_mode": "logical_graph",
+        "ignore_component_id": True,
+        "ignore_hole_id": True,
+        "ignore_passive_pin_order": True,
+        "equivalence_rule": "component_type_and_topology",
     }
     if ref_payload:
         summary["reference_id"] = ref_payload.get("reference_id")
@@ -341,9 +350,37 @@ def _generate_detailed_items(
     for ref_id, cur_id in comp_map.items():
         ref_comp = ref_comp_by_id[ref_id]
         cur_comp = cur_comp_by_id.get(cur_id, {})
+        ctype = normalize_component_type(ref_comp.get("type"))
 
         ref_pins = {p["pin"]: p["net"] for p in ref_comp.get("pins", [])}
         cur_pins = {p["pin_name"]: p for p in cur_comp.get("pins", [])}
+
+        if ctype in PASSIVE_TWO_PIN_TYPES:
+            # For passive two-pin components, treat pins as an unordered set.
+            ref_nets = {p["net"] for p in ref_comp.get("pins", [])}
+            cur_nets = {p.get("electrical_net_id") for p in cur_comp.get("pins", [])}
+            mapped_ref_nets = {net_map.get(rn) for rn in ref_nets}
+            # Only flag when all reference nets are mapped and the sets differ.
+            if None not in mapped_ref_nets and mapped_ref_nets != cur_nets:
+                wrong_connection_items.append(_detailed_item(
+                    error_code="WRONG_CONNECTION",
+                    error_family="wiring_mismatch",
+                    severity="error",
+                    message=f"{ref_id} 的连接网络与参考电路不一致。",
+                    expected={
+                        "ref_id": ref_id,
+                        "nets": sorted(ref_nets),
+                    },
+                    actual={
+                        "actual_component_id": cur_id,
+                        "nets": sorted(cur_nets) if cur_nets else [],
+                    },
+                    component_ref={"ref_id": ref_id, "type": ref_comp.get("type")},
+                    component_actual={"component_id": cur_id, "type": cur_comp.get("component_type")},
+                    evidence_refs=[{"type": "component", "component_id": cur_id}],
+                    suggested_action=f"请将 {cur_id} 改接到与 {ref_id} 对应的网络。",
+                ))
+            continue
 
         for pin_name, ref_net in ref_pins.items():
             cur_pin = cur_pins.get(pin_name)

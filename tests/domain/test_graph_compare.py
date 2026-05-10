@@ -112,3 +112,79 @@ class TestCompareLogicalGraphs:
     def test_no_hole_mismatch(self) -> None:
         result = compare_logical_graphs(_build_ref(), _build_cur_match())
         assert not any(i.get("category") == "hole_errors" for i in result["report"]["items"])
+
+    def test_different_component_ids_same_topology(self) -> None:
+        """Ref R1+C1 vs Cur R7+C9 — different IDs, same topology."""
+        g_ref = nx.Graph()
+        g_ref.add_node("ref_comp:R1", kind="comp", ctype="Resistor")
+        g_ref.add_node("ref_comp:C1", kind="comp", ctype="CapacitorCeramic")
+        g_ref.add_node("ref_net:VIN", kind="net", role="input")
+        g_ref.add_node("ref_net:VC", kind="net", role="signal")
+        g_ref.add_node("ref_net:GND", kind="net", role="ground")
+        g_ref.add_edge("ref_comp:R1", "ref_net:VIN")
+        g_ref.add_edge("ref_comp:R1", "ref_net:VC")
+        g_ref.add_edge("ref_comp:C1", "ref_net:VC")
+        g_ref.add_edge("ref_comp:C1", "ref_net:GND")
+
+        g_cur = nx.Graph()
+        g_cur.add_node("cur_comp:R7", kind="comp", ctype="Resistor")
+        g_cur.add_node("cur_comp:C9", kind="comp", ctype="CapacitorCeramic")
+        g_cur.add_node("cur_net:NET_000", kind="net", role="input")
+        g_cur.add_node("cur_net:NET_001", kind="net", role="signal")
+        g_cur.add_node("cur_net:NET_002", kind="net", role="ground")
+        g_cur.add_edge("cur_comp:R7", "cur_net:NET_000")
+        g_cur.add_edge("cur_comp:R7", "cur_net:NET_001")
+        g_cur.add_edge("cur_comp:C9", "cur_net:NET_001")
+        g_cur.add_edge("cur_comp:C9", "cur_net:NET_002")
+
+        result = compare_logical_graphs(g_ref, g_cur)
+        assert result["logic_correct"] is True
+        assert result["details"]["match_type"] == "full_isomorphism"
+
+    def test_passive_pin_swap_resistor(self) -> None:
+        """Resistor pin1↔pin2 swap should still be isomorphic."""
+        g_ref = nx.Graph()
+        g_ref.add_node("ref_comp:R1", kind="comp", ctype="Resistor")
+        g_ref.add_node("ref_net:A", kind="net", role="signal")
+        g_ref.add_node("ref_net:B", kind="net", role="signal")
+        g_ref.add_edge("ref_comp:R1", "ref_net:A", pin="pin1", comp_type="Resistor")
+        g_ref.add_edge("ref_comp:R1", "ref_net:B", pin="pin2", comp_type="Resistor")
+
+        g_cur = nx.Graph()
+        g_cur.add_node("cur_comp:R1", kind="comp", ctype="Resistor")
+        g_cur.add_node("cur_net:NET_0", kind="net", role="signal")
+        g_cur.add_node("cur_net:NET_1", kind="net", role="signal")
+        g_cur.add_edge("cur_comp:R1", "cur_net:NET_0", pin="pin2", comp_type="Resistor")
+        g_cur.add_edge("cur_comp:R1", "cur_net:NET_1", pin="pin1", comp_type="Resistor")
+
+        result = compare_logical_graphs(g_ref, g_cur)
+        assert result["logic_correct"] is True
+        assert result["details"]["match_type"] == "full_isomorphism"
+
+    def test_passive_pin_swap_capacitor(self) -> None:
+        """CapacitorCeramic pin1↔pin2 swap should still be isomorphic."""
+        g_ref = nx.Graph()
+        g_ref.add_node("ref_comp:C1", kind="comp", ctype="CapacitorCeramic")
+        g_ref.add_node("ref_net:A", kind="net", role="signal")
+        g_ref.add_node("ref_net:B", kind="net", role="signal")
+        g_ref.add_edge("ref_comp:C1", "ref_net:A", pin="pin1", comp_type="CapacitorCeramic")
+        g_ref.add_edge("ref_comp:C1", "ref_net:B", pin="pin2", comp_type="CapacitorCeramic")
+
+        g_cur = nx.Graph()
+        g_cur.add_node("cur_comp:C9", kind="comp", ctype="CapacitorCeramic")
+        g_cur.add_node("cur_net:NET_0", kind="net", role="signal")
+        g_cur.add_node("cur_net:NET_1", kind="net", role="signal")
+        g_cur.add_edge("cur_comp:C9", "cur_net:NET_0", pin="pin2", comp_type="CapacitorCeramic")
+        g_cur.add_edge("cur_comp:C9", "cur_net:NET_1", pin="pin1", comp_type="CapacitorCeramic")
+
+        result = compare_logical_graphs(g_ref, g_cur)
+        assert result["logic_correct"] is True
+        assert result["details"]["match_type"] == "full_isomorphism"
+
+    def test_summary_metadata(self) -> None:
+        result = compare_logical_graphs(_build_ref(), _build_cur_match())
+        summary = result["report"]["summary"]
+        assert summary.get("ignore_component_id") is True
+        assert summary.get("ignore_hole_id") is True
+        assert summary.get("ignore_passive_pin_order") is True
+        assert summary.get("equivalence_rule") == "component_type_and_topology"

@@ -118,6 +118,7 @@ def logical_reference_to_graph(payload: dict[str, Any]) -> nx.Graph:
                 comp_node,
                 _ref_net_node_id(net_name),
                 pin=str(pin.get("pin") or ""),
+                comp_type=ctype,
             )
 
     graph.graph["format"] = "logical_reference_v1"
@@ -199,6 +200,7 @@ def current_netlist_v2_to_graph(netlist_v2: dict[str, Any]) -> nx.Graph:
                 comp_node,
                 net_node,
                 pin=str(pin.get("pin_name") or pin.get("pin") or ""),
+                comp_type=ctype,
             )
 
     graph.graph["format"] = "netlist_v2_logical_graph"
