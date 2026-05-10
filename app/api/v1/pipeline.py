@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.core.deps import get_classroom, get_guidance_service, get_pipeline_service
 from app.schemas.pipeline import (
     CircuitAnalysisResult,
+    CorrectedRecomputeRequest,
     JobStatusResponse,
     NetlistVisualization,
     PipelineRequest,
@@ -40,6 +41,29 @@ async def run_pipeline_sync(
             classroom=classroom,
             guidance_service=guidance_service,
         )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/recompute-corrected", response_model=PipelineResult)
+async def recompute_corrected_pipeline(
+    request: CorrectedRecomputeRequest,
+    classroom: ClassroomState = Depends(get_classroom),
+    pipeline_service: PipelineService = Depends(get_pipeline_service),
+):
+    """
+    应用前端手动孔位修正，并重跑 S3/S4，返回可被后续模块直接消费的正式结果。
+    """
+    try:
+        result = pipeline_service.recompute_corrected(request)
+        pipeline_service.sync_corrected_result_to_classroom(
+            classroom=classroom,
+            request=request,
+            result=result,
+        )
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

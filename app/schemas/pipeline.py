@@ -18,6 +18,7 @@ class PipelineStage(StrEnum):
     MAPPING = "mapping"
     TOPOLOGY = "topology"
     VALIDATE = "validate"
+    SEMANTIC_ANALYSIS = "semantic_analysis"
 
 
 class JobStatus(StrEnum):
@@ -49,6 +50,27 @@ class PipelineRequest(BaseModel):
             '"bot_plus": "VCC", "bot_minus": "GND"}'
         ),
     )
+
+
+class ManualCorrectionPatch(BaseModel):
+    """前端手动修正后的单个 pin 孔位覆盖。"""
+
+    component_id: str
+    pin_name: str
+    from_hole_id: str
+    to_hole_id: str
+    source: str = "manual_drag"
+
+
+class CorrectedRecomputeRequest(BaseModel):
+    """基于前端手动修正重算 S3/S4 的请求。"""
+
+    station_id: str
+    job_id: str | None = None
+    components: list[dict[str, Any]] = Field(default_factory=list)
+    corrections: list[ManualCorrectionPatch] = Field(default_factory=list)
+    rail_assignments: dict[str, str] | None = None
+    reference_circuit: dict[str, Any] | None = None
 
 
 class StageResult(BaseModel):

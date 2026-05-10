@@ -1,7 +1,7 @@
 """
 Pipeline Orchestrator
 
-串联 S1→S1.5→S2→S3→S4 四阶段，管理共享资源（detector / pin_detector），
+串联 S1→S1.5→S2→S3→S4→S5 阶段，管理共享资源（detector / pin_detector），
 支持进度回调，供 Celery task 或同步调用使用。
 """
 
@@ -20,6 +20,7 @@ from app.pipeline.stages.s1b_pin_detect import run_pin_detect
 from app.pipeline.stages.s2_mapping import run_mapping
 from app.pipeline.stages.s3_topology import run_topology
 from app.pipeline.stages.s4_validate import run_validate
+from app.pipeline.stages.s5_semantic_analysis import run_semantic_analysis
 from app.pipeline.vision.calibrator import BreadboardCalibrator
 from app.pipeline.vision.detector import ComponentDetector
 from app.pipeline.vision.pin_model import PinRoiDetector
@@ -84,7 +85,7 @@ def run_pipeline(
     imgsz: int | None = None,
     progress_cb: ProgressCallback | None = None,
 ) -> dict[str, Any]:
-    """执行完整的 4 阶段流水线
+    """执行完整的 5 阶段流水线
 
     Args:
         images_b64: 1-3 张 base64 图片
@@ -103,6 +104,7 @@ def run_pipeline(
                 "mapping": {...},
                 "topology": {...},
                 "validate": {...},
+                "semantic_analysis": {...},
             },
             "total_duration_ms": float,
         }
@@ -196,6 +198,22 @@ def run_pipeline(
     stages["validate"] = s4
     logger.info("S4 validate: risk=%s (%.0fms)", s4["risk_level"], s4["duration_ms"])
     _notify("validate", 1.0)
+
+    # ── S5: 语义分析 ──
+    _notify("semantic_analysis", 0.0)
+    s5 = run_semantic_analysis(
+        s3.get("netlist_v2"),
+        topology_graph=s3.get("topology_graph"),
+        reference_circuit=effective_reference,
+    )
+    stages["semantic_analysis"] = s5
+    logger.info(
+        "S5 semantic: type=%s errors=%d (%.0fms)",
+        (s5.get("circuit_type_guess") or {}).get("template_id"),
+        len(s5.get("wiring_errors") or []),
+        s5["duration_ms"],
+    )
+    _notify("semantic_analysis", 1.0)
 
     total_ms = (time.time() - t0) * 1000
     return {
