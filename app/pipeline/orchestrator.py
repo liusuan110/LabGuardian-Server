@@ -171,11 +171,11 @@ def run_pipeline(
 
     # ── S3: 拓扑 (传入 rail_assignments) ──
     _notify("topology", 0.0)
-    # 默认电源轨道: top+=VCC, bot-=GND (学生端可覆盖)
+    # 默认电源轨道: 顶部两排=VCC, 底部两排=GND (学生端可覆盖)
     effective_rails = {
         "top_plus": "VCC",
-        "top_minus": "GND",
-        "bot_plus": "VCC",
+        "top_minus": "VCC",
+        "bot_plus": "GND",
         "bot_minus": "GND",
     }
     if rail_assignments:

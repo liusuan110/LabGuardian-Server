@@ -46,8 +46,8 @@ class PipelineRequest(BaseModel):
         default=None,
         description=(
             "面包板电源轨道指定, 如 "
-            '{"top_plus": "VCC", "top_minus": "GND", '
-            '"bot_plus": "VCC", "bot_minus": "GND"}'
+            '{"top_plus": "VCC", "top_minus": "VCC", '
+            '"bot_plus": "GND", "bot_minus": "GND"}'
         ),
     )
 

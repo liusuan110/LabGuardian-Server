@@ -18,6 +18,8 @@ class RiskLevel(str, Enum):
 
 _DANGER_KEYWORDS: List[str] = [
     "短路",
+    "电源轨短路",
+    "VCC 与 GND",
     "烧毁",
     "无限流电阻",
     "同一导通组",
@@ -25,6 +27,10 @@ _DANGER_KEYWORDS: List[str] = [
 ]
 
 _WARNING_KEYWORDS: List[str] = [
+    "供电路径断开",
+    "关键连线缺失",
+    "导线端点",
+    "导线-元件断开",
     "极性未确定",
     "极性未知",
     "引脚缺失",

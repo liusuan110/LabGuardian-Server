@@ -163,8 +163,12 @@
   - 拓扑一致，但孔位摆放不同
 - `FLOATING_PIN`
   - 元件引脚疑似悬空
+- `WIRE_ENDPOINT_UNCONNECTED`
+  - 导线端点未接入其他元件，疑似导线-元件断开
 - `MULTIPLE_DISCONNECTED_SUBGRAPHS`
   - 电路存在多个独立连通分量
+- `MISSING_REQUIRED_PATH`
+  - `VCC` 到 `GND` 不存在有效连通路径，疑似元件间断路或关键连线缺失
 
 ### Node
 
@@ -172,6 +176,8 @@
   - 目标引脚连接到了错误的静态导通节点
 - `COMPONENT_SHORTED_SAME_NET`
   - 元件两脚落在同一导通组，疑似短路
+- `POWER_RAIL_SHORT`
+  - `VCC` 与 `GND` 落在同一导通网络，属于电路级短路
 
 ### Hole
 

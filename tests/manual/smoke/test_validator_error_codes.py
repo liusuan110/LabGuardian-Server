@@ -75,6 +75,15 @@ def _assert_diagnose_code(mapped_path: Path, expected_code: str):
         raise SystemExit(1)
 
 
+def _assert_diagnose_code_absent(mapped_path: Path, absent_code: str):
+    analyzer = _build_analyzer(mapped_path)
+    items = CircuitValidator.diagnose_items(analyzer)
+    codes = [item["error_code"] for item in items]
+    print(f"{mapped_path.name}: {codes}")
+    if absent_code in codes:
+        raise SystemExit(1)
+
+
 def main() -> int:
     fixture_dir = PROJECT_ROOT / "tests" / "fixtures" / "validator_error_codes"
 
@@ -168,6 +177,22 @@ def main() -> int:
     _assert_diagnose_code(
         fixture_dir / "mapped_disconnected_subgraphs.json",
         "MULTIPLE_DISCONNECTED_SUBGRAPHS",
+    )
+    _assert_diagnose_code(
+        fixture_dir / "mapped_power_rail_short.json",
+        "POWER_RAIL_SHORT",
+    )
+    _assert_diagnose_code(
+        fixture_dir / "mapped_missing_required_path.json",
+        "MISSING_REQUIRED_PATH",
+    )
+    _assert_diagnose_code(
+        fixture_dir / "mapped_wire_endpoint_unconnected.json",
+        "WIRE_ENDPOINT_UNCONNECTED",
+    )
+    _assert_diagnose_code_absent(
+        fixture_dir / "mapped_power_pins_only.json",
+        "FLOATING_PIN",
     )
     return 0
 

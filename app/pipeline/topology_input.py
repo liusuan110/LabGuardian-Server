@@ -8,6 +8,7 @@ S2 -> S3 标准化输入适配层。
 from __future__ import annotations
 
 from collections import defaultdict
+import logging
 from typing import List
 
 from app.domain.board_schema import BoardSchema
@@ -20,6 +21,8 @@ from app.pipeline.vision.label_mapping import (
     default_symmetry_group as mapped_default_symmetry_group,
     normalize_component_type,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_components_for_topology(
@@ -63,10 +66,11 @@ def _normalize_component(
 ) -> ComponentInstance | None:
     if not comp.get("pins"):
         component_id = comp.get("component_id") or comp.get("class_name") or comp.get("component_type") or "UNKNOWN"
-        raise ValueError(
-            f"Component {component_id} missing structured pins[]. "
-            "S2 output must provide component-centered pin assignments before topology build."
+        logger.warning(
+            "Skip component %s: missing structured pins[] in topology input.",
+            component_id,
         )
+        return None
     return _from_structured_component(comp, counters, board_schema)
 
 

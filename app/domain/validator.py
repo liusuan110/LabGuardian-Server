@@ -750,6 +750,10 @@ class CircuitValidator:
         issues: List[Dict] = []
         g = analyzer.graph
 
+        power_short_issue = CircuitValidator._detect_power_rail_short(analyzer)
+        if power_short_issue is not None:
+            issues.append(power_short_issue)
+
         for comp in analyzer.component_instances:
             ctype = norm_component_type(comp.component_type)
             pin_nodes = [
@@ -863,12 +867,45 @@ class CircuitValidator:
                         )
                     )
 
+        vcc_nodes, gnd_nodes = CircuitValidator._power_nodes_by_role(analyzer)
+        power_nodes = set(vcc_nodes) | set(gnd_nodes)
+
         for comp in analyzer.component_instances:
             ctype = norm_component_type(comp.component_type)
             if ctype == "Wire":
+                for pin in comp.pins:
+                    node = pin.electrical_node_id or analyzer.board_schema.resolve_hole_to_node(pin.hole_id)
+                    if node in power_nodes:
+                        continue
+                    if node in g and g.degree(node) == 1:
+                        issues.append(
+                            _make_diagnostic(
+                                category="topology_errors",
+                                error_code="WIRE_ENDPOINT_UNCONNECTED",
+                                message=f"{comp.component_id}: 导线端点{pin.pin_name}({pin.hole_id})未接入其他元件，可能存在导线-元件断开",
+                                severity="warning",
+                                component_id=comp.component_id,
+                                pin_name=pin.pin_name,
+                                actual=node,
+                                context={
+                                    "pin_name": pin.pin_name,
+                                    "current_pin_name": pin.pin_name,
+                                    "hole_id": pin.hole_id,
+                                    "current_hole_id": pin.hole_id,
+                                    "current_node_id": node,
+                                    "current_observation_refs": _observation_refs_for_pin(
+                                        comp.component_id,
+                                        pin,
+                                    ),
+                                    "current_component_bbox": comp.metadata.get("bbox"),
+                                },
+                            )
+                        )
                 continue
             for pin in comp.pins:
                 node = pin.electrical_node_id or analyzer.board_schema.resolve_hole_to_node(pin.hole_id)
+                if node in power_nodes:
+                    continue
                 if node in g and g.degree(node) == 1:
                     issues.append(
                         _make_diagnostic(
@@ -894,6 +931,10 @@ class CircuitValidator:
                     )
                     break
 
+        power_path_issue = CircuitValidator._detect_missing_required_path(analyzer)
+        if power_path_issue is not None:
+            issues.append(power_path_issue)
+
         if g.number_of_nodes() > 0:
             n_components = nx.number_connected_components(g)
             if n_components > 1:
@@ -914,6 +955,93 @@ class CircuitValidator:
     def diagnose(analyzer: CircuitAnalyzer) -> List[str]:
         """兼容层：返回结构化独立诊断的 message 列表。"""
         return [item["message"] for item in CircuitValidator.diagnose_items(analyzer)]
+
+    @staticmethod
+    def _power_nodes_by_role(analyzer: CircuitAnalyzer) -> Tuple[List[str], List[str]]:
+        analyzer._identify_power_nets()
+        vcc_nodes = sorted(
+            node_id
+            for node_id, role in analyzer.power_nets.items()
+            if role == "VCC" and analyzer.graph.has_node(node_id)
+        )
+        gnd_nodes = sorted(
+            node_id
+            for node_id, role in analyzer.power_nets.items()
+            if role == "GND" and analyzer.graph.has_node(node_id)
+        )
+        return vcc_nodes, gnd_nodes
+
+    @staticmethod
+    def _detect_power_rail_short(analyzer: CircuitAnalyzer) -> Optional[Dict]:
+        vcc_nodes, gnd_nodes = CircuitValidator._power_nodes_by_role(analyzer)
+        if not vcc_nodes or not gnd_nodes:
+            return None
+
+        short_pairs: List[List[str]] = []
+        for vcc_node in vcc_nodes:
+            for gnd_node in gnd_nodes:
+                if analyzer._uf.connected(vcc_node, gnd_node):
+                    short_pairs.append([vcc_node, gnd_node])
+
+        if not short_pairs:
+            return None
+
+        merged_roots = sorted({analyzer._uf.find(pair[0]) for pair in short_pairs})
+        return _make_diagnostic(
+            category="node_errors",
+            error_code="POWER_RAIL_SHORT",
+            message=(
+                "检测到电源轨短路：VCC 与 GND 处于同一导通网络，"
+                "请立即断电并检查跨接导线或误插元件。"
+            ),
+            severity="error",
+            expected="isolated_power_rails",
+            actual="vcc_gnd_same_net",
+            context={
+                "power_short_pairs": short_pairs,
+                "current_node_id": merged_roots,
+                "vcc_nodes": vcc_nodes,
+                "gnd_nodes": gnd_nodes,
+            },
+        )
+
+    @staticmethod
+    def _detect_missing_required_path(analyzer: CircuitAnalyzer) -> Optional[Dict]:
+        vcc_nodes, gnd_nodes = CircuitValidator._power_nodes_by_role(analyzer)
+        if not vcc_nodes or not gnd_nodes:
+            return None
+
+        has_path = False
+        for vcc_node in vcc_nodes:
+            for gnd_node in gnd_nodes:
+                if nx.has_path(analyzer.graph, vcc_node, gnd_node):
+                    has_path = True
+                    break
+            if has_path:
+                break
+
+        if has_path:
+            return None
+
+        return _make_diagnostic(
+            category="topology_errors",
+            error_code="MISSING_REQUIRED_PATH",
+            message=(
+                "检测到供电路径断开：VCC 到 GND 不存在有效连通路径，"
+                "电路可能存在元件间断路或关键连线缺失。"
+            ),
+            severity="warning",
+            expected="reachable_path_vcc_to_gnd",
+            actual="no_path_found",
+            context={
+                "vcc_nodes": vcc_nodes,
+                "gnd_nodes": gnd_nodes,
+                "current_node_id": {
+                    "vcc_nodes": vcc_nodes,
+                    "gnd_nodes": gnd_nodes,
+                },
+            },
+        )
 
 
 def _component_instance_from_dict(item: Dict) -> ComponentInstance:
@@ -1525,8 +1653,11 @@ def _suggested_action_for_diagnostic(
         "TOPOLOGY_MATCH_PIN_PLACEMENT_DIFFERS": "保持当前拓扑的同时，微调元件插孔位置到参考布局。",
         "TOPOLOGY_CHECK_FAILED": "检查当前 netlist_v2 和 topology_graph 是否完整，必要时回退到最小样例排查。",
         "FLOATING_PIN": f"检查 {comp} 是否有悬空引脚，并补上连线或调整插孔。",
+        "WIRE_ENDPOINT_UNCONNECTED": f"检查 {comp} 的导线端点是否插入有效孔位，并确认与目标元件已形成导通。",
         "MULTIPLE_DISCONNECTED_SUBGRAPHS": "检查是否存在断路、漏接导线或未接入电源轨的子网络。",
         "COMPONENT_SHORTED_SAME_NET": f"确认 {comp} 是否跨行插入，避免两脚落在同一导通组。",
+        "POWER_RAIL_SHORT": "立即断电，排查是否存在把 VCC 与 GND 直接连通的导线或元件误插。",
+        "MISSING_REQUIRED_PATH": "检查从 VCC 到 GND 的关键器件链路，补齐断开的元件间连线。",
         "LED_SERIES_RESISTOR_MISSING": f"为 {comp} 所在支路串联限流电阻，再重新验证。",
     }
     return actions.get(error_code, f"检查 {category} 对应证据，并根据参考电路修正 {comp}。")
@@ -1604,7 +1735,7 @@ def _build_evidence_refs(
             }
         )
 
-    if error_code in ("NODE_MISMATCH", "COMPONENT_SHORTED_SAME_NET"):
+    if error_code in ("NODE_MISMATCH", "COMPONENT_SHORTED_SAME_NET", "POWER_RAIL_SHORT"):
         if expected is not None:
             refs.append({"kind": "expected_node", "value": expected})
         if actual is not None:
@@ -1642,6 +1773,16 @@ def _build_evidence_refs(
                 refs.append({"kind": "net", "value": context["net_a"]})
             if context.get("net_b") is not None:
                 refs.append({"kind": "net", "value": context["net_b"]})
+    if error_code in ("POWER_RAIL_SHORT", "MISSING_REQUIRED_PATH"):
+        for node_id in context.get("vcc_nodes", []) or []:
+            refs.append({"kind": "net", "value": node_id})
+        for node_id in context.get("gnd_nodes", []) or []:
+            refs.append({"kind": "net", "value": node_id})
+    if error_code == "WIRE_ENDPOINT_UNCONNECTED":
+        if context.get("current_hole_id") is not None:
+            refs.append({"kind": "actual_hole", "value": context.get("current_hole_id")})
+        if context.get("current_node_id") is not None:
+            refs.append({"kind": "actual_node", "value": context.get("current_node_id")})
 
     if error_code == "TOPOLOGY_VALID_SUBSET":
         if expected is not None:
