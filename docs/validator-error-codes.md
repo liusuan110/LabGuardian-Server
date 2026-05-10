@@ -165,10 +165,14 @@
   - 元件引脚疑似悬空
 - `WIRE_ENDPOINT_UNCONNECTED`
   - 导线端点未接入其他元件，疑似导线-元件断开
+- `WIRE_SELF_LOOP_OR_REDUNDANT`
+  - 导线形成自环或重复连接同一节点对，疑似冗余布线
 - `MULTIPLE_DISCONNECTED_SUBGRAPHS`
   - 电路存在多个独立连通分量
 - `MISSING_REQUIRED_PATH`
   - `VCC` 到 `GND` 不存在有效连通路径，疑似元件间断路或关键连线缺失
+- `MISSING_EXPECTED_ADJACENCY`
+  - 参考电路中应连通的关键元件对在当前电路未连通
 
 ### Node
 
@@ -178,6 +182,8 @@
   - 元件两脚落在同一导通组，疑似短路
 - `POWER_RAIL_SHORT`
   - `VCC` 与 `GND` 落在同一导通网络，属于电路级短路
+- `UNEXPECTED_NET_BRIDGE`
+  - 本应隔离的两网被意外桥接到同一导通网络
 
 ### Hole
 

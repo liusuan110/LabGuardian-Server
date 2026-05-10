@@ -279,6 +279,11 @@ class CircuitValidator:
         v2_exact = v2_cmp["is_exact_match"]
         v2_hole_only = v2_cmp["is_hole_placement_only_mismatch"]
         has_v2_polarity = bool(v2_cmp["polarity_diagnostics"])
+        for item in self._detect_reference_pair_anomalies(
+            curr_analyzer,
+            result["matched_component_pairs"],
+        ):
+            _append_diagnostic(result, item)
 
         # L1-L3
         polarity_checked = has_v2_polarity
@@ -479,6 +484,114 @@ class CircuitValidator:
             "is_exact_match": not (pin_mismatches or hole_mismatches or polarity_diagnostics) and progress >= 1.0 and similarity >= 1.0,
             "is_hole_placement_only_mismatch": bool(hole_diagnostics) and not (node_diagnostics or component_diagnostics or polarity_diagnostics),
         }
+
+    def _detect_reference_pair_anomalies(
+        self,
+        curr_analyzer: CircuitAnalyzer,
+        matched_pairs: List[Dict[str, str]],
+    ) -> List[Dict]:
+        """基于参考电路匹配对，检测应连未连与不应连却连通的元件对。"""
+        issues: List[Dict] = []
+        if not matched_pairs:
+            return issues
+
+        curr_by_id = {comp.component_id: comp for comp in curr_analyzer.component_instances}
+        ref_analyzer = CircuitAnalyzer(board_schema=BoardSchema.default_breadboard())
+        for comp in self.ref_component_instances:
+            ref_analyzer.add_component_instance(comp)
+        ref_roots = self._component_root_sets(ref_analyzer)
+        curr_roots = self._component_root_sets(curr_analyzer)
+
+        ref_to_curr: Dict[str, str] = {}
+        for pair in matched_pairs:
+            ref_id = pair.get("reference_component_id")
+            curr_id = pair.get("current_component_id")
+            if not ref_id or not curr_id:
+                continue
+            if ref_id in ref_roots and curr_id in curr_roots:
+                ref_to_curr[ref_id] = curr_id
+
+        ref_ids = sorted(ref_to_curr.keys())
+        max_findings = 20
+        for i, ref_a in enumerate(ref_ids):
+            for ref_b in ref_ids[i + 1 :]:
+                curr_a = ref_to_curr[ref_a]
+                curr_b = ref_to_curr[ref_b]
+                ref_shared = sorted(ref_roots[ref_a] & ref_roots[ref_b])
+                curr_shared = sorted(curr_roots[curr_a] & curr_roots[curr_b])
+                ref_adjacent = bool(ref_shared)
+                curr_adjacent = bool(curr_shared)
+
+                if ref_adjacent and not curr_adjacent:
+                    curr_comp = curr_by_id.get(curr_a)
+                    paired_curr_comp = curr_by_id.get(curr_b)
+                    issues.append(
+                        _make_diagnostic(
+                            category="topology_errors",
+                            error_code="MISSING_EXPECTED_ADJACENCY",
+                            message=(
+                                f"{ref_a}<->{ref_b}: 参考电路中应连通，但当前 {curr_a}<->{curr_b} 未连通，"
+                                "可能存在元件-元件断开"
+                            ),
+                            severity="warning",
+                            component_id=ref_a,
+                            current_component_id=curr_a,
+                            expected=ref_shared,
+                            actual=curr_shared,
+                            context={
+                                "paired_component_id": ref_b,
+                                "paired_current_component_id": curr_b,
+                                "target_node_id": ref_shared,
+                                "current_node_id": curr_shared,
+                                "current_component_bbox": curr_comp.metadata.get("bbox") if curr_comp else None,
+                                "paired_component_bbox": paired_curr_comp.metadata.get("bbox") if paired_curr_comp else None,
+                            },
+                        )
+                    )
+                elif (not ref_adjacent) and curr_adjacent:
+                    curr_comp = curr_by_id.get(curr_a)
+                    paired_curr_comp = curr_by_id.get(curr_b)
+                    issues.append(
+                        _make_diagnostic(
+                            category="node_errors",
+                            error_code="UNEXPECTED_NET_BRIDGE",
+                            message=(
+                                f"{curr_a}<->{curr_b}: 当前被意外桥接到同一网络({','.join(curr_shared)}), "
+                                "与参考隔离关系不一致"
+                            ),
+                            severity="warning",
+                            component_id=ref_a,
+                            current_component_id=curr_a,
+                            expected=ref_shared,
+                            actual=curr_shared,
+                            context={
+                                "paired_component_id": ref_b,
+                                "paired_current_component_id": curr_b,
+                                "current_node_id": curr_shared,
+                                "current_component_bbox": curr_comp.metadata.get("bbox") if curr_comp else None,
+                                "paired_component_bbox": paired_curr_comp.metadata.get("bbox") if paired_curr_comp else None,
+                            },
+                        )
+                    )
+
+                if len(issues) >= max_findings:
+                    return issues
+        return issues
+
+    @staticmethod
+    def _component_root_sets(analyzer: CircuitAnalyzer) -> Dict[str, set]:
+        roots_by_component: Dict[str, set] = {}
+        for comp in analyzer.component_instances:
+            ctype = norm_component_type(comp.component_type)
+            if ctype == "Wire":
+                continue
+            roots: set = set()
+            for pin in comp.pins:
+                node = pin.electrical_node_id or analyzer.board_schema.resolve_hole_to_node(pin.hole_id)
+                roots.add(analyzer._uf.find(str(node)))
+            if roots:
+                roots_by_component[comp.component_id] = roots
+        return roots_by_component
 
     # ---- VF2++ 回调 ----
 
@@ -869,6 +982,8 @@ class CircuitValidator:
 
         vcc_nodes, gnd_nodes = CircuitValidator._power_nodes_by_role(analyzer)
         power_nodes = set(vcc_nodes) | set(gnd_nodes)
+        issues.extend(CircuitValidator._detect_wire_self_loop_or_redundant(analyzer))
+        issues.extend(CircuitValidator._detect_unexpected_net_bridge(analyzer, power_nodes))
 
         for comp in analyzer.component_instances:
             ctype = norm_component_type(comp.component_type)
@@ -1042,6 +1157,133 @@ class CircuitValidator:
                 },
             },
         )
+
+    @staticmethod
+    def _detect_wire_self_loop_or_redundant(analyzer: CircuitAnalyzer) -> List[Dict]:
+        issues: List[Dict] = []
+        wire_pairs: Dict[Tuple[str, str], List[ComponentInstance]] = {}
+
+        for comp in analyzer.component_instances:
+            if norm_component_type(comp.component_type) != "Wire" or len(comp.pins) < 2:
+                continue
+            n1 = comp.pins[0].electrical_node_id or analyzer.board_schema.resolve_hole_to_node(comp.pins[0].hole_id)
+            n2 = comp.pins[1].electrical_node_id or analyzer.board_schema.resolve_hole_to_node(comp.pins[1].hole_id)
+            pair = tuple(sorted([str(n1), str(n2)]))
+
+            if str(n1) == str(n2):
+                issues.append(
+                    _make_diagnostic(
+                        category="topology_errors",
+                        error_code="WIRE_SELF_LOOP_OR_REDUNDANT",
+                        message=(
+                            f"{comp.component_id}: 导线两端位于同一节点({n1})，"
+                            "属于自环连接，可能为冗余布线"
+                        ),
+                        severity="warning",
+                        component_id=comp.component_id,
+                        actual=n1,
+                        context={
+                            "current_hole_id": [comp.pins[0].hole_id, comp.pins[1].hole_id],
+                            "current_node_id": [n1, n2],
+                            "current_observation_refs": _observation_refs_for_pins(comp.component_id, comp.pins[:2]),
+                            "current_component_bbox": comp.metadata.get("bbox"),
+                        },
+                    )
+                )
+            wire_pairs.setdefault(pair, []).append(comp)
+
+        for pair, pair_wires in wire_pairs.items():
+            if len(pair_wires) <= 1:
+                continue
+            primary = pair_wires[0]
+            for redundant in pair_wires[1:]:
+                issues.append(
+                    _make_diagnostic(
+                        category="topology_errors",
+                        error_code="WIRE_SELF_LOOP_OR_REDUNDANT",
+                        message=(
+                            f"{redundant.component_id}: 与 {primary.component_id} 连接了相同节点对"
+                            f"({pair[0]} <-> {pair[1]})，可能为冗余导线"
+                        ),
+                        severity="warning",
+                        component_id=redundant.component_id,
+                        actual=list(pair),
+                        context={
+                            "current_hole_id": [pin.hole_id for pin in redundant.pins[:2]],
+                            "current_node_id": list(pair),
+                            "current_observation_refs": _observation_refs_for_pins(
+                                redundant.component_id,
+                                redundant.pins[:2],
+                            ),
+                            "current_component_bbox": redundant.metadata.get("bbox"),
+                        },
+                    )
+                )
+
+        return issues
+
+    @staticmethod
+    def _detect_unexpected_net_bridge(
+        analyzer: CircuitAnalyzer,
+        power_nodes: set,
+    ) -> List[Dict]:
+        issues: List[Dict] = []
+        node_to_nonwire_components: Dict[str, set] = {}
+        for comp in analyzer.component_instances:
+            if norm_component_type(comp.component_type) == "Wire":
+                continue
+            for pin in comp.pins:
+                node = pin.electrical_node_id or analyzer.board_schema.resolve_hole_to_node(pin.hole_id)
+                node_to_nonwire_components.setdefault(str(node), set()).add(comp.component_id)
+
+        seen_pairs: set = set()
+        for comp in analyzer.component_instances:
+            if norm_component_type(comp.component_type) != "Wire" or len(comp.pins) < 2:
+                continue
+            n1 = str(comp.pins[0].electrical_node_id or analyzer.board_schema.resolve_hole_to_node(comp.pins[0].hole_id))
+            n2 = str(comp.pins[1].electrical_node_id or analyzer.board_schema.resolve_hole_to_node(comp.pins[1].hole_id))
+            if n1 == n2:
+                continue
+            if n1 in power_nodes or n2 in power_nodes:
+                continue
+            pair = tuple(sorted([n1, n2]))
+            if pair in seen_pairs:
+                continue
+
+            left_comps = node_to_nonwire_components.get(n1, set())
+            right_comps = node_to_nonwire_components.get(n2, set())
+            if not left_comps or not right_comps:
+                continue
+            if not left_comps.isdisjoint(right_comps):
+                continue
+            if len(left_comps | right_comps) < 2:
+                continue
+
+            seen_pairs.add(pair)
+            issues.append(
+                _make_diagnostic(
+                    category="node_errors",
+                    error_code="UNEXPECTED_NET_BRIDGE",
+                    message=(
+                        f"{comp.component_id}: 检测到网络桥接 {n1}<->{n2}，"
+                        f"连接了 {sorted(left_comps)} 与 {sorted(right_comps)}，可能为误桥接"
+                    ),
+                    severity="warning",
+                    component_id=comp.component_id,
+                    actual=list(pair),
+                    context={
+                        "bridge_nodes": list(pair),
+                        "bridge_left_components": sorted(left_comps),
+                        "bridge_right_components": sorted(right_comps),
+                        "current_hole_id": [pin.hole_id for pin in comp.pins[:2]],
+                        "current_node_id": list(pair),
+                        "current_observation_refs": _observation_refs_for_pins(comp.component_id, comp.pins[:2]),
+                        "current_component_bbox": comp.metadata.get("bbox"),
+                    },
+                )
+            )
+
+        return issues
 
 
 def _component_instance_from_dict(item: Dict) -> ComponentInstance:
@@ -1654,6 +1896,9 @@ def _suggested_action_for_diagnostic(
         "TOPOLOGY_CHECK_FAILED": "检查当前 netlist_v2 和 topology_graph 是否完整，必要时回退到最小样例排查。",
         "FLOATING_PIN": f"检查 {comp} 是否有悬空引脚，并补上连线或调整插孔。",
         "WIRE_ENDPOINT_UNCONNECTED": f"检查 {comp} 的导线端点是否插入有效孔位，并确认与目标元件已形成导通。",
+        "WIRE_SELF_LOOP_OR_REDUNDANT": f"检查 {comp} 是否形成自环或重复跨接，删除冗余导线并保留最小必要连线。",
+        "UNEXPECTED_NET_BRIDGE": f"检查 {comp} 是否把本应隔离的两网桥接，确认后移除误接跳线。",
+        "MISSING_EXPECTED_ADJACENCY": f"检查 {comp} 与目标元件之间应有的连接关系，补齐缺失连线。",
         "MULTIPLE_DISCONNECTED_SUBGRAPHS": "检查是否存在断路、漏接导线或未接入电源轨的子网络。",
         "COMPONENT_SHORTED_SAME_NET": f"确认 {comp} 是否跨行插入，避免两脚落在同一导通组。",
         "POWER_RAIL_SHORT": "立即断电，排查是否存在把 VCC 与 GND 直接连通的导线或元件误插。",
@@ -1701,6 +1946,15 @@ def _build_evidence_refs(
                 "bbox": context["current_component_bbox"],
             }
         )
+    if context.get("paired_component_bbox") is not None and context.get("paired_current_component_id"):
+        refs.append(
+            {
+                "kind": "component_bbox_ref",
+                "ref_id": f"component_bbox:{context['paired_current_component_id']}",
+                "component_id": context["paired_current_component_id"],
+                "bbox": context["paired_component_bbox"],
+            }
+        )
 
     if pin_name is not None:
         refs.append(
@@ -1735,7 +1989,14 @@ def _build_evidence_refs(
             }
         )
 
-    if error_code in ("NODE_MISMATCH", "COMPONENT_SHORTED_SAME_NET", "POWER_RAIL_SHORT"):
+    if error_code in (
+        "NODE_MISMATCH",
+        "COMPONENT_SHORTED_SAME_NET",
+        "POWER_RAIL_SHORT",
+        "UNEXPECTED_NET_BRIDGE",
+        "MISSING_EXPECTED_ADJACENCY",
+        "WIRE_SELF_LOOP_OR_REDUNDANT",
+    ):
         if expected is not None:
             refs.append({"kind": "expected_node", "value": expected})
         if actual is not None:
@@ -1783,6 +2044,13 @@ def _build_evidence_refs(
             refs.append({"kind": "actual_hole", "value": context.get("current_hole_id")})
         if context.get("current_node_id") is not None:
             refs.append({"kind": "actual_node", "value": context.get("current_node_id")})
+    if error_code == "UNEXPECTED_NET_BRIDGE":
+        for node_id in context.get("bridge_nodes", []) or []:
+            refs.append({"kind": "net", "value": node_id})
+        for comp_id in context.get("bridge_left_components", []) or []:
+            refs.append({"kind": "current_component", "component_id": comp_id})
+        for comp_id in context.get("bridge_right_components", []) or []:
+            refs.append({"kind": "current_component", "component_id": comp_id})
 
     if error_code == "TOPOLOGY_VALID_SUBSET":
         if expected is not None:

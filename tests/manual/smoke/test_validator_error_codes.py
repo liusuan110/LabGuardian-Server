@@ -161,6 +161,11 @@ def main() -> int:
         fixture_dir / "mapped_transistor_missing_pin.json",
         "PIN_MISSING",
     )
+    _assert_compare_code(
+        fixture_dir / "reference_expected_adjacency_v4.json",
+        fixture_dir / "mapped_missing_expected_adjacency.json",
+        "MISSING_EXPECTED_ADJACENCY",
+    )
 
     _assert_diagnose_code(
         fixture_dir / "mapped_floating_pin.json",
@@ -189,6 +194,14 @@ def main() -> int:
     _assert_diagnose_code(
         fixture_dir / "mapped_wire_endpoint_unconnected.json",
         "WIRE_ENDPOINT_UNCONNECTED",
+    )
+    _assert_diagnose_code(
+        fixture_dir / "mapped_unexpected_net_bridge.json",
+        "UNEXPECTED_NET_BRIDGE",
+    )
+    _assert_diagnose_code(
+        fixture_dir / "mapped_wire_self_loop_or_redundant.json",
+        "WIRE_SELF_LOOP_OR_REDUNDANT",
     )
     _assert_diagnose_code_absent(
         fixture_dir / "mapped_power_pins_only.json",
