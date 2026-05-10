@@ -268,7 +268,7 @@ class TestS4Validation:
         )
 
         # Wire 应该被识别但不会触发错误
-        assert result["risk_level"] in ("low", "medium", "high", "unknown", "safe")
+        assert result["risk_level"] in ("low", "medium", "high", "unknown", "safe", "warning")
         assert "risk_level" in result
 
     def test_t7_8_comparison_report_fields(self):

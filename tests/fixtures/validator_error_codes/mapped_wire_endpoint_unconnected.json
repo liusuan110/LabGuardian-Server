@@ -1,0 +1,30 @@
+[
+  {
+    "component_id": "W1",
+    "component_type": "Wire",
+    "class_name": "Wire",
+    "package_type": "jumper_2pin",
+    "symmetry_group": [["pin1", "pin2"]],
+    "confidence": 1.0,
+    "pins": [
+      {
+        "pin_id": 1,
+        "pin_name": "pin1",
+        "logic_loc": ["2", "plus"],
+        "hole_id": "PLUS2",
+        "electrical_node_id": "PWR_PLUS",
+        "confidence": 1.0,
+        "is_ambiguous": false
+      },
+      {
+        "pin_id": 2,
+        "pin_name": "pin2",
+        "logic_loc": ["10", "b"],
+        "hole_id": "B10",
+        "electrical_node_id": "ROW_10_L",
+        "confidence": 1.0,
+        "is_ambiguous": false
+      }
+    ]
+  }
+]

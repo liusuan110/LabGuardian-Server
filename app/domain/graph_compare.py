@@ -6,10 +6,10 @@ from typing import Any
 import networkx as nx
 from networkx.algorithms.isomorphism import GraphMatcher
 
-from app.domain.logical_reference import normalize_component_type
+from app.domain.logical_reference import normalize_component_type, normalize_net_role
 
 
-STRICT_NET_ROLES = {"ground", "power"}
+STRICT_NET_ROLES = {"ground", "power", "input", "output"}
 
 
 def compare_logical_graphs(
@@ -234,6 +234,11 @@ def _default_title(error_code: str) -> str:
         "WRONG_CONNECTION": "错接",
         "EXTRA_CONNECTION": "多余连接",
         "INCOMPLETE_CIRCUIT": "电路未完成",
+        "ROLE_MISMATCH": "网络角色错误",
+        "INPUT_NODE_MISMATCH": "输入节点错误",
+        "OUTPUT_NODE_MISMATCH": "输出节点错误",
+        "POWER_NODE_MISMATCH": "电源节点错误",
+        "GROUND_NODE_MISMATCH": "地节点错误",
     }.get(error_code, "电路异常")
 
 
@@ -371,6 +376,75 @@ def _generate_detailed_items(
                     ],
                     suggested_action=f"请将 {cur_id}.{pin_name} 从 {cur_net} 改接到与 {ref_net} 对应的网络。",
                 ))
+
+    # 3.5 Net role mismatch checks for mapped nets
+    cur_net_by_id = {
+        n.get("electrical_net_id"): n
+        for n in cur_netlist_v2.get("nets", [])
+        if n.get("electrical_net_id")
+    }
+    cur_net_roles = {
+        net_id: normalize_net_role(
+            n.get("role") or n.get("manual_role") or n.get("power_role")
+        )
+        for net_id, n in cur_net_by_id.items()
+    }
+
+    role_error_code_map = {
+        "input": "INPUT_NODE_MISMATCH",
+        "output": "OUTPUT_NODE_MISMATCH",
+        "power": "POWER_NODE_MISMATCH",
+        "ground": "GROUND_NODE_MISMATCH",
+    }
+
+    for ref_net, ref_role in ref_net_roles.items():
+        if ref_role == "signal":
+            continue
+        mapped_cur_net = net_map.get(ref_net)
+        if not mapped_cur_net:
+            continue
+        cur_role = cur_net_roles.get(mapped_cur_net, "signal")
+        if cur_role != ref_role:
+            ref_pins = []
+            for rc in ref_payload.get("components", []):
+                for p in rc.get("pins", []):
+                    if p.get("net") == ref_net:
+                        ref_pins.append(f"{rc['ref_id']}.{p['pin']}")
+
+            cur_connected_pins = []
+            for cc in cur_netlist_v2.get("components", []):
+                cid = cc.get("component_id")
+                for p in cc.get("pins", []):
+                    if p.get("electrical_net_id") == mapped_cur_net:
+                        cur_connected_pins.append(f"{cid}.{p.get('pin_name')}")
+
+            cur_net_obj = cur_net_by_id.get(mapped_cur_net, {})
+            actual_data: dict[str, Any] = {
+                "role": cur_role,
+                "current_net": mapped_cur_net,
+                "connected_pins": cur_connected_pins,
+            }
+            if cur_net_obj.get("role_label"):
+                actual_data["role_label"] = cur_net_obj["role_label"]
+            if cur_net_obj.get("member_hole_ids"):
+                actual_data["member_hole_ids"] = cur_net_obj["member_hole_ids"]
+
+            wrong_connection_items.append(_detailed_item(
+                error_code=role_error_code_map.get(ref_role, "ROLE_MISMATCH"),
+                error_family="wiring_mismatch",
+                severity="error",
+                message=f"参考电路中 {ref_net} 为 {ref_role} 节点，但当前映射网络 {mapped_cur_net} 实际为 {cur_role} 节点。",
+                expected={
+                    "role": ref_role,
+                    "reference_net": ref_net,
+                    "pins": ref_pins,
+                },
+                actual=actual_data,
+                component_ref=None,
+                component_actual=None,
+                evidence_refs=[{"type": "net", "electrical_net_id": mapped_cur_net}],
+                suggested_action=f"请在二维面包板图上重新点选正确的 {ref_role} 节点。",
+            ))
 
     # 4. OPEN_CIRCUIT: ref pins that should share a net but are on different cur nets
     for ref_net_id in ref_net_roles:

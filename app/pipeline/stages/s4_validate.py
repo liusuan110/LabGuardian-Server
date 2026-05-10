@@ -25,6 +25,7 @@ def run_validate(
     topology_graph: dict,
     reference_circuit: Dict[str, Any] | str | None = None,
     components: List[dict] | None = None,
+    current_netlist_v2: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """执行电路验证
 
@@ -32,6 +33,8 @@ def run_validate(
         topology_graph: S3 输出的 node_link_data
         reference_circuit: 参考电路 JSON 路径或内联 reference payload（可选）
         components: S2 输出的映射元件列表 (用于重建 CircuitAnalyzer 进行比较)
+        current_netlist_v2: 已应用手动角色等后处理的 netlist_v2（可选，
+            logical_reference_v1 分支会优先使用它而不是从 components 重建）
 
     Returns:
         {
@@ -58,6 +61,7 @@ def run_validate(
             components=components,
             topology_meta=topology_meta,
             started_at=t0,
+            current_netlist_v2=current_netlist_v2,
         )
 
     if reference_circuit:
@@ -187,6 +191,7 @@ def _run_logical_reference_validate(
     components: List[dict] | None,
     topology_meta: Dict[str, Any],
     started_at: float,
+    current_netlist_v2: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     if not components:
         item = {
@@ -211,8 +216,9 @@ def _run_logical_reference_validate(
         )
 
     try:
-        curr_analyzer = _rebuild_analyzer(components)
-        current_netlist_v2 = curr_analyzer.export_netlist_v2()
+        if current_netlist_v2 is None:
+            curr_analyzer = _rebuild_analyzer(components)
+            current_netlist_v2 = curr_analyzer.export_netlist_v2()
         reference_graph = logical_reference_to_graph(reference_circuit)
         current_graph = current_netlist_v2_to_graph(current_netlist_v2)
         result = compare_logical_graphs(

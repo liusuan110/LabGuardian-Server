@@ -18,6 +18,7 @@ from celery.result import AsyncResult
 
 from app.core.celery_app import celery_app
 from app.domain.board_schema import BoardSchema
+from app.domain.logical_reference import normalize_net_role
 from app.pipeline.orchestrator import run_pipeline
 from app.pipeline.stages.s3_topology import run_topology
 from app.pipeline.stages.s4_validate import run_validate
@@ -199,8 +200,14 @@ class PipelineService:
         """应用前端手动孔位修正后，重跑 S3/S4 并返回正式 PipelineResult."""
         if not request.components:
             raise ValueError("Corrected recompute requires mapping components.")
-        if not request.corrections:
-            raise ValueError("Corrected recompute requires at least one correction.")
+
+        has_pin_corrections = bool(request.corrections)
+        has_role_assignments = bool(request.net_role_assignments)
+
+        if not has_pin_corrections and not has_role_assignments:
+            raise ValueError(
+                "Corrected recompute requires at least one pin correction or net role assignment."
+            )
 
         # 统一解析参考电路（支持 reference_id 和 inline payload）
         reference_circuit, ref_meta = self._resolve_reference(
@@ -251,10 +258,140 @@ class PipelineService:
             raise ValueError(f"Corrections did not match any pins: {', '.join(missing)}")
 
         s3 = run_topology(components, rail_assignments=request.rail_assignments)
+
+        # 处理手动网络角色指定
+        netlist_v2 = s3.get("netlist_v2") or {}
+        manual_role_warnings: list[dict[str, Any]] = []
+        manual_roles_applied: list[dict[str, Any]] = []
+
+        if request.net_role_assignments:
+            # 建立索引：优先使用 netlist_v2 中的拓扑信息
+            netlist_nets: dict[str, dict] = {}
+            netlist_nets_by_hole: dict[str, dict] = {}
+            netlist_nets_by_node: dict[str, dict] = {}
+            netlist_nets_by_comp_pin: dict[tuple[str, str], dict] = {}
+
+            for net in netlist_v2.get("nets", []):
+                net_id = net.get("electrical_net_id")
+                if not net_id:
+                    continue
+                netlist_nets[str(net_id)] = net
+                for hid in net.get("member_hole_ids", []):
+                    netlist_nets_by_hole[str(hid)] = net
+                for nid in net.get("member_node_ids", []):
+                    netlist_nets_by_node[str(nid)] = net
+
+            for comp in netlist_v2.get("components", []):
+                comp_id = str(comp.get("component_id") or "")
+                for pin in comp.get("pins", []):
+                    pin_name = str(pin.get("pin_name") or "")
+                    pin_net_id = pin.get("electrical_net_id")
+                    if comp_id and pin_name and pin_net_id:
+                        netlist_nets_by_comp_pin[(comp_id, pin_name)] = netlist_nets.get(
+                            str(pin_net_id), {"electrical_net_id": str(pin_net_id)}
+                        )
+
+            for assignment in request.net_role_assignments:
+                normalized_role = normalize_net_role(assignment.role)
+                if normalized_role == "signal":
+                    manual_role_warnings.append({
+                        "warning_code": "ROLE_INVALID",
+                        "message": f"非法或未知的网络角色: {assignment.role}",
+                        "assignment": assignment.model_dump(),
+                    })
+                    continue
+
+                target_net_id: str | None = None
+                resolved_by: str = ""
+
+                if assignment.electrical_net_id:
+                    target_net_id = assignment.electrical_net_id
+                    resolved_by = "electrical_net_id"
+                    # 校验该 net 确实存在于当前 netlist
+                    if target_net_id not in netlist_nets:
+                        manual_role_warnings.append({
+                            "warning_code": "ROLE_TARGET_NOT_FOUND",
+                            "message": f"指定的电气网络 {target_net_id} 在当前 netlist 中不存在",
+                            "assignment": assignment.model_dump(),
+                        })
+                        continue
+                elif assignment.component_id and assignment.pin_name:
+                    net_obj = netlist_nets_by_comp_pin.get((assignment.component_id, assignment.pin_name))
+                    if net_obj:
+                        target_net_id = net_obj.get("electrical_net_id")
+                        resolved_by = "component_pin"
+                elif assignment.hole_id:
+                    net_obj = netlist_nets_by_hole.get(str(assignment.hole_id))
+                    if net_obj:
+                        target_net_id = net_obj.get("electrical_net_id")
+                        resolved_by = "hole_id"
+                    else:
+                        # 尝试通过 electrical_node_id 查找
+                        if assignment.electrical_node_id:
+                            net_obj = netlist_nets_by_node.get(str(assignment.electrical_node_id))
+                            if net_obj:
+                                target_net_id = net_obj.get("electrical_net_id")
+                                resolved_by = "electrical_node_id"
+
+                if not target_net_id:
+                    manual_role_warnings.append({
+                        "warning_code": "ROLE_TARGET_NOT_CONNECTED",
+                        "message": (
+                            f"无法为角色指定 {assignment.role} 找到对应电气网络，"
+                            f"该孔位/节点可能未连接到任何元件或导线（空孔）"
+                        ),
+                        "assignment": assignment.model_dump(),
+                    })
+                    continue
+
+                # 写入 netlist_v2 中的 net
+                net_obj = netlist_nets.get(target_net_id)
+                if net_obj is not None:
+                    net_obj["role"] = normalized_role
+                    net_obj["manual_role"] = normalized_role
+                    net_obj["role_label"] = assignment.role
+                    net_obj["role_source"] = assignment.source
+                    if normalized_role in ("power", "ground"):
+                        net_obj["power_role"] = "VCC" if normalized_role == "power" else "GND"
+                else:
+                    manual_role_warnings.append({
+                        "warning_code": "ROLE_TARGET_NOT_FOUND",
+                        "message": f"角色指定目标网络 {target_net_id} 在 netlist_v2 中不存在",
+                        "assignment": assignment.model_dump(),
+                    })
+                    continue
+
+                # 写入相关 pin metadata
+                for comp in components:
+                    comp_id = str(comp.get("component_id") or "")
+                    for pin in comp.get("pins", []):
+                        pin_net_id = pin.get("electrical_net_id")
+                        if pin_net_id == target_net_id:
+                            metadata = dict(pin.get("metadata") or {})
+                            metadata["manual_net_role"] = normalized_role
+                            metadata["manual_role_label"] = assignment.role
+                            pin["metadata"] = metadata
+
+                applied_record: dict[str, Any] = {
+                    "role": normalized_role,
+                    "role_label": assignment.role,
+                    "electrical_net_id": target_net_id,
+                    "source": assignment.source,
+                    "resolved_by": resolved_by,
+                }
+                if assignment.hole_id:
+                    applied_record["hole_id"] = assignment.hole_id
+                if assignment.x_image is not None:
+                    applied_record["x_image"] = assignment.x_image
+                if assignment.y_image is not None:
+                    applied_record["y_image"] = assignment.y_image
+                manual_roles_applied.append(applied_record)
+
         s4 = run_validate(
             s3["topology_graph"],
             reference_circuit=reference_circuit,
             components=components,
+            current_netlist_v2=netlist_v2,
         )
         s5 = run_semantic_analysis(
             s3.get("netlist_v2"),
@@ -274,9 +411,13 @@ class PipelineService:
         runtime_metadata: dict[str, Any] = {
             "manual_corrections_applied": True,
             "manual_corrections": [item.model_dump() for item in request.corrections],
+            "manual_net_role_assignments": [item.model_dump() for item in request.net_role_assignments],
+            "manual_roles_applied": manual_roles_applied,
             "source_job_id": request.job_id,
             "reference": ref_meta,
         }
+        if manual_role_warnings:
+            runtime_metadata["manual_role_warnings"] = manual_role_warnings
 
         raw = {
             "stages": {

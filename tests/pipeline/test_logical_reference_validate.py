@@ -59,11 +59,29 @@ def _components() -> list[dict]:
     ]
 
 
+def _find_net_by_hole(netlist_v2: dict, hole_id: str) -> dict | None:
+    for net in netlist_v2.get("nets", []):
+        if hole_id in net.get("member_hole_ids", []):
+            return net
+    return None
+
+
 def test_s4_logical_reference_v1_full_match() -> None:
+    from app.pipeline.stages.s3_topology import run_topology
+
+    s3 = run_topology(components=_components())
+    netlist_v2 = dict(s3.get("netlist_v2") or {})
+    # 手动标注与参考一致的角色，使逻辑图完全匹配
+    # 通过 hole_id 定位 net，避免依赖 NET_xxx 编号顺序
+    vin_net = _find_net_by_hole(netlist_v2, "A1")
+    assert vin_net is not None
+    vin_net["role"] = "input"
+
     result = run_validate(
         topology_graph={"nodes": [], "links": []},
         reference_circuit=_reference(),
         components=_components(),
+        current_netlist_v2=netlist_v2,
     )
 
     assert result["is_correct"] is True

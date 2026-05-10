@@ -30,7 +30,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--rails",
-        default='{"top_plus":"VCC","top_minus":"GND","bot_plus":"VCC","bot_minus":"GND"}',
+        default='{"top_plus":"VCC","top_minus":"VCC","bot_plus":"GND","bot_minus":"GND"}',
         help="JSON string for rail assignments.",
     )
     return parser.parse_args()

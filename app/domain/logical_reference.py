@@ -138,13 +138,30 @@ def current_netlist_v2_to_graph(netlist_v2: dict[str, Any]) -> nx.Graph:
         net_id = str(net.get("electrical_net_id") or net.get("net_id") or "").strip()
         if not net_id:
             continue
-        role = net.get("role") or net.get("net_role") or net.get("power_role")
+        role = net.get("role") or net.get("manual_role")
+        if not role:
+            role_label = str(net.get("role_label") or "").strip()
+            if role_label in {"VIN", "input", "in"}:
+                role = "input"
+            elif role_label in {"VOUT", "output", "out"}:
+                role = "output"
+            elif role_label in {"VCC", "power", "pwr"}:
+                role = "power"
+            elif role_label in {"GND", "ground", "gnd"}:
+                role = "ground"
+        if not role:
+            power_role = str(net.get("power_role") or "").strip()
+            if power_role == "GND":
+                role = "ground"
+            elif power_role == "VCC":
+                role = "power"
         net_roles[net_id] = normalize_net_role(role)
         graph.add_node(
             _cur_net_node_id(net_id),
             kind="net",
             role=net_roles[net_id],
             source_id=net_id,
+            role_label=net.get("role_label"),
         )
 
     for comp in netlist_v2.get("components", []) or []:

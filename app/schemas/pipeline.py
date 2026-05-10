@@ -47,10 +47,11 @@ class PipelineRequest(BaseModel):
         default=None,
         description=(
             "面包板电源轨道指定, 如 "
-            '{"top_plus": "VCC", "top_minus": "GND", '
-            '"bot_plus": "VCC", "bot_minus": "GND"}'
+            '{"top_plus": "VCC", "top_minus": "VCC", '
+            '"bot_plus": "GND", "bot_minus": "GND"}'
         ),
     )
+    net_role_assignments: list[ManualNetRoleAssignment] = Field(default_factory=list)
 
 
 class ManualCorrectionPatch(BaseModel):
@@ -63,6 +64,20 @@ class ManualCorrectionPatch(BaseModel):
     source: str = "manual_drag"
 
 
+class ManualNetRoleAssignment(BaseModel):
+    """前端手动指定的网络角色（输入/输出/正电/地）。"""
+
+    role: str
+    source: str = "manual_netlist_select"
+    hole_id: str | None = None
+    component_id: str | None = None
+    pin_name: str | None = None
+    electrical_net_id: str | None = None
+    electrical_node_id: str | None = None
+    x_image: float | None = None
+    y_image: float | None = None
+
+
 class CorrectedRecomputeRequest(BaseModel):
     """基于前端手动修正重算 S3/S4 的请求。"""
 
@@ -71,6 +86,7 @@ class CorrectedRecomputeRequest(BaseModel):
     components: list[dict[str, Any]] = Field(default_factory=list)
     corrections: list[ManualCorrectionPatch] = Field(default_factory=list)
     rail_assignments: dict[str, str] | None = None
+    net_role_assignments: list[ManualNetRoleAssignment] = Field(default_factory=list)
     reference_id: str | None = None
     reference_circuit: dict[str, Any] | None = None
 

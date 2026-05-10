@@ -16,6 +16,13 @@ from app.pipeline.topology_input import build_analyzer_from_components
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_RAIL_ASSIGNMENTS: Dict[str, str] = {
+    "top_plus": "VCC",
+    "top_minus": "VCC",
+    "bot_plus": "GND",
+    "bot_minus": "GND",
+}
+
 
 def run_topology(
     components: List[dict],
@@ -46,8 +53,11 @@ def run_topology(
         components,
         board_schema=board_schema,
     )
+    effective_rails = dict(DEFAULT_RAIL_ASSIGNMENTS)
     if rail_assignments:
-        for track_id, label in rail_assignments.items():
+        effective_rails.update(rail_assignments)
+    for track_id, label in effective_rails.items():
+        if label:
             analyzer.set_rail_assignment(track_id, label)
 
     circuit_description = analyzer.describe()

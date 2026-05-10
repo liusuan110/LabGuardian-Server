@@ -11,6 +11,15 @@
 - `POLARITY_UNKNOWN`
 - `FLOATING_PIN`
 - `COMPONENT_SHORTED_SAME_NET`
+- `POWER_RAIL_SHORT`
+- `MISSING_REQUIRED_PATH`
+- `WIRE_ENDPOINT_UNCONNECTED`
+- `UNEXPECTED_NET_BRIDGE`
+- `WIRE_SELF_LOOP_OR_REDUNDANT`
+- `MISSING_EXPECTED_ADJACENCY`
+- (absence) `FLOATING_PIN` on power rails (`mapped_power_pins_only.json`)
+- (absence) `WIRE_ENDPOINT_UNCONNECTED` on rail pin (`mapped_wire_rail_pin_exempt.json`)
+- `POWER_RAIL_SHORT` on direct component bridge (`mapped_component_direct_vcc_gnd_bridge.json`)
 - `LED_SERIES_RESISTOR_MISSING`
 - `COMPONENT_MISSING`
 - `COMPONENT_EXTRA`
