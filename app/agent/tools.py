@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.agent.concepts import CONCEPT_LIBRARY, lookup_concept
 from app.agent.contracts import RuntimeEvidence
 from app.domain.board_schema import BoardSchema
 from app.services.teaching_kb_service import TeachingKbService
@@ -230,6 +231,51 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
             "matched_key": key if key in LOCAL_DATASHEET_FALLBACKS else "",
             "query": args.query,
             "error_family": args.error_family,
+        },
+    )
+
+
+class TeachingConceptLookupInput(BaseModel):
+    query: str = ""
+    concept_id: str = ""
+    error_family: str = "unknown"
+
+
+def teaching_concept_lookup_tool(args: TeachingConceptLookupInput) -> ToolResult:
+    """Deterministic local lookup over CONCEPT_LIBRARY.
+
+    Resolution order: explicit concept_id → keyword scan over query. Misses
+    return status="not_found" so callers can route to a generic answer rather
+    than fabricating one.
+    """
+
+    pack = None
+    if args.concept_id:
+        pack = CONCEPT_LIBRARY.get(args.concept_id)
+    if pack is None and args.query:
+        pack = lookup_concept(args.query)
+
+    if pack is None:
+        return ToolResult(
+            tool_name="teaching_concept_lookup_tool",
+            status="not_found",
+            summary="未在本地概念库中找到匹配条目",
+            payload={
+                "provider": "local_concept_library",
+                "query": args.query,
+                "concept_id": args.concept_id,
+                "available_concepts": list(CONCEPT_LIBRARY.keys()),
+            },
+        )
+
+    return ToolResult(
+        tool_name="teaching_concept_lookup_tool",
+        status="ok",
+        summary=f"{pack.concept_id}: {pack.title}",
+        payload={
+            "provider": "local_concept_library",
+            "concept": pack.model_dump(),
+            "query": args.query,
         },
     )
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.agent.contracts import ContextPack, RuntimeEvidence
+from app.agent.contracts import AgentIntent, ConceptPack, ContextPack, RuntimeEvidence
 from app.agent.tools import ToolResult
 from app.agent.verification import verify_draft_answer
 from app.schemas.angnt import AngntCitation, AngntEvidence
@@ -474,3 +474,206 @@ def _first_ref_text(evidence: RuntimeEvidence) -> str:
         + (f" / {first_ref.component_id}" if first_ref.component_id else "")
         + (f".{first_ref.pin_name}" if first_ref.pin_name else "")
     )
+
+
+# ---------------------------------------------------------------------------
+# Concept-tutor / lab-guidance answer paths (no LangGraph; deterministic).
+# ---------------------------------------------------------------------------
+
+_CONCEPT_SAFETY_TRIGGERS: tuple[str, ...] = (
+    "led_current_limit",
+    "capacitor_filtering",
+    "ohms_law",
+)
+
+
+def build_concept_answer(
+    *,
+    question: str,
+    concept: ConceptPack | None,
+    evidence: RuntimeEvidence | None = None,
+) -> str:
+    """Generate a 6-section concept_tutor answer from a local ConceptPack.
+
+    The answer never asserts specific holes / nets / connections of the
+    current circuit. The "和当前实验的关系" section either references the
+    current risk_level / error_codes at a high level, or explicitly states
+    that this is generic knowledge unrelated to the current circuit.
+    """
+
+    if concept is None:
+        return _generic_concept_fallback(question)
+
+    relate = _concept_relation_to_experiment(concept, evidence)
+    lines: list[str] = []
+    lines.append(f"直接回答：{concept.summary}")
+    if concept.key_points:
+        lines.append("原理解释：" + "；".join(concept.key_points))
+    if concept.formulas:
+        lines.append("公式：" + "；".join(concept.formulas))
+    lines.append(f"和当前实验的关系：{relate}")
+    if concept.common_mistakes:
+        lines.append("常见错误：" + "；".join(concept.common_mistakes))
+    if concept.lab_guidance:
+        lines.append("如何验证：" + "；".join(concept.lab_guidance))
+    safety_notes = list(concept.safety_notes)
+    if concept.concept_id in _CONCEPT_SAFETY_TRIGGERS and not any(
+        word in "；".join(safety_notes) for word in ("断电", "电源", "短路")
+    ):
+        safety_notes.append("操作前先断电，再复查电源和短路风险。")
+    if safety_notes:
+        lines.append("安全提醒：" + "；".join(safety_notes))
+    lines.append(f"知识来源：{concept.concept_id}")
+    return "\n".join(lines)
+
+
+def _generic_concept_fallback(question: str) -> str:
+    """Returned only when no concept matched — never invents domain facts."""
+    return (
+        "直接回答：本地知识库未匹配到对应概念，建议补充关键词后再次提问。\n"
+        "和当前实验的关系：这是通用问题，未与当前电路状态直接关联。\n"
+        "如何验证：可以查阅教材或参考权威资料对照学习。\n"
+        "安全提醒：上电或调整接线前请先断电，再复查电源与短路风险。\n"
+        "知识来源：concept_not_found"
+    )
+
+
+def _concept_relation_to_experiment(
+    concept: ConceptPack,
+    evidence: RuntimeEvidence | None,
+) -> str:
+    if evidence is None or not (evidence.findings or evidence.error_codes):
+        return "这是通用知识，与当前电路状态无直接对应。"
+    family_hint = ""
+    error_codes = "、".join(evidence.error_codes[:2]) if evidence.error_codes else ""
+    if error_codes:
+        family_hint = f"当前诊断报告中出现 {error_codes}，"
+    risk_hint = f"风险等级为 {evidence.risk_level}。" if evidence.risk_level else ""
+    return f"{family_hint}{risk_hint}该概念可作为理解上述现象的背景知识，但具体接线请以诊断结果为准。"
+
+
+def build_lab_guidance_answer(
+    *,
+    question: str,
+    concept: ConceptPack | None,
+    evidence: RuntimeEvidence | None = None,
+) -> str:
+    """Generate a numbered step-by-step lab-guidance answer with safety hint."""
+    steps: list[str] = []
+    if concept is not None and concept.lab_guidance:
+        steps.extend(concept.lab_guidance)
+    if not steps:
+        steps = [
+            "断电状态下检查接线是否与原理图一致。",
+            "用万用表通断挡确认怀疑短路的两点是否真的导通。",
+            "通电后用电压挡逐节点验证关键节点电压。",
+        ]
+
+    safety: list[str] = []
+    if concept is not None:
+        safety.extend(concept.safety_notes)
+    if not any(
+        word in "；".join(safety) for word in ("断电", "电源", "短路")
+    ):
+        safety.append("先断电再操作，复查电源轨与短路风险后再上电。")
+
+    lines: list[str] = ["实验操作步骤："]
+    for idx, step in enumerate(steps, start=1):
+        lines.append(f"{idx}. {step}")
+    lines.append("安全提醒：" + "；".join(safety))
+    if concept is not None:
+        lines.append(f"知识来源：{concept.concept_id}")
+    return "\n".join(lines)
+
+
+def build_concept_citations(
+    *,
+    station_id: str,
+    concept: ConceptPack | None,
+    tool_results: list[ToolResult],
+) -> list[AngntCitation]:
+    citations: list[AngntCitation] = []
+    if concept is not None:
+        citations.append(
+            AngntCitation(
+                source_type="concept_pack",
+                source_id=concept.concept_id,
+                title=concept.title,
+                snippet=concept.summary[:260],
+            )
+        )
+    for result in tool_results:
+        citations.append(
+            AngntCitation(
+                source_type="diagnostic_tool",
+                source_id=result.tool_name,
+                title=result.tool_name,
+                snippet=result.summary[:260],
+            )
+        )
+    if not citations:
+        citations.append(
+            AngntCitation(
+                source_type="concept_pack",
+                source_id="concept_not_found",
+                title="未匹配到本地概念",
+                snippet="建议补充关键词后再次提问",
+            )
+        )
+    return citations
+
+
+def build_concept_evidence(
+    *,
+    station_id: str,
+    intent: AgentIntent,
+    concept: ConceptPack | None,
+    tool_results: list[ToolResult],
+    verification_passed: bool,
+    verification_issues: list[str],
+    evidence: RuntimeEvidence | None = None,
+) -> list[AngntEvidence]:
+    items: list[AngntEvidence] = []
+    items.append(
+        AngntEvidence(
+            evidence_type="intent",
+            source_id=f"{station_id}:intent",
+            summary=f"intent={intent}",
+            payload={"intent": intent},
+        )
+    )
+    if concept is not None:
+        items.append(
+            AngntEvidence(
+                evidence_type="concept_pack",
+                source_id=concept.concept_id,
+                summary=concept.title,
+                payload=concept.model_dump(),
+            )
+        )
+    if evidence is not None:
+        items.append(
+            AngntEvidence(
+                evidence_type="runtime_evidence",
+                source_id=evidence.station_id,
+                summary="PCM Agent 输入证据（仅供前端展示当前电路状态）",
+                payload=evidence.model_dump(),
+            )
+        )
+    items.append(
+        AngntEvidence(
+            evidence_type="tool_results",
+            source_id=f"{station_id}:concept_tools",
+            summary="本地概念查找工具输出",
+            payload={"results": [result.model_dump() for result in tool_results]},
+        )
+    )
+    items.append(
+        AngntEvidence(
+            evidence_type="verification_report",
+            source_id=f"{station_id}:verifier",
+            summary="Reflection Node 校验结果",
+            payload={"passed": verification_passed, "issues": verification_issues},
+        )
+    )
+    return items
