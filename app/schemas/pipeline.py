@@ -78,6 +78,15 @@ class ManualNetRoleAssignment(BaseModel):
     y_image: float | None = None
 
 
+class ManualPinPolarityAssignment(BaseModel):
+    """前端手动指定三极管引脚极性。"""
+
+    component_id: str
+    pin_name: str
+    polarity: str
+    source: str = "manual_pin_polarity_select"
+
+
 class CorrectedRecomputeRequest(BaseModel):
     """基于前端手动修正重算 S3/S4 的请求。"""
 
@@ -87,6 +96,7 @@ class CorrectedRecomputeRequest(BaseModel):
     corrections: list[ManualCorrectionPatch] = Field(default_factory=list)
     rail_assignments: dict[str, str] | None = None
     net_role_assignments: list[ManualNetRoleAssignment] = Field(default_factory=list)
+    pin_polarity_assignments: list[ManualPinPolarityAssignment] = Field(default_factory=list)
     reference_id: str | None = None
     reference_circuit: dict[str, Any] | None = None
 
@@ -296,6 +306,9 @@ class PinLocation(BaseModel):
 
     pin_id: int = Field(..., description="引脚编号")
     pin_name: str = Field(..., description="引脚名称")
+    pin_display_name: str | None = Field(None, description="前端展示用引脚标签（如 E/B/C）")
+    polarity_role: str | None = Field(None, description="三极管极性角色（高置信）")
+    polarity_candidate_role: str | None = Field(None, description="三极管极性候选角色（低置信回退）")
     hole_id: str = Field(..., description="面包板孔洞ID")
     logic_loc: tuple[str, str] | None = Field(None, description="逻辑坐标 (行, 列)")
     x_warp: float | None = Field(None, description="校正后二维图中的X坐标")
@@ -549,6 +562,9 @@ class CircuitAnalysisResult(BaseModel):
                 pins.append(PinLocation(
                     pin_id=pin.get("pin_id", 0),
                     pin_name=pin.get("pin_name", ""),
+                    pin_display_name=pin.get("pin_display_name"),
+                    polarity_role=pin.get("polarity_role"),
+                    polarity_candidate_role=pin.get("polarity_candidate_role"),
                     hole_id=hole_id,
                     logic_loc=logic_loc,
                     electrical_node_id=pin.get("electrical_node_id"),

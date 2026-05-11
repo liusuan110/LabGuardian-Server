@@ -138,6 +138,9 @@ def _map_component_pins(
             {
                 "pin_id": int(pin.get("pin_id") or idx),
                 "pin_name": str(pin.get("pin_name") or f"pin{idx}"),
+                "pin_display_name": str(pin.get("pin_display_name") or pin.get("pin_name") or f"pin{idx}"),
+                "polarity_role": str(pin.get("polarity_role") or "UNKNOWN"),
+                "polarity_candidate_role": str(pin.get("polarity_candidate_role") or "UNKNOWN"),
                 "logic_loc": list(selected_logic) if selected_logic else None,
                 "hole_id": hole_id,
                 "board_2d_point": (

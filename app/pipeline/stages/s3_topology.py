@@ -80,6 +80,9 @@ def run_topology(
                     {
                         "pin_id": pin.pin_id,
                         "pin_name": pin.pin_name,
+                        "pin_display_name": (pin.metadata or {}).get("pin_display_name"),
+                        "polarity_role": (pin.metadata or {}).get("polarity_role"),
+                        "polarity_candidate_role": (pin.metadata or {}).get("polarity_candidate_role"),
                         "hole_id": pin.hole_id,
                         "electrical_node_id": pin.electrical_node_id,
                     }

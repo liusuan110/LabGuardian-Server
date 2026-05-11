@@ -241,6 +241,9 @@ def _pin_metadata_from_payload(pin: dict) -> dict:
         "observation_count",
         "ambiguity_reasons",
         "is_anchor_pin",
+        "pin_display_name",
+        "polarity_role",
+        "polarity_candidate_role",
     ):
         if key in pin:
             metadata[key] = pin.get(key)

@@ -35,6 +35,7 @@ from app.pipeline.vision.pin_schema import (
 )
 from app.pipeline.vision.roi_cropper import crop_component_roi
 from app.pipeline.vision.view_association import SideViewRoiResolver
+from app.pipeline.vision.transistor_polarity import infer_transistor_pin_roles
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,7 @@ def _run_pin_detect_full_image_pose(
         detections=detections,
         pose_instances=pose_instances,
         view_ids=view_ids,
+        top_image=top_image,
         image_shape=top_image.shape[:2],
         pin_detector=pin_detector,
     )
@@ -482,6 +484,7 @@ def _build_components_from_full_pose(
     detections: list[dict],
     pose_instances: list[PoseInstance],
     view_ids: list[str],
+    top_image: np.ndarray,
     image_shape: tuple[int, int],
     pin_detector: PinRoiDetector,
 ) -> list[dict]:
@@ -500,9 +503,47 @@ def _build_components_from_full_pose(
             list(det.get("bbox") or [0, 0, 0, 0]),
         )
 
+        transistor_roles_by_pin_id: dict[int, dict[str, str]] = {}
+        transistor_polarity_meta: dict[str, Any] = {}
+        if component_type == "Transistor":
+            polarity_input = []
+            for idx, kp in enumerate(aligned_points, start=1):
+                if kp is None:
+                    continue
+                polarity_input.append({"pin_id": idx, "pin_name": pin_names[idx - 1], "xy": [float(kp[0]), float(kp[1])]})
+            polarity_info = infer_transistor_pin_roles(
+                image=top_image,
+                bbox_xyxy=list(det.get("bbox") or [0, 0, 0, 0]),
+                pins=polarity_input,
+                pinout_left_to_right=["E", "B", "C"],
+            )
+            transistor_polarity_meta = {
+                "visible_face": polarity_info.get("visible_face"),
+                "flat_arc_decision": polarity_info.get("flat_arc_decision"),
+                "flat_arc_decision_confidence": polarity_info.get("flat_arc_decision_confidence"),
+                "ebc_assignment_enabled": polarity_info.get("ebc_assignment_enabled"),
+                "pinout_used_for_current_view_left_to_right": polarity_info.get("pinout_used_for_current_view_left_to_right"),
+            }
+            for item in polarity_info.get("pin_roles") or []:
+                pin_id = int(item.get("pin_id") or 0)
+                if pin_id <= 0:
+                    continue
+                transistor_roles_by_pin_id[pin_id] = {
+                    "predicted_role": str(item.get("predicted_role") or "UNKNOWN"),
+                    "candidate_role": str(item.get("candidate_role") or "UNKNOWN"),
+                }
+
         pins = []
         for idx, pin_name in enumerate(pin_names, start=1):
             kp = aligned_points[idx - 1] if matched and idx - 1 < len(aligned_points) else None
+            role_meta = transistor_roles_by_pin_id.get(idx, {})
+            predicted_role = str(role_meta.get("predicted_role") or "UNKNOWN")
+            candidate_role = str(role_meta.get("candidate_role") or "UNKNOWN")
+            display_name = pin_name
+            if component_type == "Transistor":
+                display_name = predicted_role if predicted_role != "UNKNOWN" else (
+                    candidate_role if candidate_role != "UNKNOWN" else pin_name
+                )
             keypoints_by_view = {vid: None for vid in view_ids}
             visibility_by_view = {vid: 0 for vid in view_ids}
             score_by_view = {vid: 0.0 for vid in view_ids}
@@ -524,6 +565,9 @@ def _build_components_from_full_pose(
                 {
                     "pin_id": idx,
                     "pin_name": pin_name,
+                    "pin_display_name": display_name,
+                    "polarity_role": predicted_role if component_type == "Transistor" else "UNKNOWN",
+                    "polarity_candidate_role": candidate_role if component_type == "Transistor" else "UNKNOWN",
                     "keypoints_by_view": keypoints_by_view,
                     "visibility_by_view": visibility_by_view,
                     "score_by_view": score_by_view,
@@ -597,6 +641,7 @@ def _build_components_from_full_pose(
                     "backend_type": pin_detector.backend_type,
                     "backend_mode": "full_image_model",
                 },
+                "transistor_polarity": transistor_polarity_meta if component_type == "Transistor" else {},
             }
         )
     return components
