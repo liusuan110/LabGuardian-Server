@@ -1519,8 +1519,6 @@ def _component_match_cost(ref_comp: ComponentInstance, curr_comp: ComponentInsta
     if ref_comp.package_type and curr_comp.package_type and ref_comp.package_type != curr_comp.package_type:
         cost += 20.0
     cost += abs(len(ref_comp.pins) - len(curr_comp.pins)) * 10.0
-    if ref_comp.component_id == curr_comp.component_id:
-        cost -= 2.0
 
     ref_row = _first_pin_row(ref_comp)
     curr_row = _first_pin_row(curr_comp)

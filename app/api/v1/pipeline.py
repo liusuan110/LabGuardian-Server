@@ -10,8 +10,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.deps import get_classroom, get_guidance_service, get_pipeline_service
+from app.domain.graph_compare import compare_logical_graphs
+from app.domain.logical_reference import current_netlist_v2_to_graph, logical_reference_to_graph
 from app.schemas.pipeline import (
     CircuitAnalysisResult,
+    CompareNetlistRequest,
+    CompareNetlistResponse,
     CorrectedRecomputeRequest,
     JobStatusResponse,
     NetlistVisualization,
@@ -21,6 +25,7 @@ from app.schemas.pipeline import (
 from app.services.classroom_state import ClassroomState
 from app.services.guidance_service import GuidanceService
 from app.services.pipeline_service import PipelineService
+from app.services.reference_service import ReferenceService
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
@@ -130,6 +135,57 @@ async def analyze_circuit(
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/compare-netlist", response_model=CompareNetlistResponse)
+async def compare_netlist(request: CompareNetlistRequest):
+    """
+    调试接口 — 直接比较 reference 与 current_netlist_v2，不跑完整识别流程。
+    """
+    ref_payload = None
+    if request.reference_id:
+        ref_payload = ReferenceService().load_reference(request.reference_id)
+    elif request.reference_circuit:
+        ref_payload = request.reference_circuit
+
+    if not ref_payload:
+        raise HTTPException(status_code=400, detail="必须提供 reference_id 或 reference_circuit")
+
+    if ref_payload.get("format") != "logical_reference_v1":
+        raise HTTPException(
+            status_code=400,
+            detail="当前仅支持 format='logical_reference_v1' 的参考电路",
+        )
+
+    current_netlist_v2 = request.current_netlist_v2
+    if not current_netlist_v2:
+        raise HTTPException(status_code=400, detail="必须提供 current_netlist_v2")
+
+    try:
+        reference_graph = logical_reference_to_graph(ref_payload)
+        current_graph = current_netlist_v2_to_graph(current_netlist_v2)
+        result = compare_logical_graphs(
+            reference_graph,
+            current_graph,
+            ref_payload=ref_payload,
+            cur_netlist_v2=current_netlist_v2,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"比较失败: {exc}")
+
+    report = result.get("report", {})
+    diagnostics = [str(item.get("message")) for item in report.get("items", []) if item.get("message")]
+    if not diagnostics:
+        diagnostics = [str(result.get("message") or "电路逻辑连接与参考电路一致")]
+
+    return CompareNetlistResponse(
+        is_correct=bool(result.get("logic_correct", False)),
+        similarity=float(result.get("similarity", 0.0)),
+        progress=float(result.get("progress", 0.0)),
+        diagnostics=diagnostics,
+        risk_level="safe" if result.get("logic_correct") else "warning",
+        comparison_report=report,
+    )
 
 
 @router.post("/visualize/ports", response_model=NetlistVisualization)

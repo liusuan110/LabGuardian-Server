@@ -194,6 +194,7 @@ def run_pipeline(
         s3["topology_graph"],
         reference_circuit=effective_reference,
         components=s2["components"],
+        current_netlist_v2=s3.get("netlist_v2"),
     )
     stages["validate"] = s4
     logger.info("S4 validate: risk=%s (%.0fms)", s4["risk_level"], s4["duration_ms"])

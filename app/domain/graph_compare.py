@@ -177,6 +177,7 @@ def _result(
         "ignore_component_id": True,
         "ignore_hole_id": True,
         "ignore_passive_pin_order": True,
+        "ignore_polarity": True,
         "equivalence_rule": "component_type_and_topology",
     }
     if ref_payload:
@@ -690,8 +691,8 @@ def _build_component_mapping(
         mapping = next(matcher.subgraph_isomorphisms_iter())
         return _extract_comp_mapping(mapping, ref_graph, cur_graph)
 
-    # 4. 回退：按类型顺序匹配
-    return _fallback_comp_mapping(ref_payload, cur_netlist_v2)
+    # 4. 回退：基于连接签名的最小代价匹配
+    return _fallback_comp_mapping(ref_graph, cur_graph)
 
 
 def _extract_comp_mapping(
@@ -709,28 +710,117 @@ def _extract_comp_mapping(
 
 
 def _fallback_comp_mapping(
-    ref_payload: dict[str, Any],
-    cur_netlist_v2: dict[str, Any],
+    ref_graph: nx.Graph,
+    cur_graph: nx.Graph,
 ) -> dict[str, str]:
-    ref_by_type: dict[str, list[str]] = defaultdict(list)
-    for c in ref_payload.get("components", []):
-        ctype = normalize_component_type(c.get("type"))
-        ref_by_type[ctype].append(c["ref_id"])
+    """基于连接签名（邻居 net role、pin 标签、度数）进行贪心最大分数匹配。
 
-    cur_by_type: dict[str, list[str]] = defaultdict(list)
-    for c in cur_netlist_v2.get("components", []):
-        ctype = normalize_component_type(c.get("component_type") or c.get("type"))
-        if ctype == "Wire":
-            continue
-        cur_by_type[ctype].append(c["component_id"])
+    完全不依赖 ref_id / component_id 的相等性，只比较拓扑特征。
+    """
+    ref_comps = [
+        (n, ref_graph.nodes[n])
+        for n in ref_graph.nodes
+        if ref_graph.nodes[n].get("kind") == "comp"
+    ]
+    cur_comps = [
+        (n, cur_graph.nodes[n])
+        for n in cur_graph.nodes
+        if cur_graph.nodes[n].get("kind") == "comp"
+    ]
+
+    ref_by_type: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+    for n, data in ref_comps:
+        ref_by_type[data.get("ctype", "UNKNOWN")].append((n, data))
+
+    cur_by_type: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+    for n, data in cur_comps:
+        cur_by_type[data.get("ctype", "UNKNOWN")].append((n, data))
 
     comp_map: dict[str, str] = {}
-    for ctype, ref_ids in ref_by_type.items():
-        cur_ids = cur_by_type.get(ctype, [])
-        for i, ref_id in enumerate(ref_ids):
-            if i < len(cur_ids):
-                comp_map[ref_id] = cur_ids[i]
+    for ctype, ref_list in ref_by_type.items():
+        cur_list = cur_by_type.get(ctype, [])
+        if not cur_list:
+            continue
+
+        ref_sigs = {n: _graph_neighbor_signature(n, ref_graph) for n, _ in ref_list}
+        cur_sigs = {n: _graph_neighbor_signature(n, cur_graph) for n, _ in cur_list}
+
+        matched = _greedy_match_by_score(
+            [n for n, _ in ref_list],
+            [n for n, _ in cur_list],
+            ref_sigs,
+            cur_sigs,
+        )
+        for ref_node, cur_node in matched.items():
+            ref_source = ref_graph.nodes[ref_node].get("source_id", ref_node)
+            cur_source = cur_graph.nodes[cur_node].get("source_id", cur_node)
+            comp_map[ref_source] = cur_source
+
     return comp_map
+
+
+def _graph_neighbor_signature(node: str, graph: nx.Graph) -> tuple:
+    """返回元件节点的连接签名：(度数, 邻居 net role 元组, 边的 pin 标签元组)。"""
+    neighbors = list(graph.neighbors(node))
+    net_roles = tuple(sorted(
+        graph.nodes[n].get("role", "signal")
+        for n in neighbors
+        if graph.nodes[n].get("kind") == "net"
+    ))
+    pin_labels = []
+    for n in neighbors:
+        edge_data = graph.get_edge_data(node, n)
+        if edge_data:
+            pin_labels.append(str(edge_data.get("pin", "")))
+    pin_labels = tuple(sorted(pin_labels))
+    return (len(neighbors), net_roles, pin_labels)
+
+
+def _greedy_match_by_score(
+    ref_nodes: list[str],
+    cur_nodes: list[str],
+    ref_sigs: dict[str, tuple],
+    cur_sigs: dict[str, tuple],
+) -> dict[str, str]:
+    """按签名相似度贪心匹配，返回 comp_map (ref_node -> cur_node)。"""
+    scores: list[tuple[float, str, str]] = []
+    for rn in ref_nodes:
+        for cn in cur_nodes:
+            score = _neighbor_signature_similarity(ref_sigs[rn], cur_sigs[cn])
+            scores.append((score, rn, cn))
+    scores.sort(key=lambda x: x[0], reverse=True)
+
+    matched: dict[str, str] = {}
+    used_c: set[str] = set()
+    for score, rn, cn in scores:
+        if rn in matched or cn in used_c:
+            continue
+        if score > 0:
+            matched[rn] = cn
+            used_c.add(cn)
+    return matched
+
+
+def _neighbor_signature_similarity(ref_sig: tuple, cur_sig: tuple) -> float:
+    """计算两个连接签名的相似度分数。"""
+    score = 0.0
+    # 度数匹配（pin 数量）
+    if ref_sig[0] == cur_sig[0]:
+        score += 10.0
+
+    # 邻居 net role 交集
+    ref_roles = set(ref_sig[1])
+    cur_roles = set(cur_sig[1])
+    role_overlap = len(ref_roles & cur_roles)
+    score += role_overlap * 5.0
+
+    # 边的 pin 标签交集
+    ref_pins = set(ref_sig[2])
+    cur_pins = set(cur_sig[2])
+    pin_overlap = len(ref_pins & cur_pins)
+    score += pin_overlap * 3.0
+
+    return score
 
 
 def _build_net_mapping(

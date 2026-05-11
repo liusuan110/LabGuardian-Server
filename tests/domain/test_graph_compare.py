@@ -188,3 +188,72 @@ class TestCompareLogicalGraphs:
         assert summary.get("ignore_hole_id") is True
         assert summary.get("ignore_passive_pin_order") is True
         assert summary.get("equivalence_rule") == "component_type_and_topology"
+
+    def test_led_polarity_field_ignored(self) -> None:
+        """LED polarity 字段不同，但图比较应视为正确（本阶段忽略极性）。"""
+        g_ref = nx.Graph()
+        g_ref.add_node("ref_comp:D1", kind="comp", ctype="LED")
+        g_ref.add_node("ref_net:A", kind="net", role="signal")
+        g_ref.add_node("ref_net:B", kind="net", role="signal")
+        g_ref.add_edge("ref_comp:D1", "ref_net:A", pin="anode", comp_type="LED")
+        g_ref.add_edge("ref_comp:D1", "ref_net:B", pin="cathode", comp_type="LED")
+
+        g_cur = nx.Graph()
+        g_cur.add_node("cur_comp:D1", kind="comp", ctype="LED")
+        g_cur.add_node("cur_net:NET_0", kind="net", role="signal")
+        g_cur.add_node("cur_net:NET_1", kind="net", role="signal")
+        g_cur.add_edge("cur_comp:D1", "cur_net:NET_0", pin="anode", comp_type="LED")
+        g_cur.add_edge("cur_comp:D1", "cur_net:NET_1", pin="cathode", comp_type="LED")
+
+        result = compare_logical_graphs(g_ref, g_cur)
+        assert result["logic_correct"] is True
+        assert result["report"]["summary"].get("ignore_polarity") is True
+        assert result["report"]["polarity_errors"] == []
+
+    def test_vcc_ground_role_mismatch(self) -> None:
+        """VCC/GND 网络角色不匹配时应检测为错误。"""
+        g_ref = nx.Graph()
+        g_ref.add_node("ref_comp:R1", kind="comp", ctype="Resistor")
+        g_ref.add_node("ref_net:VCC", kind="net", role="power")
+        g_ref.add_node("ref_net:GND", kind="net", role="ground")
+        g_ref.add_edge("ref_comp:R1", "ref_net:VCC", pin="pin1", comp_type="Resistor")
+        g_ref.add_edge("ref_comp:R1", "ref_net:GND", pin="pin2", comp_type="Resistor")
+
+        # 当前电路中缺少 power 节点，有一个 signal 节点，导致 VCC 无法映射
+        g_cur = nx.Graph()
+        g_cur.add_node("cur_comp:R1", kind="comp", ctype="Resistor")
+        g_cur.add_node("cur_net:NET_0", kind="net", role="ground")
+        g_cur.add_node("cur_net:NET_1", kind="net", role="signal")
+        g_cur.add_edge("cur_comp:R1", "cur_net:NET_0", pin="pin1", comp_type="Resistor")
+        g_cur.add_edge("cur_comp:R1", "cur_net:NET_1", pin="pin2", comp_type="Resistor")
+
+        result = compare_logical_graphs(g_ref, g_cur)
+        assert result["logic_correct"] is False
+        items = result["report"]["items"]
+        assert any(i["error_family"] in {"wiring_mismatch", "open_circuit", "extra_connection"} for i in items)
+
+    def test_ic_pin_role_checked(self) -> None:
+        """多引脚 IC 元件 pin 角色不可互换。"""
+        g_ref = nx.Graph()
+        g_ref.add_node("ref_comp:U1", kind="comp", ctype="IC")
+        g_ref.add_node("ref_net:VCC", kind="net", role="power")
+        g_ref.add_node("ref_net:GND", kind="net", role="ground")
+        g_ref.add_node("ref_net:OUT", kind="net", role="output")
+        g_ref.add_edge("ref_comp:U1", "ref_net:VCC", pin="VCC", comp_type="IC")
+        g_ref.add_edge("ref_comp:U1", "ref_net:GND", pin="GND", comp_type="IC")
+        g_ref.add_edge("ref_comp:U1", "ref_net:OUT", pin="OUT", comp_type="IC")
+
+        g_cur = nx.Graph()
+        g_cur.add_node("cur_comp:U1", kind="comp", ctype="IC")
+        g_cur.add_node("cur_net:NET_0", kind="net", role="power")
+        g_cur.add_node("cur_net:NET_1", kind="net", role="ground")
+        g_cur.add_node("cur_net:NET_2", kind="net", role="output")
+        # swap VCC and GND pins
+        g_cur.add_edge("cur_comp:U1", "cur_net:NET_0", pin="GND", comp_type="IC")
+        g_cur.add_edge("cur_comp:U1", "cur_net:NET_1", pin="VCC", comp_type="IC")
+        g_cur.add_edge("cur_comp:U1", "cur_net:NET_2", pin="OUT", comp_type="IC")
+
+        result = compare_logical_graphs(g_ref, g_cur)
+        assert result["logic_correct"] is False
+        items = result["report"]["items"]
+        assert any(i["error_family"] == "wiring_mismatch" for i in items)

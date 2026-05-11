@@ -171,6 +171,25 @@ class PipelineResult(BaseModel):
         )
 
 
+class CompareNetlistRequest(BaseModel):
+    """直接比较网表调试请求"""
+
+    reference_id: str | None = None
+    reference_circuit: dict[str, Any] | None = None
+    current_netlist_v2: dict[str, Any] = Field(..., description="当前识别的 netlist_v2")
+
+
+class CompareNetlistResponse(BaseModel):
+    """直接比较网表调试响应"""
+
+    is_correct: bool = False
+    similarity: float = 0.0
+    progress: float = 0.0
+    diagnostics: list[str] = Field(default_factory=list)
+    risk_level: str = "safe"
+    comparison_report: dict[str, Any] = Field(default_factory=dict)
+
+
 class JobStatusResponse(BaseModel):
     """任务状态查询响应"""
 
