@@ -119,11 +119,13 @@ class TestEndToEndS4Validate:
         components = _build_correct_led_components()
         analyzer, _ = build_analyzer_from_components(components)
         topology_graph = analyzer.to_node_link_data()
+        netlist_v2 = analyzer.export_netlist_v2()
 
         result = run_validate(
             topology_graph=topology_graph,
             reference_circuit=ref_payload,
             components=components,
+            current_netlist_v2=netlist_v2,
         )
 
         assert result["is_correct"] is True
@@ -138,11 +140,13 @@ class TestEndToEndS4Validate:
         components = _build_missing_led_components()
         analyzer, _ = build_analyzer_from_components(components)
         topology_graph = analyzer.to_node_link_data()
+        netlist_v2 = analyzer.export_netlist_v2()
 
         result = run_validate(
             topology_graph=topology_graph,
             reference_circuit=ref_payload,
             components=components,
+            current_netlist_v2=netlist_v2,
         )
 
         assert result["is_correct"] is False
@@ -157,11 +161,13 @@ class TestEndToEndS4Validate:
         components = _build_wrong_connection_components()
         analyzer, _ = build_analyzer_from_components(components)
         topology_graph = analyzer.to_node_link_data()
+        netlist_v2 = analyzer.export_netlist_v2()
 
         result = run_validate(
             topology_graph=topology_graph,
             reference_circuit=ref_payload,
             components=components,
+            current_netlist_v2=netlist_v2,
         )
 
         assert result["is_correct"] is False
@@ -176,11 +182,13 @@ class TestEndToEndS4Validate:
         components = _build_correct_led_components()
         analyzer, _ = build_analyzer_from_components(components)
         topology_graph = analyzer.to_node_link_data()
+        netlist_v2 = analyzer.export_netlist_v2()
 
         result = run_validate(
             topology_graph=topology_graph,
             reference_circuit=ref_payload,
             components=components,
+            current_netlist_v2=netlist_v2,
         )
 
         report = result.get("comparison_report", {})

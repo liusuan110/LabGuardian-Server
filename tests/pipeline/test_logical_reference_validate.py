@@ -92,10 +92,17 @@ def test_s4_logical_reference_v1_full_match() -> None:
 
 
 def test_s4_logical_reference_v1_missing_component() -> None:
+    from app.pipeline.stages.s3_topology import run_topology
+
+    components = _components()[:1]
+    s3 = run_topology(components=components)
+    netlist_v2 = dict(s3.get("netlist_v2") or {})
+
     result = run_validate(
         topology_graph={"nodes": [], "links": []},
         reference_circuit=_reference(),
-        components=_components()[:1],
+        components=components,
+        current_netlist_v2=netlist_v2,
     )
 
     codes = {item["error_code"] for item in result["comparison_report"]["items"]}
@@ -103,8 +110,10 @@ def test_s4_logical_reference_v1_missing_component() -> None:
     assert "COMPONENT_MISSING" in codes
 
 
-def test_s4_keeps_labguardian_ref_v4_branch() -> None:
+def test_s4_unsupported_reference_format() -> None:
+    """非 logical_reference_v1 格式应返回 UNSUPPORTED_REFERENCE_FORMAT。"""
     reference = {
+        "format": "labguardian_ref_v4",
         "netlist_v2": {
             "components": [
                 {
@@ -135,7 +144,24 @@ def test_s4_keeps_labguardian_ref_v4_branch() -> None:
         ],
     )
 
-    assert result["comparison_report"]["summary"].get("comparison_mode") != "logical_graph"
+    codes = {item["error_code"] for item in result["comparison_report"]["items"]}
+    assert "UNSUPPORTED_REFERENCE_FORMAT" in codes
+    assert result["is_correct"] is False
+    assert result["comparison_report"]["summary"]["comparison_mode"] == "logical_graph"
+
+
+def test_s4_reference_not_set() -> None:
+    """reference_circuit 为空时应返回 REFERENCE_NOT_SET。"""
+    result = run_validate(
+        topology_graph={"nodes": [], "links": []},
+        reference_circuit=None,
+        components=[],
+    )
+
+    codes = {item["error_code"] for item in result["comparison_report"]["items"]}
+    assert "REFERENCE_NOT_SET" in codes
+    assert result["is_correct"] is False
+    assert result["comparison_report"]["summary"]["comparison_mode"] == "logical_graph"
 
 
 def _reference_led() -> dict:
