@@ -204,3 +204,99 @@ def test_verifier_requires_runtime_citation_and_safety_hint() -> None:
     assert not failed.passed
     assert failed.issues
     assert passed.passed
+
+
+def test_evidence_extracts_visual_uncertainty_from_netlist_v2() -> None:
+    evidence = build_runtime_evidence_from_station(
+        station_id="S10",
+        station={
+            "risk_level": "warning",
+            "netlist_v2": {
+                "components": [
+                    {
+                        "component_id": "R1",
+                        "confidence": 0.4,
+                        "pins": [
+                            {
+                                "pin_name": "1",
+                                "is_ambiguous": True,
+                                "metadata": {
+                                    "source": "heuristic_fallback",
+                                    "snap_confidence": 0.2,
+                                },
+                            },
+                            {"pin_name": "2", "is_ambiguous": False, "metadata": {}},
+                        ],
+                    },
+                    {
+                        "component_id": "C1",
+                        "confidence": 0.9,
+                        "pins": [{"pin_name": "a", "metadata": {}}],
+                    },
+                ]
+            },
+        },
+    )
+
+    assert evidence.ambiguous_pin_count == 1
+    assert evidence.fallback_pin_count == 1
+    assert evidence.snap_conflict_count == 1
+    assert evidence.low_confidence_component_count == 1
+
+
+def test_evidence_visual_uncertainty_defaults_zero_without_signal() -> None:
+    evidence = build_runtime_evidence_from_station(
+        station_id="S11",
+        station={
+            "netlist_v2": {
+                "components": [
+                    {"component_id": "R1", "confidence": 1.0, "pins": [{"pin_name": "1"}]},
+                ]
+            },
+        },
+    )
+
+    assert evidence.ambiguous_pin_count == 0
+    assert evidence.fallback_pin_count == 0
+    assert evidence.snap_conflict_count == 0
+    assert evidence.low_confidence_component_count == 0
+
+
+def test_verifier_requires_reshoot_hint_when_visual_uncertain() -> None:
+    evidence = build_runtime_evidence_from_station(
+        station_id="S12",
+        station={
+            "risk_level": "warning",
+            "netlist_v2": {
+                "components": [
+                    {
+                        "component_id": "R1",
+                        "confidence": 1.0,
+                        "pins": [{"pin_name": "1", "is_ambiguous": True}],
+                    }
+                ]
+            },
+            "comparison_report": {
+                "items": [{"error_code": "NODE_MISMATCH", "component_id": "R1"}]
+            },
+        },
+    )
+    pack = build_context_pack(evidence)
+
+    failed = verify_draft_answer(
+        evidence=evidence,
+        context_pack=pack,
+        draft_answer="R1 的引脚接到了错误的电气节点，请按图纸更正接线。",
+    )
+    passed = verify_draft_answer(
+        evidence=evidence,
+        context_pack=pack,
+        draft_answer=(
+            "NODE_MISMATCH 显示 R1 引脚可能接错，"
+            "但识别置信度较低，建议复拍后人工确认孔位。"
+        ),
+    )
+
+    assert not failed.passed
+    assert any("复拍" in issue or "孔位" in issue for issue in failed.issues)
+    assert passed.passed

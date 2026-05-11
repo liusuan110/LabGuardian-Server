@@ -15,16 +15,29 @@ from typing import Any
 
 from app.agent.answering import (
     _build_follow_up_suggestions,
+    build_concept_answer,
+    build_concept_citations,
+    build_concept_evidence,
     build_diagnostic_citations,
     build_diagnostic_evidence,
+    build_lab_guidance_answer,
 )
+from app.agent.concepts import lookup_concept
+from app.agent.contracts import AgentIntent, ConceptPack
 from app.agent.evidence import build_runtime_evidence_from_classroom
 from app.agent.graph import run_diagnostic_graph
-from app.agent.tools import ToolResult
+from app.agent.intent import classify_intent
+from app.agent.tools import (
+    TeachingConceptLookupInput,
+    ToolResult,
+    teaching_concept_lookup_tool,
+)
+from app.agent.verification import verify_draft_answer
 from app.schemas.angnt import (
     AngntAction,
     AngntAskRequest,
     AngntChatDebug,
+    AngntEvidence,
     AngntJobResult,
     AngntJobState,
     AngntJobStatusResponse,
@@ -127,6 +140,42 @@ class AgentService:
                 created_at=created_at,
             )
 
+        if request.mode in ("concept_tutor", "lab_guidance"):
+            return self._run_concept_or_guidance_job(
+                job_id=job_id,
+                request=request,
+                classroom=classroom,
+                created_at=created_at,
+                forced_intent=request.mode,  # type: ignore[arg-type]
+            )
+
+        if request.mode == "agent_auto":
+            evidence_contract = build_runtime_evidence_from_classroom(
+                station_id=request.station_id,
+                stations={request.station_id: self._station_payload(classroom, request)},
+                error_tag_service=ErrorTagService(),
+            )
+            intent = classify_intent(
+                request.user_message or request.query,
+                evidence=evidence_contract,
+            )
+            if intent in ("diagnostic", "mixed"):
+                return self._run_diagnostic_agent_job(
+                    job_id=job_id,
+                    request=request,
+                    classroom=classroom,
+                    created_at=created_at,
+                    intent=intent,
+                )
+            return self._run_concept_or_guidance_job(
+                job_id=job_id,
+                request=request,
+                classroom=classroom,
+                created_at=created_at,
+                forced_intent=intent,
+                pre_evidence=evidence_contract,
+            )
+
         base_context = self._rag_service.build_context(
             classroom=classroom,
             station_id=request.station_id,
@@ -180,6 +229,7 @@ class AgentService:
         request: AngntAskRequest,
         classroom: ClassroomState,
         created_at: float,
+        intent: AgentIntent = "diagnostic",
     ) -> AngntJobResult:
         stations = classroom.get_all_stations()
         station_data = stations.get(request.station_id, {})
@@ -258,15 +308,22 @@ class AgentService:
                 context_pack=context_pack,
                 tool_results=tool_results,
             ),
-            evidence=build_diagnostic_evidence(
-                evidence=evidence_contract,
-                context_pack=context_pack,
-                tool_results=tool_results,
-                verification_passed=verification_passed,
-                verification_issues=verification_issues,
-                graph_metrics=[
-                    metric.model_dump() for metric in graph_state.graph_metrics
-                ],
+            evidence=self._augment_diagnostic_evidence_with_intent(
+                evidence_items=build_diagnostic_evidence(
+                    evidence=evidence_contract,
+                    context_pack=context_pack,
+                    tool_results=tool_results,
+                    verification_passed=verification_passed,
+                    verification_issues=verification_issues,
+                    graph_metrics=[
+                        metric.model_dump() for metric in graph_state.graph_metrics
+                    ],
+                    react_trace=[step.model_dump() for step in graph_state.react_trace],
+                    react_iterations=graph_state.react_iterations,
+                    react_terminate_reason=graph_state.react_terminate_reason,
+                ),
+                intent=intent,
+                question=request.user_message or request.query,
             ),
             actions=actions,
             used_retrieval=bool(tool_results),
@@ -294,6 +351,153 @@ class AgentService:
             ),
         )
         return result
+
+    def _station_payload(
+        self,
+        classroom: ClassroomState,
+        request: AngntAskRequest,
+    ) -> dict[str, Any]:
+        stations = classroom.get_all_stations()
+        station_data = stations.get(request.station_id, {})
+        if not station_data and request.diagnosis_context:
+            station_data = dict(request.diagnosis_context)
+            station_data["station_id"] = request.station_id
+        if not station_data:
+            station_data = {"station_id": request.station_id}
+        return station_data
+
+    def _augment_diagnostic_evidence_with_intent(
+        self,
+        *,
+        evidence_items: list[AngntEvidence],
+        intent: AgentIntent,
+        question: str,
+    ) -> list[AngntEvidence]:
+        """Attach intent + (optional) concept_pack to diagnostic evidence.
+
+        Only used for `mode="agent_auto"` mixed routing — diagnostic_agent
+        callers see the original list (intent defaults to "diagnostic" and we
+        skip the concept attachment).
+        """
+        if intent == "diagnostic":
+            return evidence_items
+        augmented = list(evidence_items)
+        augmented.append(
+            AngntEvidence(
+                evidence_type="intent",
+                source_id="agent_auto:intent",
+                summary=f"intent={intent}",
+                payload={"intent": intent},
+            )
+        )
+        if intent == "mixed":
+            concept = lookup_concept(question)
+            if concept is not None:
+                augmented.append(
+                    AngntEvidence(
+                        evidence_type="concept_pack",
+                        source_id=concept.concept_id,
+                        summary=concept.title,
+                        payload=concept.model_dump(),
+                    )
+                )
+        return augmented
+
+    def _run_concept_or_guidance_job(
+        self,
+        *,
+        job_id: str,
+        request: AngntAskRequest,
+        classroom: ClassroomState,
+        created_at: float,
+        forced_intent: AgentIntent,
+        pre_evidence: Any = None,
+    ) -> AngntJobResult:
+        """Deterministic non-LangGraph path for concept_tutor / lab_guidance."""
+        station_data = self._station_payload(classroom, request)
+        evidence_contract = pre_evidence or build_runtime_evidence_from_classroom(
+            station_id=request.station_id,
+            stations={request.station_id: station_data},
+            error_tag_service=ErrorTagService(),
+        )
+
+        question = request.user_message or request.query
+        tool_result = teaching_concept_lookup_tool(
+            TeachingConceptLookupInput(query=question)
+        )
+        tool_results: list[ToolResult] = [tool_result]
+        concept: ConceptPack | None = None
+        if tool_result.status == "ok":
+            from app.agent.contracts import ConceptPack as _ConceptPack
+
+            concept_payload = tool_result.payload.get("concept") or {}
+            concept = _ConceptPack.model_validate(concept_payload)
+
+        if forced_intent == "lab_guidance":
+            draft = build_lab_guidance_answer(
+                question=question,
+                concept=concept,
+                evidence=evidence_contract,
+            )
+        else:
+            draft = build_concept_answer(
+                question=question,
+                concept=concept,
+                evidence=evidence_contract,
+            )
+
+        # concept/lab paths do not produce a ContextPack; build a minimal stub
+        # for the verifier signature compatibility.
+        from app.agent.contracts import ContextPack
+
+        stub_pack = ContextPack(
+            pack_id=f"{request.station_id}:concept_stub",
+            error_family="unknown",
+            risk_level=evidence_contract.risk_level,
+        )
+        verification = verify_draft_answer(
+            evidence=evidence_contract,
+            context_pack=stub_pack,
+            draft_answer=draft,
+            intent=forced_intent,
+            concept=concept,
+        )
+        verification_passed = verification.passed
+        verification_issues = verification.issues
+
+        actions = self._build_actions(
+            risk_level=evidence_contract.risk_level,
+            diagnostics=evidence_contract.diagnostics,
+        )
+
+        return AngntJobResult(
+            job_id=job_id,
+            station_id=request.station_id,
+            mode=request.mode,
+            answer=draft,
+            follow_up_suggestions=[],
+            citations=build_concept_citations(
+                station_id=request.station_id,
+                concept=concept,
+                tool_results=tool_results,
+            ),
+            evidence=build_concept_evidence(
+                station_id=request.station_id,
+                intent=forced_intent,
+                concept=concept,
+                tool_results=tool_results,
+                verification_passed=verification_passed,
+                verification_issues=verification_issues,
+                evidence=evidence_contract,
+            ),
+            actions=actions,
+            used_retrieval=bool(concept is not None),
+            created_at=created_at,
+            debug=AngntChatDebug(
+                job_id=job_id,
+                used_context_refs=[concept.concept_id] if concept else [],
+            ),
+        )
 
     def _get_station_memory(self, station_id: str) -> list[AgentMemoryRecord]:
         with self._lock:

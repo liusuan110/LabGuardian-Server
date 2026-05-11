@@ -22,7 +22,11 @@ ToolName = Literal[
     "datasheet_lookup_tool",
     "heatmap_overlay_tool",
     "safety_rule_lookup_tool",
+    "teaching_concept_lookup_tool",
 ]
+
+# Intent labels for multi-intent routing (Agent helper modes).
+AgentIntent = Literal["diagnostic", "concept_tutor", "lab_guidance", "mixed"]
 
 
 class EvidenceRef(BaseModel):
@@ -69,6 +73,12 @@ class RuntimeEvidence(BaseModel):
     runtime_metadata: dict[str, Any] = Field(default_factory=dict)
     history_facts: list[str] = Field(default_factory=list)
     history_summary: str = ""
+    # Visual-uncertainty signals extracted from netlist_v2 components/pins.
+    # All optional with safe defaults so older pipeline outputs remain compatible.
+    ambiguous_pin_count: int = 0
+    fallback_pin_count: int = 0
+    snap_conflict_count: int = 0
+    low_confidence_component_count: int = 0
 
 
 class AllowedTool(BaseModel):
@@ -119,6 +129,26 @@ class VerificationReport(BaseModel):
     # plausibly maps to a micro defect (BURN_MARK / UNSTRIPPED_WIRE / COLD_SOLDER).
     needs_micro_inspection: bool = False
     suspected_defect_types: list[str] = Field(default_factory=list)
+
+
+class ConceptPack(BaseModel):
+    """Local teaching-knowledge payload used by the concept_tutor / lab_guidance flow.
+
+    Only consumed by the deterministic concept answer template; the diagnostic
+    LangGraph never sees this. Citations point at local knowledge IDs only.
+    """
+
+    concept_id: str
+    title: str
+    level: str = "basic"
+    summary: str = ""
+    key_points: list[str] = Field(default_factory=list)
+    formulas: list[str] = Field(default_factory=list)
+    examples: list[str] = Field(default_factory=list)
+    common_mistakes: list[str] = Field(default_factory=list)
+    lab_guidance: list[str] = Field(default_factory=list)
+    safety_notes: list[str] = Field(default_factory=list)
+    citations: list[str] = Field(default_factory=list)
 
 
 class VlmFinding(BaseModel):

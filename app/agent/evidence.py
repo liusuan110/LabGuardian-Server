@@ -44,6 +44,9 @@ def build_runtime_evidence_from_station(
         ]
     )
 
+    netlist_v2 = station.get("netlist_v2", {}) or {}
+    visual = _extract_visual_uncertainty(netlist_v2, station.get("runtime_metadata", {}) or {})
+
     return RuntimeEvidence(
         station_id=station_id,
         risk_level=_normalize_risk_level(station.get("risk_level")),
@@ -53,10 +56,14 @@ def build_runtime_evidence_from_station(
         error_tags=error_tags,
         findings=findings,
         evidence_refs=evidence_refs,
-        netlist_v2=station.get("netlist_v2", {}) or {},
+        netlist_v2=netlist_v2,
         validator_report_v2=comparison_report,
         circuit_snapshot=str(station.get("circuit_snapshot", "") or ""),
         runtime_metadata=station.get("runtime_metadata", {}) or {},
+        ambiguous_pin_count=visual["ambiguous_pin_count"],
+        fallback_pin_count=visual["fallback_pin_count"],
+        snap_conflict_count=visual["snap_conflict_count"],
+        low_confidence_component_count=visual["low_confidence_component_count"],
     )
 
 
@@ -163,6 +170,76 @@ def _refs_from_item(item: dict[str, Any], index: int, error_code: str) -> list[E
             payload=dict(item),
         )
     ]
+
+
+# Thresholds for visual-uncertainty aggregation. Conservative so the verifier
+# only fires when a signal is genuinely present.
+_LOW_COMPONENT_CONFIDENCE = 0.6
+_LOW_SNAP_CONFIDENCE = 0.5
+
+
+def _extract_visual_uncertainty(
+    netlist_v2: dict[str, Any],
+    runtime_metadata: dict[str, Any],
+) -> dict[str, int]:
+    """Best-effort aggregate of visual uncertainty from netlist_v2 pin/component fields.
+
+    Reads only fields that may already exist on PinAssignment / ComponentInstance
+    serialized dicts (see app/domain/netlist_models.py). Missing fields => 0.
+    """
+
+    counts = {
+        "ambiguous_pin_count": 0,
+        "fallback_pin_count": 0,
+        "snap_conflict_count": 0,
+        "low_confidence_component_count": 0,
+    }
+
+    # Allow upstream pipeline to push pre-aggregated counts via runtime_metadata.
+    for key in counts:
+        value = runtime_metadata.get(key)
+        if isinstance(value, int) and value >= 0:
+            counts[key] = value
+
+    components = netlist_v2.get("components") if isinstance(netlist_v2, dict) else None
+    if not isinstance(components, list):
+        return counts
+
+    ambiguous = 0
+    fallback = 0
+    snap_conflicts = 0
+    low_conf_components = 0
+    for comp in components:
+        if not isinstance(comp, dict):
+            continue
+        comp_conf = comp.get("confidence")
+        if isinstance(comp_conf, (int, float)) and float(comp_conf) < _LOW_COMPONENT_CONFIDENCE:
+            low_conf_components += 1
+        pins = comp.get("pins") or []
+        if not isinstance(pins, list):
+            continue
+        for pin in pins:
+            if not isinstance(pin, dict):
+                continue
+            if bool(pin.get("is_ambiguous")):
+                ambiguous += 1
+            metadata = pin.get("metadata") or {}
+            if isinstance(metadata, dict):
+                source = str(metadata.get("source") or "").strip().lower()
+                if source == "heuristic_fallback":
+                    fallback += 1
+                snap_conf = metadata.get("snap_confidence")
+                if isinstance(snap_conf, (int, float)) and 0.0 < float(snap_conf) < _LOW_SNAP_CONFIDENCE:
+                    snap_conflicts += 1
+
+    # Prefer derived counts; only fall back to runtime_metadata when components are empty.
+    counts["ambiguous_pin_count"] = max(counts["ambiguous_pin_count"], ambiguous)
+    counts["fallback_pin_count"] = max(counts["fallback_pin_count"], fallback)
+    counts["snap_conflict_count"] = max(counts["snap_conflict_count"], snap_conflicts)
+    counts["low_confidence_component_count"] = max(
+        counts["low_confidence_component_count"], low_conf_components
+    )
+    return counts
 
 
 def _scalar_ref_value(value: Any) -> str:
