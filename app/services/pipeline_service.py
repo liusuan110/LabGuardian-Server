@@ -203,10 +203,11 @@ class PipelineService:
 
         has_pin_corrections = bool(request.corrections)
         has_role_assignments = bool(request.net_role_assignments)
+        has_polarity_assignments = bool(request.pin_polarity_assignments)
 
-        if not has_pin_corrections and not has_role_assignments:
+        if not has_pin_corrections and not has_role_assignments and not has_polarity_assignments:
             raise ValueError(
-                "Corrected recompute requires at least one pin correction or net role assignment."
+                "Corrected recompute requires at least one pin correction, net role assignment, or pin polarity assignment."
             )
 
         # 统一解析参考电路（支持 reference_id 和 inline payload）
@@ -249,6 +250,31 @@ class PipelineService:
                     if logic_loc is not None:
                         pin["logic_loc"] = [logic_loc[0], logic_loc[1]]
 
+        polarity_by_key = {
+            (item.component_id, item.pin_name): str(item.polarity or "").strip().upper()
+            for item in request.pin_polarity_assignments
+        }
+        applied_polarity_keys: set[tuple[str, str]] = set()
+        allowed_polarity = {"E", "B", "C"}
+        for comp in components:
+            component_id = str(comp.get("component_id") or "")
+            for pin in comp.get("pins") or []:
+                pin_name = str(pin.get("pin_name") or f"pin{pin.get('pin_id', '')}")
+                polarity = polarity_by_key.get((component_id, pin_name))
+                if polarity is None:
+                    continue
+                if polarity not in allowed_polarity:
+                    raise ValueError(f"Unsupported transistor polarity '{polarity}' for {component_id}.{pin_name}")
+                pin["polarity_role"] = polarity
+                pin["pin_display_name"] = polarity
+                metadata = dict(pin.get("metadata") or {})
+                metadata["manual_pin_polarity"] = {
+                    "polarity": polarity,
+                    "source": "manual_pin_polarity_select",
+                }
+                pin["metadata"] = metadata
+                applied_polarity_keys.add((component_id, pin_name))
+
         missing = sorted(
             f"{component_id}.{pin_name}"
             for component_id, pin_name in correction_by_key
@@ -256,6 +282,13 @@ class PipelineService:
         )
         if missing:
             raise ValueError(f"Corrections did not match any pins: {', '.join(missing)}")
+        missing_polarity = sorted(
+            f"{component_id}.{pin_name}"
+            for component_id, pin_name in polarity_by_key
+            if (component_id, pin_name) not in applied_polarity_keys
+        )
+        if missing_polarity:
+            raise ValueError(f"Pin polarity assignments did not match any pins: {', '.join(missing_polarity)}")
 
         s3 = run_topology(components, rail_assignments=request.rail_assignments)
 
@@ -403,6 +436,7 @@ class PipelineService:
             "components": components,
             "manual_corrections_applied": True,
             "manual_corrections": [item.model_dump() for item in request.corrections],
+            "manual_pin_polarity_assignments": [item.model_dump() for item in request.pin_polarity_assignments],
             "duration_ms": 0.0,
         }
         total_ms = (time.time() - t0) * 1000
@@ -412,6 +446,7 @@ class PipelineService:
             "manual_corrections_applied": True,
             "manual_corrections": [item.model_dump() for item in request.corrections],
             "manual_net_role_assignments": [item.model_dump() for item in request.net_role_assignments],
+            "manual_pin_polarity_assignments": [item.model_dump() for item in request.pin_polarity_assignments],
             "manual_roles_applied": manual_roles_applied,
             "source_job_id": request.job_id,
             "reference": ref_meta,
