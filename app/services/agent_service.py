@@ -267,6 +267,9 @@ class AgentService:
                 graph_metrics=[
                     metric.model_dump() for metric in graph_state.graph_metrics
                 ],
+                react_trace=[step.model_dump() for step in graph_state.react_trace],
+                react_iterations=graph_state.react_iterations,
+                react_terminate_reason=graph_state.react_terminate_reason,
             ),
             actions=actions,
             used_retrieval=bool(tool_results),

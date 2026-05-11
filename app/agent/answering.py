@@ -232,6 +232,16 @@ def repair_diagnostic_answer(
         word in repaired for word in ("断电", "电源", "短路")
     ):
         repaired += "\n安全提示：请先断电，再复查电源轨和短路风险。"
+    if (
+        evidence.ambiguous_pin_count
+        or evidence.fallback_pin_count
+        or evidence.snap_conflict_count
+        or evidence.low_confidence_component_count
+    ) and not any(
+        hint in repaired
+        for hint in ("复拍", "重新拍照", "人工确认", "识别置信度", "孔位识别")
+    ):
+        repaired += "\n提示：当前孔位识别置信度较低，建议复拍或人工确认引脚孔位。"
     return repaired
 
 
@@ -313,6 +323,9 @@ def build_diagnostic_evidence(
     verification_passed: bool,
     verification_issues: list[str],
     graph_metrics: list[dict] | None = None,
+    react_trace: list[dict] | None = None,
+    react_iterations: int = 0,
+    react_terminate_reason: str = "",
 ) -> list[AngntEvidence]:
     items = [
         AngntEvidence(
@@ -359,6 +372,20 @@ def build_diagnostic_evidence(
                 source_id=f"{evidence.station_id}:langgraph",
                 summary="PCM LangGraph 节点级指标",
                 payload={"metrics": graph_metrics},
+            )
+        )
+    if react_trace:
+        terminate_reason = react_terminate_reason or "completed"
+        items.append(
+            AngntEvidence(
+                evidence_type="react_trace",
+                source_id=f"{evidence.station_id}:react",
+                summary=f"ReAct {react_iterations} 轮 ({terminate_reason})",
+                payload={
+                    "steps": react_trace,
+                    "iterations": react_iterations,
+                    "terminate_reason": terminate_reason,
+                },
             )
         )
     highlight_protocol = evidence.validator_report_v2.get("highlight_protocol", {})

@@ -40,6 +40,11 @@ def verify_draft_answer(
     if evidence.risk_level == "danger" and not any(word in text for word in safety_words):
         issues.append("danger 风险回答必须包含断电或电源短路复查提示。")
 
+    if _has_visual_uncertainty(evidence):
+        reshoot_hints = ("复拍", "重新拍照", "人工确认", "识别置信度", "孔位识别")
+        if not any(hint in text for hint in reshoot_hints):
+            issues.append("视觉识别置信度较低，回答必须提示复拍或人工确认孔位。")
+
     passed = not issues
     hint = ""
     if issues:
@@ -53,6 +58,15 @@ def verify_draft_answer(
         required_rewrite_hint=hint,
         needs_micro_inspection=needs_micro,
         suspected_defect_types=[d.value for d in suspected],
+    )
+
+
+def _has_visual_uncertainty(evidence: RuntimeEvidence) -> bool:
+    return (
+        evidence.ambiguous_pin_count > 0
+        or evidence.fallback_pin_count > 0
+        or evidence.snap_conflict_count > 0
+        or evidence.low_confidence_component_count > 0
     )
 
 

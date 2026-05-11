@@ -69,6 +69,12 @@ class RuntimeEvidence(BaseModel):
     runtime_metadata: dict[str, Any] = Field(default_factory=dict)
     history_facts: list[str] = Field(default_factory=list)
     history_summary: str = ""
+    # Visual-uncertainty signals extracted from netlist_v2 components/pins.
+    # All optional with safe defaults so older pipeline outputs remain compatible.
+    ambiguous_pin_count: int = 0
+    fallback_pin_count: int = 0
+    snap_conflict_count: int = 0
+    low_confidence_component_count: int = 0
 
 
 class AllowedTool(BaseModel):

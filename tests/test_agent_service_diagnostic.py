@@ -109,6 +109,14 @@ def test_diagnostic_agent_mode_builds_template_answer_and_verifies() -> None:
     # Phase 4 ReAct loop emits per-iteration metrics; we only assert the boundary nodes.
     assert any(name.startswith("react_observe_") for name in metric_names)
     assert "verify_answer" in metric_names
+    assert "react_trace" in evidence_types
+    react_trace = next(
+        item for item in status.result.evidence if item.evidence_type == "react_trace"
+    )
+    assert react_trace.payload["iterations"] >= 1
+    assert isinstance(react_trace.payload["steps"], list)
+    assert react_trace.payload["steps"]
+    assert all("iteration" in step for step in react_trace.payload["steps"])
 
 
 def test_diagnostic_agent_mode_works_without_station_state() -> None:
