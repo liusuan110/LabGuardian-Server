@@ -220,7 +220,10 @@ def test_evidence_extracts_visual_uncertainty_from_netlist_v2() -> None:
                             {
                                 "pin_name": "1",
                                 "is_ambiguous": True,
-                                "metadata": {"source": "heuristic_fallback", "snap_confidence": 0.2},
+                                "metadata": {
+                                    "source": "heuristic_fallback",
+                                    "snap_confidence": 0.2,
+                                },
                             },
                             {"pin_name": "2", "is_ambiguous": False, "metadata": {}},
                         ],
@@ -288,7 +291,10 @@ def test_verifier_requires_reshoot_hint_when_visual_uncertain() -> None:
     passed = verify_draft_answer(
         evidence=evidence,
         context_pack=pack,
-        draft_answer="R1 引脚可能接错，但识别置信度较低，建议复拍后人工确认孔位。",
+        draft_answer=(
+            "NODE_MISMATCH 显示 R1 引脚可能接错，"
+            "但识别置信度较低，建议复拍后人工确认孔位。"
+        ),
     )
 
     assert not failed.passed

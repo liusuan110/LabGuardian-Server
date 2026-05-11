@@ -2,10 +2,10 @@
 
 Deterministic keyword scan. No LLM involved. Routing priority:
 1. lab_guidance — explicit operational verbs about measurement / checking.
-2. diagnostic — explicit "what's wrong with my circuit" phrasing.
-3. concept_tutor — knowledge-seeking phrasing (definition / principle / why X).
-4. mixed — concept phrasing AND we have validator findings, i.e. the question
-   sits between teaching and diagnosing the current circuit.
+2. mixed — current-circuit diagnostic phrasing plus concept phrasing, or
+   concept phrasing with validator findings.
+3. diagnostic — explicit "what's wrong with my circuit" phrasing.
+4. concept_tutor — knowledge-seeking phrasing (definition / principle / why X).
 5. fallback — diagnostic if findings exist, else concept_tutor.
 """
 
@@ -87,6 +87,8 @@ def classify_intent(
 
     if lab_hit:
         return "lab_guidance"
+    if diag_hit and concept_hit:
+        return "mixed"
     if diag_hit:
         return "diagnostic"
     if concept_hit:

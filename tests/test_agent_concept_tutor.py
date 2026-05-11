@@ -1,5 +1,9 @@
 from app.agent.concepts import CONCEPT_LIBRARY, lookup_concept
-from app.agent.contracts import ConceptPack, ContextPack, RuntimeEvidence
+from app.agent.contracts import (
+    ContextPack,
+    EvidenceRef,
+    RuntimeEvidence,
+)
 from app.agent.intent import classify_intent
 from app.agent.tools import (
     TeachingConceptLookupInput,
@@ -30,6 +34,10 @@ def _submit(service: AgentService, classroom: ClassroomState, *, mode: str, quer
 
 def test_intent_classifier_routes_led_question_to_concept_tutor() -> None:
     assert classify_intent("为什么 LED 要串联电阻", evidence=None) == "concept_tutor"
+
+
+def test_intent_classifier_routes_current_circuit_led_question_to_mixed() -> None:
+    assert classify_intent("我这个电路为什么 LED 要串联电阻", evidence=None) == "mixed"
 
 
 def test_intent_classifier_routes_rc_question_to_concept_tutor() -> None:
@@ -91,7 +99,11 @@ def _stub_pack() -> ContextPack:
 
 
 def test_verifier_concept_mode_does_not_require_error_code() -> None:
-    evidence = RuntimeEvidence(station_id="S", risk_level="safe")
+    evidence = RuntimeEvidence(
+        station_id="S",
+        risk_level="safe",
+        error_codes=["LED_MISSING_RESISTOR"],
+    )
     concept = lookup_concept("LED 限流")
     draft = (
         "直接回答：LED 需要串联限流电阻。\n"
@@ -105,6 +117,71 @@ def test_verifier_concept_mode_does_not_require_error_code() -> None:
         draft_answer=draft,
         intent="concept_tutor",
         concept=concept,
+    )
+    assert report.passed, report.issues
+
+
+def test_verifier_diagnostic_requires_error_code_when_present() -> None:
+    evidence = RuntimeEvidence(
+        station_id="S",
+        risk_level="safe",
+        error_codes=["NODE_MISMATCH"],
+    )
+    report = verify_draft_answer(
+        evidence=evidence,
+        context_pack=_stub_pack(),
+        draft_answer="R1 的连接节点与参考不符，请对照参考电路检查。",
+        intent="diagnostic",
+    )
+    assert not report.passed
+    assert any("error_code" in issue for issue in report.issues)
+
+
+def test_verifier_diagnostic_requires_evidence_ref_when_present() -> None:
+    evidence = RuntimeEvidence(
+        station_id="S",
+        risk_level="safe",
+        evidence_refs=[
+            EvidenceRef(
+                ref_id="validator:1",
+                component_id="R1",
+                pin_name="A",
+                hole_id="A1",
+            )
+        ],
+    )
+    report = verify_draft_answer(
+        evidence=evidence,
+        context_pack=_stub_pack(),
+        draft_answer="当前连接与参考不一致，请重新核对。",
+        intent="diagnostic",
+    )
+    assert not report.passed
+    assert any(
+        "evidence_ref" in issue or "component_id" in issue
+        for issue in report.issues
+    )
+
+
+def test_verifier_diagnostic_passes_with_error_code_and_evidence_ref() -> None:
+    evidence = RuntimeEvidence(
+        station_id="S",
+        risk_level="safe",
+        error_codes=["NODE_MISMATCH"],
+        evidence_refs=[
+            EvidenceRef(
+                ref_id="validator:1",
+                component_id="R1",
+                pin_name="A",
+                hole_id="A1",
+            )
+        ],
+    )
+    report = verify_draft_answer(
+        evidence=evidence,
+        context_pack=_stub_pack(),
+        draft_answer="NODE_MISMATCH 显示 R1 的 A 引脚连接与参考不一致，请核对 A1 孔位。",
+        intent="diagnostic",
     )
     assert report.passed, report.issues
 

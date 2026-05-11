@@ -54,7 +54,10 @@ def _describe_components(evidence: RuntimeEvidence, context_pack: ContextPack) -
         pin = finding.pin_name
         code = finding.error_code
         if code == "FLOATING_PIN" and cid and pin:
-            issue_parts.append(f"{cid} 的 {pin} 目前被判断为可能悬空，因为它只映射到了自身或未形成有效参考连接")
+            issue_parts.append(
+                f"{cid} 的 {pin} 目前被判断为可能悬空，"
+                "因为它只映射到了自身或未形成有效参考连接"
+            )
         elif code == "COMPONENT_SHORTED_SAME_NET" and cid:
             issue_parts.append(f"{cid} 的两端似乎落在同一导通节点上，存在短接风险")
         elif code == "POLARITY_REVERSED" and cid:
@@ -68,7 +71,10 @@ def _describe_components(evidence: RuntimeEvidence, context_pack: ContextPack) -
     if len(component_summaries) == 1 and "未明确" in component_summaries[0]:
         lines.append("当前诊断结果中未明确识别到元件。请确认图像是否清晰、元件是否完整入镜。")
     else:
-        lines.append(f"当前诊断结果中识别到了 {len(component_summaries)} 个主要对象：{', '.join(component_summaries)}。")
+        lines.append(
+            f"当前诊断结果中识别到了 {len(component_summaries)} 个主要对象："
+            f"{', '.join(component_summaries)}。"
+        )
 
     if issue_parts:
         lines.append(issue_parts[0] + "。")
@@ -146,7 +152,7 @@ def _build_general_diagnostic_answer(
     context_pack: ContextPack,
     tool_results: list[ToolResult],
 ) -> str:
-    """通用诊断摘要，不暴露错误码和原始证据。"""
+    """通用诊断摘要，不暴露原始证据。"""
     conclusion = diagnostic_conclusion(evidence=evidence, context_pack=context_pack)
 
     parts: list[str] = []
@@ -209,15 +215,30 @@ def build_diagnostic_template_answer(
     context_pack: ContextPack,
     tool_results: list[ToolResult],
 ) -> str:
-    """基于用户意图生成自然语言回答，不暴露 system prompt / raw JSON / 错误码。"""
+    """基于用户意图生成自然语言回答，不暴露 system prompt / raw JSON。"""
     intent = _classify_user_intent(user_message or query)
 
     if intent == "components":
-        return _describe_components(evidence, context_pack)
+        return _with_diagnostic_anchors(
+            _describe_components(evidence, context_pack),
+            evidence,
+        )
     if intent == "explain":
-        return _explain_issue(evidence, context_pack)
+        return _with_diagnostic_anchors(_explain_issue(evidence, context_pack), evidence)
 
-    return _build_general_diagnostic_answer(station_id, evidence, context_pack, tool_results)
+    return _with_diagnostic_anchors(
+        _build_general_diagnostic_answer(station_id, evidence, context_pack, tool_results),
+        evidence,
+    )
+
+
+def _with_diagnostic_anchors(answer: str, evidence: RuntimeEvidence) -> str:
+    anchored = answer
+    if evidence.error_codes and not any(code in anchored for code in evidence.error_codes):
+        anchored += f"\n校验依据：{evidence.error_codes[0]}。"
+    if evidence.evidence_refs and not _mentions_any_runtime_ref(evidence, anchored):
+        anchored += f"\n证据引用：{_first_ref_text(evidence)}。"
+    return anchored
 
 
 def repair_diagnostic_answer(
@@ -226,8 +247,8 @@ def repair_diagnostic_answer(
     evidence: RuntimeEvidence,
     verification_issues: list[str],
 ) -> str:
-    """修复回答，仅补充缺失的安全提示，不拼接内部调试信息。"""
-    repaired = draft_answer
+    """修复回答，仅补充 verifier 要求的可审计诊断锚点和安全提示。"""
+    repaired = _with_diagnostic_anchors(draft_answer, evidence)
     if evidence.risk_level == "danger" and not any(
         word in repaired for word in ("断电", "电源", "短路")
     ):
@@ -476,6 +497,17 @@ def _first_ref_text(evidence: RuntimeEvidence) -> str:
     )
 
 
+def _mentions_any_runtime_ref(evidence: RuntimeEvidence, text: str) -> bool:
+    tokens: list[str] = []
+    for ref in evidence.evidence_refs:
+        tokens.extend(
+            value
+            for value in (ref.ref_id, ref.component_id, ref.pin_name, ref.hole_id)
+            if value
+        )
+    return any(token in text for token in tokens)
+
+
 # ---------------------------------------------------------------------------
 # Concept-tutor / lab-guidance answer paths (no LangGraph; deterministic).
 # ---------------------------------------------------------------------------
@@ -549,7 +581,10 @@ def _concept_relation_to_experiment(
     if error_codes:
         family_hint = f"当前诊断报告中出现 {error_codes}，"
     risk_hint = f"风险等级为 {evidence.risk_level}。" if evidence.risk_level else ""
-    return f"{family_hint}{risk_hint}该概念可作为理解上述现象的背景知识，但具体接线请以诊断结果为准。"
+    return (
+        f"{family_hint}{risk_hint}"
+        "该概念可作为理解上述现象的背景知识，但具体接线请以诊断结果为准。"
+    )
 
 
 def build_lab_guidance_answer(

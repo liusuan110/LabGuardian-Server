@@ -90,11 +90,28 @@ _FABRICATED_HOLE_PATTERN = re.compile(
 
 def _diagnostic_rules(evidence: RuntimeEvidence, text: str) -> list[str]:
     issues: list[str] = []
+    if evidence.error_codes and not any(code in text for code in evidence.error_codes):
+        issues.append("diagnostic 回答必须包含至少一个当前 error_code。")
+    if evidence.evidence_refs and not _mentions_any_evidence_ref(evidence, text):
+        issues.append(
+            "diagnostic 回答必须引用至少一个 evidence_ref、component_id、pin_name 或 hole_id。"
+        )
     if evidence.risk_level == "danger" and not any(w in text for w in _SAFETY_WORDS):
         issues.append("danger 风险回答必须包含断电或电源短路复查提示。")
     if _has_visual_uncertainty(evidence) and not any(h in text for h in _RESHOOT_HINTS):
         issues.append("视觉识别置信度较低，回答必须提示复拍或人工确认孔位。")
     return issues
+
+
+def _mentions_any_evidence_ref(evidence: RuntimeEvidence, text: str) -> bool:
+    tokens: list[str] = []
+    for ref in evidence.evidence_refs:
+        tokens.extend(
+            value
+            for value in (ref.ref_id, ref.component_id, ref.pin_name, ref.hole_id)
+            if value
+        )
+    return any(token in text for token in tokens)
 
 
 _CONCEPT_AUDIT_MARKERS = (
