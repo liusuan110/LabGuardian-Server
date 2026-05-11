@@ -134,13 +134,13 @@ def _flat_arc_decision(body_contour: np.ndarray, edge_scores: list[float]) -> di
     flat_raw = 0.6 * float(edge_scores[flat_idx]) + 0.4 * line_fit_score
     arc_raw = ellipse_score
     margin = flat_raw - arc_raw
-    if margin > 0.14:
+    if margin > 0.08:
         decision = "FLAT_SIDE_CONFIDENT"
-    elif margin < -0.14:
+    elif margin < -0.08:
         decision = "ARC_SIDE_CONFIDENT"
     else:
         decision = "UNKNOWN"
-    confidence = float(min(1.0, max(0.0, abs(margin) * 3.0)))
+    confidence = float(min(1.0, max(0.0, abs(margin) * 4.0)))
     return {
         "decision": decision,
         "decision_confidence": round(confidence, 4),
@@ -269,17 +269,15 @@ def infer_transistor_pin_roles(
     flat_score = float(arc_metrics.get("flat_score") or 0.0)
     arc_score = float(arc_metrics.get("arc_score") or 0.0)
 
-    # Conservative policy:
-    # - FLAT assignment is the default;
-    # - Only switch to ARC when evidence is strongly confident.
-    visible_face = "FLAT"
+    # Do not default to FLAT when uncertain; keep UNKNOWN to avoid systematic EBC bias.
+    visible_face = "UNKNOWN"
     if decision == "FLAT_SIDE_CONFIDENT":
         visible_face = "FLAT"
-    elif (
-        decision == "ARC_SIDE_CONFIDENT"
-        and decision_conf >= 0.65
-        and (arc_score - flat_score) >= 0.12
-    ):
+    elif decision == "ARC_SIDE_CONFIDENT":
+        visible_face = "ARC"
+    elif margin >= 0.06:
+        visible_face = "FLAT"
+    elif margin <= -0.06:
         visible_face = "ARC"
 
     if visible_face == "FLAT":
@@ -292,7 +290,7 @@ def infer_transistor_pin_roles(
     can_assign = (
         len(pins) == 3
         and visible_face in {"FLAT", "ARC"}
-        and (decision_conf >= 0.35 or abs(margin) >= 0.03 or visible_face == "FLAT")
+        and (decision_conf >= 0.25 or abs(margin) >= 0.05)
     )
     roles = _predict_roles_by_flat_axis(
         points=pins,
