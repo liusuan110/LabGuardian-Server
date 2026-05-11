@@ -45,8 +45,8 @@ def _netlist_v2_match() -> dict:
             },
         ],
         "nets": [
-            {"electrical_net_id": "NET_001", "role": "power", "member_hole_ids": ["A1"]},
-            {"electrical_net_id": "NET_002", "role": "ground", "member_hole_ids": ["A3"]},
+            {"electrical_net_id": "NET_001", "role": "power", "role_label": "VCC", "member_hole_ids": ["A1"]},
+            {"electrical_net_id": "NET_002", "role": "ground", "role_label": "GND", "member_hole_ids": ["A3"]},
         ],
     }
 
@@ -61,8 +61,8 @@ def test_compare_netlist_full_match(client: TestClient) -> None:
     assert data["is_correct"] is True
     assert data["similarity"] == 1.0
     assert data["comparison_report"]["summary"]["comparison_mode"] == "logical_graph"
-    assert data["comparison_report"]["summary"]["ignore_polarity"] is True
-    assert data["comparison_report"]["polarity_errors"] == []
+    assert data["comparison_report"]["summary"]["strict_functional_pin_roles"] is True
+    assert data["comparison_report"]["summary"]["equivalence_rule"] == "logical_topology_with_port_semantics"
 
 
 def test_compare_netlist_missing_component(client: TestClient) -> None:

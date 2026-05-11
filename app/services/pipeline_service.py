@@ -18,7 +18,7 @@ from celery.result import AsyncResult
 
 from app.core.celery_app import celery_app
 from app.domain.board_schema import BoardSchema
-from app.domain.logical_reference import normalize_net_role
+from app.domain.logical_reference import normalize_net_role, normalize_role_label
 from app.pipeline.orchestrator import run_pipeline
 from app.pipeline.stages.s3_topology import run_topology
 from app.pipeline.stages.s4_validate import run_validate
@@ -325,7 +325,8 @@ class PipelineService:
                         )
 
             for assignment in request.net_role_assignments:
-                normalized_role = normalize_net_role(assignment.role)
+                label = normalize_role_label(assignment.role_label or assignment.role)
+                normalized_role = normalize_net_role(assignment.role or label)
                 if normalized_role == "signal":
                     manual_role_warnings.append({
                         "warning_code": "ROLE_INVALID",
@@ -382,10 +383,12 @@ class PipelineService:
                 if net_obj is not None:
                     net_obj["role"] = normalized_role
                     net_obj["manual_role"] = normalized_role
-                    net_obj["role_label"] = assignment.role
+                    net_obj["role_label"] = label
                     net_obj["role_source"] = assignment.source
-                    if normalized_role in ("power", "ground"):
-                        net_obj["power_role"] = "VCC" if normalized_role == "power" else "GND"
+                    if normalized_role == "power":
+                        net_obj["power_role"] = label if label in {"VCC", "VEE", "VDD", "VSS"} else "VCC"
+                    elif normalized_role == "ground":
+                        net_obj["power_role"] = "GND"
                 else:
                     manual_role_warnings.append({
                         "warning_code": "ROLE_TARGET_NOT_FOUND",
@@ -402,12 +405,12 @@ class PipelineService:
                         if pin_net_id == target_net_id:
                             metadata = dict(pin.get("metadata") or {})
                             metadata["manual_net_role"] = normalized_role
-                            metadata["manual_role_label"] = assignment.role
+                            metadata["manual_role_label"] = label
                             pin["metadata"] = metadata
 
                 applied_record: dict[str, Any] = {
                     "role": normalized_role,
-                    "role_label": assignment.role,
+                    "role_label": label,
                     "electrical_net_id": target_net_id,
                     "source": assignment.source,
                     "resolved_by": resolved_by,

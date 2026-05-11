@@ -68,6 +68,7 @@ class ManualNetRoleAssignment(BaseModel):
     """前端手动指定的网络角色（输入/输出/正电/地）。"""
 
     role: str
+    role_label: str | None = None
     source: str = "manual_netlist_select"
     hole_id: str | None = None
     component_id: str | None = None

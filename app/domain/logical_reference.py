@@ -8,6 +8,7 @@ from app.domain.circuit import norm_component_type
 
 
 VALID_NET_ROLES = {"signal", "ground", "power", "input", "output"}
+CRITICAL_ROLE_LABELS = {"UI1", "UI2", "UO1", "UO2", "VCC", "VEE", "GND"}
 
 
 def normalize_component_type(value: Any) -> str:
@@ -16,17 +17,85 @@ def normalize_component_type(value: Any) -> str:
 
 def normalize_net_role(value: Any) -> str:
     raw = str(value or "").strip().lower()
-    if raw in {"gnd", "ground", "vss", "0v", "earth"}:
+    if raw in {"gnd", "ground", "0v", "earth"}:
         return "ground"
-    if raw in {"vcc", "vdd", "power", "pwr", "vin_power", "supply", "+", "+5v", "+3v3"}:
+    if raw in {
+        "vcc",
+        "vdd",
+        "vee",
+        "vss",
+        "power",
+        "pwr",
+        "vin_power",
+        "supply",
+        "negative_supply",
+        "+",
+        "+5v",
+        "+3v3",
+        "-5v",
+        "-12v",
+    }:
         return "power"
-    if raw in {"input", "in", "vin"}:
+    if raw in {"input", "in", "vin", "ui1", "ui2"}:
         return "input"
-    if raw in {"output", "out", "vout"}:
+    if raw in {"output", "out", "vout", "uo1", "uo2"}:
         return "output"
     if raw in VALID_NET_ROLES:
         return raw
     return "signal"
+
+
+def normalize_role_label(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return raw.upper()
+
+
+def normalize_pin_role(component_type: Any, pin: Any) -> str:
+    ctype = normalize_component_type(component_type)
+    if isinstance(pin, dict):
+        raw = (
+            pin.get("polarity_role")
+            or pin.get("pin_display_name")
+            or pin.get("pin_name")
+            or pin.get("pin")
+            or ""
+        )
+    else:
+        raw = pin
+    value = str(raw or "").strip().lower()
+    value = value.replace("-", "_").replace(" ", "_")
+
+    if ctype == "Transistor":
+        if value in {"e", "emitter"}:
+            return "emitter"
+        if value in {"b", "base"}:
+            return "base"
+        if value in {"c", "collector"}:
+            return "collector"
+    if ctype == "Potentiometer":
+        if value in {"w", "wiper", "center", "middle"}:
+            return "wiper"
+        if value in {"terminal_a", "a", "pin1", "1"}:
+            return "terminal_a"
+        if value in {"terminal_b", "b", "pin2", "2"}:
+            return "terminal_b"
+    if ctype in {"LED", "Diode"}:
+        if value in {"a", "anode", "positive", "+"}:
+            return "anode"
+        if value in {"k", "cathode", "negative", "-"}:
+            return "cathode"
+    if ctype == "CapacitorElectrolytic":
+        if value in {"positive", "pos", "+", "anode"}:
+            return "positive"
+        if value in {"negative", "neg", "-", "cathode"}:
+            return "negative"
+    if value in {"p1", "1"}:
+        return "pin1"
+    if value in {"p2", "2"}:
+        return "pin2"
+    return value
 
 
 def validate_logical_reference(payload: dict[str, Any]) -> None:
@@ -84,10 +153,15 @@ def logical_reference_to_graph(payload: dict[str, Any]) -> nx.Graph:
     validate_logical_reference(payload)
 
     graph = nx.Graph()
-    net_roles: dict[str, str] = {
-        str(net["net"]): normalize_net_role(net.get("role"))
-        for net in payload.get("nets", [])
-    }
+    net_roles: dict[str, str] = {}
+    net_role_labels: dict[str, str] = {}
+    for net in payload.get("nets", []):
+        net_name = str(net["net"])
+        label = normalize_role_label(net.get("role_label") or net.get("label") or net.get("net"))
+        net_roles[net_name] = normalize_net_role(net.get("role") or label)
+        net_role_labels[net_name] = label
+
+    allowed_role_label_swaps = _allowed_role_label_swaps(payload.get("symmetry_groups", []))
 
     referenced_nets = {
         str(pin["net"])
@@ -99,6 +173,8 @@ def logical_reference_to_graph(payload: dict[str, Any]) -> nx.Graph:
             _ref_net_node_id(net_name),
             kind="net",
             role=net_roles.get(net_name, "signal"),
+            role_label=net_role_labels.get(net_name, normalize_role_label(net_name)),
+            allowed_role_labels=sorted(allowed_role_label_swaps.get(normalize_role_label(net_name), set())),
             source_id=net_name,
         )
 
@@ -118,12 +194,14 @@ def logical_reference_to_graph(payload: dict[str, Any]) -> nx.Graph:
                 comp_node,
                 _ref_net_node_id(net_name),
                 pin=str(pin.get("pin") or ""),
+                pin_role=normalize_pin_role(ctype, pin),
                 comp_type=ctype,
             )
 
     graph.graph["format"] = "logical_reference_v1"
     graph.graph["reference_id"] = payload.get("reference_id")
     graph.graph["name"] = payload.get("name")
+    graph.graph["symmetry_groups"] = payload.get("symmetry_groups", [])
     return graph
 
 
@@ -133,36 +211,33 @@ def current_netlist_v2_to_graph(netlist_v2: dict[str, Any]) -> nx.Graph:
 
     graph = nx.Graph()
     net_roles: dict[str, str] = {}
+    net_role_labels: dict[str, str] = {}
     for net in netlist_v2.get("nets", []) or []:
         if not isinstance(net, dict):
             continue
         net_id = str(net.get("electrical_net_id") or net.get("net_id") or "").strip()
         if not net_id:
             continue
-        role = net.get("role") or net.get("manual_role")
-        if not role:
-            role_label = str(net.get("role_label") or "").strip()
-            if role_label in {"VIN", "input", "in"}:
-                role = "input"
-            elif role_label in {"VOUT", "output", "out"}:
-                role = "output"
-            elif role_label in {"VCC", "power", "pwr"}:
-                role = "power"
-            elif role_label in {"GND", "ground", "gnd"}:
-                role = "ground"
-        if not role:
-            power_role = str(net.get("power_role") or "").strip()
-            if power_role == "GND":
-                role = "ground"
-            elif power_role == "VCC":
-                role = "power"
+        role_label = normalize_role_label(net.get("role_label"))
+        power_role = normalize_role_label(net.get("power_role"))
+        if not role_label and power_role in {"VCC", "VDD", "VEE", "VSS", "GND"}:
+            role_label = power_role
+
+        role = (
+            net.get("role")
+            or net.get("manual_role")
+            or role_label
+            or power_role
+            or "signal"
+        )
         net_roles[net_id] = normalize_net_role(role)
+        net_role_labels[net_id] = role_label
         graph.add_node(
             _cur_net_node_id(net_id),
             kind="net",
             role=net_roles[net_id],
             source_id=net_id,
-            role_label=net.get("role_label"),
+            role_label=role_label,
         )
 
     for comp in netlist_v2.get("components", []) or []:
@@ -195,16 +270,34 @@ def current_netlist_v2_to_graph(netlist_v2: dict[str, Any]) -> nx.Graph:
                     kind="net",
                     role=net_roles.get(net_id, "signal"),
                     source_id=net_id,
+                    role_label=net_role_labels.get(net_id, ""),
                 )
             graph.add_edge(
                 comp_node,
                 net_node,
                 pin=str(pin.get("pin_name") or pin.get("pin") or ""),
+                pin_role=normalize_pin_role(ctype, pin),
                 comp_type=ctype,
             )
 
     graph.graph["format"] = "netlist_v2_logical_graph"
     return graph
+
+
+def _allowed_role_label_swaps(symmetry_groups: Any) -> dict[str, set[str]]:
+    allowed: dict[str, set[str]] = {}
+    if not isinstance(symmetry_groups, list):
+        return allowed
+    for group in symmetry_groups:
+        if not isinstance(group, dict) or group.get("mode") != "swap_allowed":
+            continue
+        for pair in group.get("nets", []) or []:
+            if not isinstance(pair, (list, tuple)) or len(pair) < 2:
+                continue
+            labels = [normalize_role_label(value) for value in pair if normalize_role_label(value)]
+            for label in labels:
+                allowed.setdefault(label, set()).update(other for other in labels if other != label)
+    return allowed
 
 
 def _comp_node_id(component_id: str) -> str:

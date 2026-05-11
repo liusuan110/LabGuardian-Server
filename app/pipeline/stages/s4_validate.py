@@ -213,6 +213,13 @@ def _run_logical_reference_validate(
 
 
 def _logical_error_report(item: Dict[str, Any], *, similarity: float) -> Dict[str, Any]:
+    item = {
+        "title": item.get("title") or item.get("error_code") or "logical validation error",
+        "component_ref": item.get("component_ref"),
+        "component_actual": item.get("component_actual"),
+        "evidence_refs": item.get("evidence_refs", []),
+        **item,
+    }
     return {
         "version": "validator_report_v2",
         "summary": {
@@ -220,10 +227,12 @@ def _logical_error_report(item: Dict[str, Any], *, similarity: float) -> Dict[st
             "logic_correct": False,
             "similarity": similarity,
             "comparison_mode": "logical_graph",
+            "match_type": "reference_error",
             "ignore_component_id": True,
             "ignore_hole_id": True,
             "ignore_passive_pin_order": True,
-            "ignore_polarity": True,
+            "strict_functional_pin_roles": True,
+            "equivalence_rule": "logical_topology_with_port_semantics",
         },
         "items": [item],
         "topology_errors": [],
