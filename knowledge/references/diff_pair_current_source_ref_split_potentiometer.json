@@ -1,12 +1,12 @@
 {
   "format": "logical_reference_v1",
-  "reference_id": "diff_pair_current_source_ref",
+  "reference_id": "diff_pair_current_source_ref_split_potentiometer",
   "name": "差分放大器 + VT3 恒流源参考电路",
-  "description": "由图中 VT1/VT2 差分对、RC1/RC2 集电极负载、RP 发射极平衡电位器、VT3+R1/R2/RE 尾电流源构成的逻辑参考电路。",
+  "description": "由图中 VT1/VT2 差分对、RC1/RC2 集电极负载、RP 发射极平衡电位器等效拆分为 RP_LEFT/RP_RIGHT 两个电阻、VT3+R1/R2/RE 尾电流源构成的逻辑参考电路。",
   "created_at": "2026-05-10T16:27:32",
   "source": {
     "type": "schematic_image",
-    "note": "只表达原理图连接拓扑，不包含具体面包板 hole_id。"
+    "note": "只表达原理图连接拓扑，不包含具体面包板 hole_id。 RP 电位器已按 wiper 节点 TAIL 拆分为两个两端电阻。"
   },
   "nets": [
     {
@@ -47,17 +47,17 @@
     {
       "net": "VT1_EMITTER",
       "role": "signal",
-      "label": "VT1 emitter / RP left terminal"
+      "label": "VT1 emitter / RP_LEFT left terminal"
     },
     {
       "net": "VT2_EMITTER",
       "role": "signal",
-      "label": "VT2 emitter / RP right terminal"
+      "label": "VT2 emitter / RP_RIGHT right terminal"
     },
     {
       "net": "TAIL",
       "role": "signal",
-      "label": "RP wiper / VT3 collector"
+      "label": "RP_LEFT-RP_RIGHT midpoint / VT3 collector"
     },
     {
       "net": "VT3_BASE_BIAS",
@@ -144,20 +144,33 @@
       ]
     },
     {
-      "ref_id": "RP",
-      "type": "Potentiometer",
-      "description": "emitter balancing potentiometer; wiper goes to VT3 collector",
+      "ref_id": "RP_LEFT",
+      "type": "Resistor",
+      "value": "",
+      "description": "left equivalent segment of RP balancing potentiometer, from VT1 emitter to wiper/tail node",
       "pins": [
         {
-          "pin": "terminal_a",
+          "pin": "pin1",
           "net": "VT1_EMITTER"
         },
         {
-          "pin": "wiper",
+          "pin": "pin2",
+          "net": "TAIL"
+        }
+      ]
+    },
+    {
+      "ref_id": "RP_RIGHT",
+      "type": "Resistor",
+      "value": "",
+      "description": "right equivalent segment of RP balancing potentiometer, from wiper/tail node to VT2 emitter",
+      "pins": [
+        {
+          "pin": "pin1",
           "net": "TAIL"
         },
         {
-          "pin": "terminal_b",
+          "pin": "pin2",
           "net": "VT2_EMITTER"
         }
       ]

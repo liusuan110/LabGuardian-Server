@@ -2,46 +2,99 @@
   "format": "logical_reference_v1",
   "reference_id": "rc_first_order_v1",
   "name": "一阶 RC 带通电路",
-  "description": "高通(C2-R2)级联低通(R1-C1)带通滤波器实验参考电路",
+  "description": "由输入耦合电容 C2、下拉电阻 R2 构成高通级，再由串联电阻 R1、对地电容 C1 构成低通级的级联一阶 RC 带通滤波器逻辑参考电路。",
+  "created_at": "2026-05-11T00:00:00",
+  "source": {
+    "type": "logical_reference_json",
+    "note": "参照差分放大器 JSON 的结构补充 net label、器件 value/description 与元数据；只表达电路连接拓扑，不包含具体面包板 hole_id。"
+  },
+  "nets": [
+    {
+      "net": "VIN",
+      "role": "input",
+      "label": "input signal"
+    },
+    {
+      "net": "VMID",
+      "role": "signal",
+      "label": "C2-R2 high-pass output / R1 input node"
+    },
+    {
+      "net": "VOUT",
+      "role": "output",
+      "label": "filtered output signal"
+    },
+    {
+      "net": "GND",
+      "role": "ground",
+      "label": "0V"
+    }
+  ],
   "components": [
     {
       "ref_id": "C2",
       "type": "CapacitorCeramic",
+      "value": "",
+      "description": "input coupling capacitor; forms the high-pass stage with R2",
       "pins": [
-        { "pin": "pin1", "net": "VIN" },
-        { "pin": "pin2", "net": "VMID" }
+        {
+          "pin": "pin1",
+          "net": "VIN"
+        },
+        {
+          "pin": "pin2",
+          "net": "VMID"
+        }
       ]
     },
     {
       "ref_id": "R2",
       "type": "Resistor",
+      "value": "",
+      "description": "high-pass stage resistor to ground; provides the discharge/reference path for C2",
       "pins": [
-        { "pin": "pin1", "net": "VMID" },
-        { "pin": "pin2", "net": "GND" }
+        {
+          "pin": "pin1",
+          "net": "VMID"
+        },
+        {
+          "pin": "pin2",
+          "net": "GND"
+        }
       ]
     },
     {
       "ref_id": "R1",
       "type": "Resistor",
+      "value": "",
+      "description": "series resistor of the low-pass stage between VMID and VOUT",
       "pins": [
-        { "pin": "pin1", "net": "VMID" },
-        { "pin": "pin2", "net": "VOUT" }
+        {
+          "pin": "pin1",
+          "net": "VMID"
+        },
+        {
+          "pin": "pin2",
+          "net": "VOUT"
+        }
       ]
     },
     {
       "ref_id": "C1",
       "type": "CapacitorCeramic",
+      "value": "",
+      "description": "shunt capacitor of the low-pass stage from VOUT to ground",
       "pins": [
-        { "pin": "pin1", "net": "VOUT" },
-        { "pin": "pin2", "net": "GND" }
+        {
+          "pin": "pin1",
+          "net": "VOUT"
+        },
+        {
+          "pin": "pin2",
+          "net": "GND"
+        }
       ]
     }
-  ],
-  "nets": [
-    { "net": "VIN", "role": "input" },
-    { "net": "VMID", "role": "signal" },
-    { "net": "VOUT", "role": "output" },
-    { "net": "GND", "role": "ground" }
   ],
   "compare_options": {
     "ignore_hole_id": true,
