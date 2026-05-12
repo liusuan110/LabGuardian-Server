@@ -321,3 +321,123 @@ class TestCompareLogicalGraphs:
         assert result["logic_correct"] is False
         items = result["report"]["items"]
         assert any(i["error_family"] == "wiring_mismatch" for i in items)
+
+    def test_unlabeled_port_roles_are_inferred(self) -> None:
+        from app.domain.logical_reference import current_netlist_v2_to_graph, logical_reference_to_graph
+
+        ref_payload = {
+            "format": "logical_reference_v1",
+            "components": [
+                {
+                    "ref_id": "R1",
+                    "type": "Resistor",
+                    "pins": [
+                        {"pin": "pin1", "net": "VIN"},
+                        {"pin": "pin2", "net": "VC"},
+                    ],
+                },
+                {
+                    "ref_id": "C1",
+                    "type": "CapacitorCeramic",
+                    "pins": [
+                        {"pin": "pin1", "net": "VC"},
+                        {"pin": "pin2", "net": "GND"},
+                    ],
+                }
+            ],
+            "nets": [
+                {"net": "VIN", "role": "input", "role_label": "UI1"},
+                {"net": "VC", "role": "signal"},
+                {"net": "GND", "role": "ground", "role_label": "GND"},
+            ],
+        }
+        cur_netlist = {
+            "components": [
+                {
+                    "component_id": "R7",
+                    "component_type": "Resistor",
+                    "pins": [
+                        {"pin_name": "pin1", "electrical_net_id": "N0"},
+                        {"pin_name": "pin2", "electrical_net_id": "N1"},
+                    ],
+                },
+                {
+                    "component_id": "C7",
+                    "component_type": "CapacitorCeramic",
+                    "pins": [
+                        {"pin_name": "pin1", "electrical_net_id": "N1"},
+                        {"pin_name": "pin2", "electrical_net_id": "N2"},
+                    ],
+                },
+            ],
+            "nets": [
+                {"electrical_net_id": "N0"},
+                {"electrical_net_id": "N1"},
+                {"electrical_net_id": "N2"},
+            ],
+        }
+
+        result = compare_logical_graphs(
+            logical_reference_to_graph(ref_payload),
+            current_netlist_v2_to_graph(cur_netlist),
+            ref_payload=ref_payload,
+            cur_netlist_v2=cur_netlist,
+        )
+        assert result["logic_correct"] is True
+        assert result["details"]["match_type"] == "full_isomorphism_with_inferred_roles"
+
+    def test_existing_mismatched_port_label_is_not_silently_overwritten(self) -> None:
+        from app.domain.logical_reference import current_netlist_v2_to_graph, logical_reference_to_graph
+
+        ref_payload = {
+            "format": "logical_reference_v1",
+            "components": [
+                {"ref_id": "U1", "type": "IC", "pins": [{"pin": "IN1", "net": "UI1"}]}
+            ],
+            "nets": [{"net": "UI1", "role": "input", "role_label": "UI1"}],
+        }
+        cur_netlist = {
+            "components": [
+                {
+                    "component_id": "U2",
+                    "component_type": "IC",
+                    "pins": [{"pin_name": "IN1", "electrical_net_id": "N0"}],
+                }
+            ],
+            "nets": [{"electrical_net_id": "N0", "role": "input", "role_label": "UI2"}],
+        }
+
+        result = compare_logical_graphs(
+            logical_reference_to_graph(ref_payload),
+            current_netlist_v2_to_graph(cur_netlist),
+            ref_payload=ref_payload,
+            cur_netlist_v2=cur_netlist,
+        )
+        assert result["logic_correct"] is False
+
+    def test_auto_detected_symmetric_ports_can_swap(self) -> None:
+        ref = nx.Graph()
+        ref.add_node("ref_comp:R1", kind="comp", ctype="Resistor", source_id="R1")
+        ref.add_node("ref_comp:R2", kind="comp", ctype="Resistor", source_id="R2")
+        ref.add_node("ref_net:UI1", kind="net", role="input", role_label="UI1", source_id="UI1")
+        ref.add_node("ref_net:UI2", kind="net", role="input", role_label="UI2", source_id="UI2")
+        ref.add_node("ref_net:MID", kind="net", role="signal", source_id="MID")
+        ref.add_edge("ref_comp:R1", "ref_net:UI1", pin="pin1", comp_type="Resistor")
+        ref.add_edge("ref_comp:R1", "ref_net:MID", pin="pin2", comp_type="Resistor")
+        ref.add_edge("ref_comp:R2", "ref_net:UI2", pin="pin1", comp_type="Resistor")
+        ref.add_edge("ref_comp:R2", "ref_net:MID", pin="pin2", comp_type="Resistor")
+
+        cur = nx.Graph()
+        cur.add_node("cur_comp:R7", kind="comp", ctype="Resistor", source_id="R7")
+        cur.add_node("cur_comp:R8", kind="comp", ctype="Resistor", source_id="R8")
+        cur.add_node("cur_net:N0", kind="net", role="input", role_label="UI2", source_id="N0")
+        cur.add_node("cur_net:N1", kind="net", role="input", role_label="UI1", source_id="N1")
+        cur.add_node("cur_net:N2", kind="net", role="signal", source_id="N2")
+        cur.add_edge("cur_comp:R7", "cur_net:N0", pin="pin1", comp_type="Resistor")
+        cur.add_edge("cur_comp:R7", "cur_net:N2", pin="pin2", comp_type="Resistor")
+        cur.add_edge("cur_comp:R8", "cur_net:N1", pin="pin1", comp_type="Resistor")
+        cur.add_edge("cur_comp:R8", "cur_net:N2", pin="pin2", comp_type="Resistor")
+
+        result = compare_logical_graphs(ref, cur)
+        assert result["logic_correct"] is True
+        assert result["details"]["match_type"] == "equivalent_with_allowed_symmetry"

@@ -8,6 +8,8 @@ from app.domain.circuit import norm_component_type
 
 
 VALID_NET_ROLES = {"signal", "ground", "power", "input", "output"}
+# These labels are only strict comparison hints for input/output ports. Internal
+# signal labels remain topology-only in the logical graph matcher.
 CRITICAL_ROLE_LABELS = {"UI1", "UI2", "UO1", "UO2", "VCC", "VEE", "GND"}
 
 

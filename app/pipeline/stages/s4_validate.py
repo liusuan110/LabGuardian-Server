@@ -235,6 +235,7 @@ def _logical_error_report(item: Dict[str, Any], *, similarity: float) -> Dict[st
             "ignore_component_id": True,
             "ignore_hole_id": True,
             "ignore_passive_pin_order": True,
+            "allow_extra_wires": True,
             "strict_functional_pin_roles": True,
             "equivalence_rule": "logical_topology_with_port_semantics",
             "report_layers": {
