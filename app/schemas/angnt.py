@@ -72,6 +72,8 @@ class AngntJobResult(BaseModel):
     station_id: str
     mode: str
     answer: str
+    actual_llm_provider: str = ""
+    actual_llm_model: str = ""
     follow_up_suggestions: list[str] = Field(default_factory=list)
     citations: list[AngntCitation] = Field(default_factory=list)
     evidence: list[AngntEvidence] = Field(default_factory=list)

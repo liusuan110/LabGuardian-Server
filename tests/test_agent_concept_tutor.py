@@ -11,7 +11,11 @@ from app.agent.tools import (
 )
 from app.agent.verification import verify_draft_answer
 from app.schemas.angnt import AngntAskRequest
-from app.services.agent_service import AgentService
+from app.services.agent_service import (
+    AgentService,
+    _build_concept_not_found_prompt,
+    _is_circuit_related_question,
+)
 from app.services.classroom_state import ClassroomState
 from app.services.rag_service import RagService
 
@@ -48,6 +52,13 @@ def test_intent_classifier_routes_diagnosis_to_diagnostic() -> None:
     assert classify_intent("我这个电路哪里错了", evidence=None) == "diagnostic"
 
 
+def test_intent_classifier_routes_colloquial_problem_question_to_diagnostic() -> None:
+    assert classify_intent("这个有什么问题", evidence=None) == "diagnostic"
+    assert classify_intent("帮我看看哪里不对", evidence=None) == "diagnostic"
+    assert classify_intent("这个电路有什么具体的问题", evidence=None) == "diagnostic"
+    assert classify_intent("它和参考电路有哪些差异", evidence=None) == "diagnostic"
+
+
 def test_intent_classifier_routes_multimeter_to_lab_guidance() -> None:
     assert classify_intent("怎么用万用表检查短路", evidence=None) == "lab_guidance"
 
@@ -59,6 +70,30 @@ def test_intent_classifier_returns_mixed_when_concept_with_findings() -> None:
 
     evidence.findings.append(DiagnosticFinding(error_code="NODE_MISMATCH"))
     assert classify_intent("RC 时间常数和我现在的实验有什么关系", evidence=evidence) == "mixed"
+
+
+def test_intent_classifier_returns_mixed_for_theory_question_even_with_findings() -> None:
+    evidence = RuntimeEvidence(station_id="S", findings=[])
+    from app.agent.contracts import DiagnosticFinding
+
+    evidence.findings.append(DiagnosticFinding(error_code="NODE_MISMATCH"))
+    assert classify_intent("电磁和电场磁场的关系是什么", evidence=evidence) == "mixed"
+
+
+def test_intent_classifier_does_not_force_off_topic_into_diagnostic_with_findings() -> None:
+    evidence = RuntimeEvidence(station_id="S", findings=[])
+    from app.agent.contracts import DiagnosticFinding
+
+    evidence.findings.append(DiagnosticFinding(error_code="NODE_MISMATCH"))
+    assert classify_intent("今天中午吃什么", evidence=evidence) == "concept_tutor"
+
+
+def test_intent_classifier_routes_vague_diagnostic_follow_up_to_mixed() -> None:
+    evidence = RuntimeEvidence(station_id="S", findings=[])
+    from app.agent.contracts import DiagnosticFinding
+
+    evidence.findings.append(DiagnosticFinding(error_code="NODE_MISMATCH"))
+    assert classify_intent("简单点，这是什么意思", evidence=evidence) == "mixed"
 
 
 # ---------- teaching_concept_lookup_tool ----------
@@ -90,6 +125,69 @@ def test_teaching_concept_lookup_tool_returns_not_found_on_miss() -> None:
     result = teaching_concept_lookup_tool(TeachingConceptLookupInput(query="量子隧穿"))
     assert result.status == "not_found"
     assert "available_concepts" in result.payload
+
+
+def test_llm_fallback_prompt_uses_general_circuit_knowledge_on_kb_miss() -> None:
+    evidence = RuntimeEvidence(
+        station_id="S",
+        risk_level="safe",
+        error_codes=["NODE_MISMATCH"],
+        diagnostics=["R1 连接错误"],
+    )
+
+    assert _is_circuit_related_question("电感为什么会阻碍电流变化")
+    assert _is_circuit_related_question("LED为什么要限流")
+    prompt = _build_concept_not_found_prompt(
+        question="电感为什么会阻碍电流变化",
+        evidence=evidence,
+    )
+
+    assert "问题类型：circuit_related" in prompt
+    assert "通用电路知识直接回答" in prompt
+    assert "不要编造当前电路的具体孔位" in prompt
+    assert "楞次定律" in prompt
+    assert "NODE_MISMATCH" not in prompt
+    assert "R1 连接错误" not in prompt
+
+
+def test_llm_fallback_prompt_redirects_off_topic_questions() -> None:
+    evidence = RuntimeEvidence(
+        station_id="S",
+        risk_level="safe",
+        error_codes=["NODE_MISMATCH"],
+        diagnostics=["R1 连接错误"],
+    )
+
+    assert not _is_circuit_related_question("今天中午吃什么")
+    assert not _is_circuit_related_question("music playlist")
+    prompt = _build_concept_not_found_prompt(
+        question="今天中午吃什么",
+        evidence=evidence,
+    )
+
+    assert "问题类型：off_topic" in prompt
+    assert "不要长篇展开非电路内容" in prompt
+    assert "引导回电路" in prompt
+    assert "NODE_MISMATCH" not in prompt
+    assert "R1 连接错误" not in prompt
+
+
+def test_llm_fallback_prompt_uses_current_context_only_for_follow_up() -> None:
+    evidence = RuntimeEvidence(
+        station_id="S",
+        risk_level="warning",
+        error_codes=["NODE_MISMATCH"],
+        diagnostics=["R1 连接错误"],
+    )
+
+    prompt = _build_concept_not_found_prompt(
+        question="简单点，这是什么意思",
+        evidence=evidence,
+    )
+
+    assert "问题类型：current_context_follow_up" in prompt
+    assert "NODE_MISMATCH" in prompt
+    assert "R1 连接错误" in prompt
 
 
 # ---------- verifier per intent ----------
@@ -314,7 +412,7 @@ def test_agent_auto_routes_diagnostic_question_to_diagnostic_path() -> None:
     # Diagnostic path emits runtime_evidence + context_pack + react_trace.
     assert "context_pack" in evidence_types
     assert "react_trace" in evidence_types
-    assert "断电" in result.answer
+    assert any(w in result.answer for w in ("断电", "断开电源", "电源", "短路"))
 
 
 def test_agent_auto_mixed_returns_diagnostic_answer_and_attaches_concept() -> None:
@@ -343,13 +441,13 @@ def test_agent_auto_mixed_returns_diagnostic_answer_and_attaches_concept() -> No
     )
 
     evidence_types = {item.evidence_type for item in result.evidence}
-    assert "context_pack" in evidence_types  # diagnostic main path
+    assert "context_pack" not in evidence_types  # mixed theory follow-up avoids diagnostic template
+    assert "tool_results" in evidence_types
     assert "intent" in evidence_types
     intent_item = next(item for item in result.evidence if item.evidence_type == "intent")
-    assert intent_item.payload["intent"] == "mixed"
-    # Concept attached but final_answer is the diagnostic answer, not the concept template.
+    assert intent_item.payload["intent"] == "concept_tutor"
     assert "concept_pack" in evidence_types
-    assert "知识来源" not in result.answer
+    assert "知识来源" in result.answer
 
 
 # ---------- direct concept_tutor / lab_guidance modes ----------

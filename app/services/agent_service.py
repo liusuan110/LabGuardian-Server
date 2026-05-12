@@ -13,6 +13,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
+
 from app.agent.answering import (
     _build_follow_up_suggestions,
     build_concept_answer,
@@ -27,6 +29,7 @@ from app.agent.contracts import AgentIntent, ConceptPack
 from app.agent.evidence import build_runtime_evidence_from_classroom
 from app.agent.graph import run_diagnostic_graph
 from app.agent.intent import classify_intent
+from app.agent.llm import get_llm_provider
 from app.agent.tools import (
     TeachingConceptLookupInput,
     ToolResult,
@@ -42,12 +45,216 @@ from app.schemas.angnt import (
     AngntJobState,
     AngntJobStatusResponse,
 )
+from app.core.config import settings
 from app.services.classroom_state import ClassroomState
 from app.services.error_tag_service import ErrorTagService
 from app.services.rag_service import RagService
 
 AGENT_MEMORY_LIMIT = 5
 RISK_ORDER = {"unknown": 0, "safe": 0, "warning": 1, "danger": 2}
+_CIRCUIT_TOPIC_KEYWORDS = (
+    "电路",
+    "电压",
+    "电流",
+    "电阻",
+    "电容",
+    "电感",
+    "二极管",
+    "led",
+    "三极管",
+    "mos",
+    "运放",
+    "芯片",
+    "ic",
+    "面包板",
+    "跳线",
+    "引脚",
+    "孔位",
+    "电源",
+    "短路",
+    "断路",
+    "接地",
+    "gnd",
+    "vcc",
+    "传感器",
+    "单片机",
+    "arduino",
+    "stm32",
+    "万用表",
+    "示波器",
+    "测量",
+    "焊接",
+    "欧姆",
+    "分压",
+    "滤波",
+    "rc",
+    "rl",
+    "rlc",
+    "频率",
+    "信号",
+    "模拟",
+    "数字",
+    "原理图",
+    "breadboard",
+    "resistor",
+    "capacitor",
+    "inductor",
+    "diode",
+    "transistor",
+    "voltage",
+    "current",
+)
+
+
+def _is_circuit_related_question(question: str) -> bool:
+    msg = (question or "").strip().lower()
+    if not msg:
+        return False
+    for keyword in _CIRCUIT_TOPIC_KEYWORDS:
+        key = keyword.lower()
+        if key.isascii() and key.isalnum() and len(key) <= 3:
+            if _contains_ascii_token(msg, key):
+                return True
+            continue
+        if key in msg:
+            return True
+    return False
+
+
+def _contains_ascii_token(msg: str, token: str) -> bool:
+    start = 0
+    while True:
+        index = msg.find(token, start)
+        if index < 0:
+            return False
+        before = msg[index - 1] if index > 0 else ""
+        after_index = index + len(token)
+        after = msg[after_index] if after_index < len(msg) else ""
+        before_ok = not before or not (before.isascii() and before.isalnum())
+        after_ok = not after or not (after.isascii() and after.isalnum())
+        if before_ok and after_ok:
+            return True
+        start = index + 1
+
+
+def _looks_like_current_context_follow_up(question: str) -> bool:
+    msg = (question or "").strip().lower()
+    follow_up_phrases = (
+        "简单点",
+        "再说",
+        "换种说法",
+        "详细点",
+        "讲详细",
+        "听不懂",
+        "没懂",
+        "什么意思",
+        "这是什么意思",
+        "有什么问题",
+        "有啥问题",
+        "啥问题",
+        "问题在哪",
+        "问题出在哪",
+        "问题是什么",
+        "具体问题",
+        "具体的问题",
+        "这个电路",
+        "这张电路",
+        "这张图",
+        "电路图",
+        "上传的电路",
+        "上传电路",
+        "参考差异",
+        "参考电路",
+        "和参考",
+        "对比参考",
+        "跟参考",
+        "相比参考",
+        "哪里不对",
+        "哪里不对劲",
+        "哪错了",
+        "这个问题",
+        "怎么改",
+        "怎么修",
+        "怎么处理",
+    )
+    return any(phrase in msg for phrase in follow_up_phrases)
+
+
+def _build_concept_not_found_prompt(*, question: str, evidence: Any) -> str:
+    risk = str(getattr(evidence, "risk_level", "unknown") or "unknown")
+    error_codes = list(getattr(evidence, "error_codes", []) or [])
+    diagnostics = list(getattr(evidence, "diagnostics", []) or [])
+    has_current_context = bool(error_codes or diagnostics or getattr(evidence, "findings", None))
+    is_follow_up = has_current_context and _looks_like_current_context_follow_up(question)
+    if is_follow_up:
+        topic_mode = "current_context_follow_up"
+        topic_rule = (
+            "用户可能是在追问当前诊断。请结合当前诊断摘要自然回答，不要机械复述完整报告；"
+            "如果问题太模糊，先用一句话说明你理解的是哪一类问题，再引导他指定元件或错误码。"
+        )
+        context_lines = [
+            f"当前电路风险等级：{risk}",
+            f"当前电路错误码：{','.join(error_codes[:3]) if error_codes else '无'}",
+            f"当前诊断摘要：{'；'.join(str(item) for item in diagnostics[:3]) or '无'}",
+        ]
+    elif _is_circuit_related_question(question):
+        topic_mode = "circuit_related"
+        topic_rule = (
+            "这个问题仍属于电路/电子实验相关，但本地知识库没有命中。请用你的通用电路知识直接回答，"
+            "不要主动复述当前工位诊断，不要声称来自本地知识库，不要编造当前电路的具体孔位、器件位置或测量值。"
+        )
+        context_lines = [
+            f"当前电路风险等级：{risk}（仅作为安全背景；除非用户追问当前诊断，否则不要展开错误码或工位报告。）",
+        ]
+    else:
+        topic_mode = "off_topic"
+        topic_rule = (
+            "这个问题明显偏离电路实验。可以非常简短回应用户的核心意图，但不要长篇展开非电路内容；"
+            "重点把用户引导回电路、元件、接线、测量现象或当前诊断结果；不要主动复述上一轮诊断报告，"
+            "不要编造正在测某个具体结果。"
+        )
+        context_lines = []
+    return "\n".join(
+        [
+            "你是 LabGuardian 的电路实验助教。当前本地教学知识库没有命中条目。",
+            f"问题类型：{topic_mode}",
+            topic_rule,
+            f"用户问题：{question}",
+            *_topic_grounding_lines(question),
+            *context_lines,
+            "输出要求：用自然中文回答，3-5 句即可，不要使用固定编号模板。",
+            "内容必须覆盖：直接回应用户；说明和电路实验的关系或把话题拉回电路；给出一个自然追问；包含适合低压教学实验的安全提醒。",
+            "电路知识必须严谨；不确定时用保守的定性解释，不要编造机理、参数、测量值或因果关系。",
+            "相关问题要给出有用解释；无关问题要简短收束，不要长篇展开；除非用户提到高压，否则不要使用“高压”措辞。",
+        ]
+    )
+
+
+def _fallback_follow_up_text(*, question: str, evidence: Any) -> str:
+    has_current_context = bool(
+        getattr(evidence, "error_codes", None)
+        or getattr(evidence, "diagnostics", None)
+        or getattr(evidence, "findings", None)
+    )
+    if has_current_context and _looks_like_current_context_follow_up(question):
+        return "你可以告诉我想先看哪个元件、错误码或孔位，我再把那一处拆开讲。"
+    if _is_circuit_related_question(question):
+        return "你想继续看它的公式、实验现象，还是它和当前电路连接的关系？"
+    return "你可以继续问我电路现象、元件作用、接线检查或测量方法。"
+
+
+def _topic_grounding_lines(question: str) -> list[str]:
+    msg = (question or "").strip().lower()
+    lines: list[str] = []
+    if "电感" in msg or "inductor" in msg:
+        lines.append(
+            "已知事实：电感阻碍电流变化来自自感与楞次定律；感应电动势的方向总是反抗电流变化趋势，不是正反馈增强变化。"
+        )
+    if "电容" in msg or "capacitor" in msg:
+        lines.append("已知事实：电容直接储存电荷/电场能量，电容电压不能突变。")
+    if "二极管" in msg or "led" in msg:
+        lines.append("已知事实：LED/二极管具有方向性；LED 需要限流，不能直接并到电源两端。")
+    return lines[:2]
 
 
 @dataclass
@@ -159,13 +366,24 @@ class AgentService:
                 request.user_message or request.query,
                 evidence=evidence_contract,
             )
-            if intent in ("diagnostic", "mixed"):
+            if intent == "diagnostic":
                 return self._run_diagnostic_agent_job(
                     job_id=job_id,
                     request=request,
                     classroom=classroom,
                     created_at=created_at,
                     intent=intent,
+                )
+            if intent == "mixed":
+                # Mixed intent should prefer concept-guidance path so
+                # concept_not_found can trigger local LLM fallback answer.
+                return self._run_concept_or_guidance_job(
+                    job_id=job_id,
+                    request=request,
+                    classroom=classroom,
+                    created_at=created_at,
+                    forced_intent="concept_tutor",
+                    pre_evidence=evidence_contract,
                 )
             return self._run_concept_or_guidance_job(
                 job_id=job_id,
@@ -215,6 +433,8 @@ class AgentService:
             station_id=request.station_id,
             mode=request.mode,
             answer=answer,
+            actual_llm_provider=self._actual_llm_usage()[0],
+            actual_llm_model=self._actual_llm_usage()[1],
             citations=citations,
             evidence=evidence,
             actions=actions,
@@ -293,12 +513,22 @@ class AgentService:
         used_context_refs = [
             ref.ref_id for ref in evidence_contract.evidence_refs
         ] + [tool.tool_name for tool in tool_results]
+        question = request.user_message or request.query
+        rewritten_answer, actual_provider, actual_model = self._llm_rewrite_diagnostic_answer(
+            question=question,
+            draft_answer=graph_state.final_answer,
+            evidence=evidence_contract,
+            context_pack=context_pack,
+            tool_results=tool_results,
+        )
 
         result = AngntJobResult(
             job_id=job_id,
             station_id=request.station_id,
             mode=request.mode,
-            answer=graph_state.final_answer,
+            answer=rewritten_answer,
+            actual_llm_provider=actual_provider,
+            actual_llm_model=actual_model,
             follow_up_suggestions=_build_follow_up_suggestions(
                 evidence=evidence_contract,
                 context_pack=context_pack,
@@ -433,6 +663,7 @@ class AgentService:
             concept_payload = tool_result.payload.get("concept") or {}
             concept = _ConceptPack.model_validate(concept_payload)
 
+        actual_provider, actual_model = self._actual_llm_usage()
         if forced_intent == "lab_guidance":
             draft = build_lab_guidance_answer(
                 question=question,
@@ -440,11 +671,27 @@ class AgentService:
                 evidence=evidence_contract,
             )
         else:
-            draft = build_concept_answer(
-                question=question,
-                concept=concept,
-                evidence=evidence_contract,
-            )
+            if concept is None:
+                draft, actual_provider, actual_model = self._llm_concept_not_found_answer(
+                    question=question,
+                    evidence=evidence_contract,
+                )
+                if actual_provider == "ollama":
+                    tool_results.append(
+                        ToolResult(
+                            tool_name="ollama_concept_fallback",
+                            status="ok",
+                            summary="concept_not_found -> ollama 直答兜底",
+                            payload={"provider": "ollama", "model": actual_model},
+                        )
+                    )
+            else:
+                draft = build_concept_answer(
+                    question=question,
+                    concept=concept,
+                    evidence=evidence_contract,
+                )
+                actual_provider, actual_model = self._actual_llm_usage()
 
         # concept/lab paths do not produce a ContextPack; build a minimal stub
         # for the verifier signature compatibility.
@@ -475,6 +722,8 @@ class AgentService:
             station_id=request.station_id,
             mode=request.mode,
             answer=draft,
+            actual_llm_provider=actual_provider,
+            actual_llm_model=actual_model,
             follow_up_suggestions=[],
             citations=build_concept_citations(
                 station_id=request.station_id,
@@ -498,6 +747,192 @@ class AgentService:
                 used_context_refs=[concept.concept_id] if concept else [],
             ),
         )
+
+    def _actual_llm_usage(self) -> tuple[str, str]:
+        provider = get_llm_provider()
+        provider_name = str(getattr(provider, "name", "template") or "template")
+        if provider_name == "ollama":
+            model_name = str(getattr(provider, "_model", "") or "")
+        elif provider_name == "template":
+            model_name = "template"
+        else:
+            model_name = str(getattr(provider, "_model", "") or getattr(provider, "_model_dir", "") or provider_name)
+        return provider_name, model_name
+
+    def _llm_concept_not_found_answer(
+        self,
+        *,
+        question: str,
+        evidence,
+    ) -> tuple[str, str, str]:
+        provider_name, model_name = self._actual_llm_usage()
+        if provider_name != "ollama":
+            return build_concept_answer(question=question, concept=None, evidence=evidence), "template", "template"
+
+        endpoint = f"{getattr(settings, 'AGENT_LLM_OLLAMA_BASE_URL', 'http://127.0.0.1:11434').rstrip('/')}/api/chat"
+        timeout_s = float(getattr(settings, "AGENT_LLM_OLLAMA_TIMEOUT_S", 120.0) or 120.0)
+        prompt = _build_concept_not_found_prompt(question=question, evidence=evidence)
+        payload = {
+            "model": model_name or getattr(settings, "AGENT_LLM_OLLAMA_MODEL", "qwen3:4b"),
+            "stream": False,
+            "keep_alive": "30m",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是严谨的电路实验助教。优先回答电路、电子元件、实验测量和安全相关问题；"
+                        "遇到无关问题时，简短回应后把用户引导回电路实验。"
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "options": {
+                "temperature": 0.2,
+                "num_predict": 260,
+            },
+        }
+        try:
+            body: dict[str, Any] = {}
+            for timeout in (min(max(timeout_s, 20.0), 60.0), min(max(timeout_s * 1.5, 45.0), 120.0)):
+                try:
+                    with httpx.Client(timeout=timeout, trust_env=False) as client:
+                        response = client.post(endpoint, json=payload)
+                        response.raise_for_status()
+                        body = response.json()
+                    break
+                except Exception:
+                    body = {}
+                    continue
+            text = str(((body or {}).get("message") or {}).get("content") or "").strip()
+            if not text:
+                raise RuntimeError("empty llm response")
+            has_follow_up_line = (
+                "引导追问：" in text
+                or "追问" in text
+                or "疑问" in text
+                or "提问" in text
+                or "随时问" in text
+                or "随时提问" in text
+                or "可以继续问" in text
+                or "你可以" in text
+                or "你觉得" in text
+                or "能否" in text
+                or "有什么" in text
+                or "是否" in text
+                or "3)" in text
+                or "3）" in text
+                or "三、" in text
+            )
+            has_safety_line = (
+                "安全提醒：" in text
+                or "4)" in text
+                or "4）" in text
+                or "四、" in text
+                or any(token in text for token in ("断电", "触电", "安全"))
+            )
+            if not has_follow_up_line:
+                text += "\n" + _fallback_follow_up_text(question=question, evidence=evidence)
+            if not has_safety_line:
+                text += "\n安全提醒：上电或改线前请先断电，并优先复查电源轨与短路风险。"
+            text += f"\n知识来源：llm_fallback({payload['model']})"
+            return text, "ollama", str(payload["model"])
+        except Exception:
+            # Keep deterministic fallback when local model is unavailable.
+            return build_concept_answer(question=question, concept=None, evidence=evidence), "template", "template"
+
+    def _llm_rewrite_diagnostic_answer(
+        self,
+        *,
+        question: str,
+        draft_answer: str,
+        evidence,
+        context_pack,
+        tool_results: list[ToolResult],
+    ) -> tuple[str, str, str]:
+        """Rewrite rigid diagnostic template answer with LLM while preserving evidence facts."""
+        provider_name, model_name = self._actual_llm_usage()
+        if provider_name != "ollama":
+            return draft_answer, provider_name, model_name
+
+        endpoint = f"{getattr(settings, 'AGENT_LLM_OLLAMA_BASE_URL', 'http://127.0.0.1:11434').rstrip('/')}/api/chat"
+        timeout_s = float(getattr(settings, "AGENT_LLM_OLLAMA_TIMEOUT_S", 120.0) or 120.0)
+        findings = list(getattr(evidence, "findings", []) or [])
+        evidence_refs = list(getattr(evidence, "evidence_refs", []) or [])
+        error_codes = list(getattr(evidence, "error_codes", []) or [])
+        findings_text = "；".join(
+            f"{item.error_code}:{item.component_id or '-'}:{item.pin_name or '-'}"
+            for item in findings[:4]
+        ) or "无"
+        refs_text = "；".join(
+            f"{ref.ref_id}:{ref.component_id or '-'}:{ref.pin_name or '-'}:{ref.hole_id or '-'}"
+            for ref in evidence_refs[:4]
+        ) or "无"
+        tool_text = "；".join(
+            f"{item.tool_name}:{item.summary}"
+            for item in tool_results[:4]
+        ) or "无"
+        prompt = "\n".join(
+            [
+                "你是电路实验故障诊断助教，请对现有答案做自然中文改写。",
+                "关键要求：只能重写表达，不能新增任何事实、孔位、器件、测量值。",
+                "必须保留并原样包含：至少 1 个错误码；至少 1 个 evidence_ref 的 component_id/pin_name/hole_id（如果给出）。",
+                f"用户问题：{question}",
+                f"原始答案：{draft_answer}",
+                f"风险等级：{getattr(evidence, 'risk_level', 'unknown')}",
+                f"错误码：{','.join(error_codes[:4]) if error_codes else '无'}",
+                f"finding 摘要：{findings_text}",
+                f"evidence_ref：{refs_text}",
+                f"工具观察：{tool_text}",
+                f"context_pack.error_family={getattr(context_pack, 'error_family', 'unknown')}",
+                "输出要求：4-7句中文；保留排查步骤与安全提醒；最后一句给出下一步检查建议。",
+            ]
+        )
+        payload = {
+            "model": model_name or getattr(settings, "AGENT_LLM_OLLAMA_MODEL", "qwen3:4b"),
+            "stream": False,
+            "keep_alive": "30m",
+            "messages": [
+                {"role": "system", "content": "你是严谨的电路故障诊断助教，严禁编造证据。"},
+                {"role": "user", "content": prompt},
+            ],
+            "options": {
+                "temperature": 0.2,
+                "num_predict": 220,
+            },
+        }
+        try:
+            body: dict[str, Any] = {}
+            for timeout in (min(max(timeout_s, 20.0), 60.0), min(max(timeout_s * 1.5, 45.0), 120.0)):
+                try:
+                    with httpx.Client(timeout=timeout, trust_env=False) as client:
+                        response = client.post(endpoint, json=payload)
+                        response.raise_for_status()
+                        body = response.json()
+                    break
+                except Exception:
+                    body = {}
+                    continue
+            text = str(((body or {}).get("message") or {}).get("content") or "").strip()
+            if not text:
+                raise RuntimeError("empty llm response")
+            if error_codes and not any(code in text for code in error_codes):
+                text = f"{text}\n补充定位：本轮关键错误码为 {','.join(error_codes[:3])}。"
+            if getattr(evidence, "risk_level", "unknown") in {"danger", "warning"} and not any(
+                token in text for token in ("断电", "安全", "电源")
+            ):
+                text = f"{text}\n安全提醒：调整接线前请先断电并复查电源轨是否短接。"
+
+            report = verify_draft_answer(
+                evidence=evidence,
+                context_pack=context_pack,
+                draft_answer=text,
+                intent="diagnostic",
+            )
+            if not report.passed:
+                return draft_answer, "template", "template"
+            return text, provider_name, str(payload["model"])
+        except Exception:
+            return draft_answer, "template", "template"
 
     def _get_station_memory(self, station_id: str) -> list[AgentMemoryRecord]:
         with self._lock:

@@ -1,9 +1,9 @@
 """LLM provider package for the diagnostic ReAct loop.
 
-Phase 4 only ships the deterministic `template` provider; the
-`openvino_genai_text` provider is a stub reserved for Phase 7+ when DK-2500
-NPU is validated. The factory always falls back to `template` so existing
-tests stay deterministic.
+Current providers:
+- `template` deterministic baseline (CI-safe)
+- `ollama` local model provider (offline edge inference)
+- `openvino_genai_text` stub reserved for Phase 7+ validation
 """
 
 from app.agent.llm.base import LLMProvider, PlanRequest, ReflectRequest

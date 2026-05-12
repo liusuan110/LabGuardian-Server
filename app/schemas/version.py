@@ -14,5 +14,7 @@ class VersionInfoResponse(BaseModel):
     kb_version: str
     rule_version: str
     llm_model: str
+    agent_llm_provider: str
+    agent_llm_model: str
     api_prefix: str
     timestamp: float
