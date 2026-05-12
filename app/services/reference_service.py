@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import PROJECT_ROOT
+from app.domain.dsl.loader import load_dsl_reference
 from app.domain.reference_formats import (
+    DSL_REFERENCE_SOURCE_TYPE,
     SUPPORTED_REFERENCE_FORMAT,
     get_reference_format,
     unsupported_reference_format_message,
@@ -20,32 +22,43 @@ _SAFE_REF_ID_RE = re.compile(r"^[a-zA-Z0-9_.-]+$")
 
 
 class ReferenceService:
-    """后端统一维护参考电路 JSON 文件的服务。"""
+    """后端统一维护参考电路文件的服务。"""
 
     def __init__(self, reference_dir: Path | None = None):
         self.reference_dir = reference_dir or _REFERENCE_DIR
 
     def list_references(self) -> list[dict[str, Any]]:
-        """扫描 knowledge/references/*.json，返回所有 logical_reference_v1 文件摘要。"""
+        """扫描 knowledge/references/*.py 和 *.json，返回所有 logical_reference_v1 文件摘要。"""
         results: list[dict[str, Any]] = []
         if not self.reference_dir.exists():
             return results
 
-        for path in sorted(self.reference_dir.glob("*.json")):
+        seen_reference_ids: set[str] = set()
+        paths = [
+            *sorted(self.reference_dir.glob("*.py")),
+            *sorted(self.reference_dir.glob("*.json")),
+        ]
+        for path in paths:
             try:
                 payload = self._load_file(path)
             except Exception:
                 continue
             if get_reference_format(payload) != SUPPORTED_REFERENCE_FORMAT:
                 continue
+            reference_id = str(payload.get("reference_id") or path.stem)
+            if reference_id in seen_reference_ids:
+                continue
+            seen_reference_ids.add(reference_id)
             components = payload.get("components", [])
             nets = payload.get("nets", [])
+            source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
             results.append(
                 {
-                    "reference_id": payload.get("reference_id", path.stem),
+                    "reference_id": reference_id,
                     "name": payload.get("name", ""),
                     "description": payload.get("description", ""),
                     "format": SUPPORTED_REFERENCE_FORMAT,
+                    "source_type": source.get("type") or ("json" if path.suffix == ".json" else DSL_REFERENCE_SOURCE_TYPE),
                     "component_count": len(components),
                     "net_count": len(nets),
                 }
@@ -53,11 +66,11 @@ class ReferenceService:
         return results
 
     def load_reference(self, reference_id: str) -> dict[str, Any]:
-        """根据 reference_id 加载完整参考电路 JSON。"""
+        """根据 reference_id 加载完整参考电路，优先使用 Python DSL 文件。"""
         if not _SAFE_REF_ID_RE.match(reference_id):
             raise ValueError(f"非法 reference_id: {reference_id}")
 
-        path = self.reference_dir / f"{reference_id}.json"
+        path = self._resolve_reference_path(reference_id)
         if not path.exists():
             raise FileNotFoundError(f"参考电路未找到: {reference_id}")
 
@@ -73,11 +86,22 @@ class ReferenceService:
 
     @staticmethod
     def _load_file(path: Path) -> dict[str, Any]:
+        if path.suffix == ".py":
+            data = load_dsl_reference(path)
+            if not isinstance(data, dict):
+                raise ValueError("参考电路 DSL 编译结果必须是对象")
+            return data
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
             raise ValueError("参考电路 JSON 顶层必须是对象")
         return data
+
+    def _resolve_reference_path(self, reference_id: str) -> Path:
+        dsl_path = self.reference_dir / f"{reference_id}.py"
+        if dsl_path.exists():
+            return dsl_path
+        return self.reference_dir / f"{reference_id}.json"
 
     @staticmethod
     def _validate_payload(

@@ -179,6 +179,7 @@ class PipelineService:
             iou=request.iou,
             imgsz=request.imgsz,
             rail_assignments=request.rail_assignments,
+            port_annotations=[item.model_dump() for item in request.port_annotations],
             net_role_assignments=[item.model_dump() for item in request.net_role_assignments],
             net_alias_assignments=[item.model_dump() for item in request.net_alias_assignments],
             net_merge_assignments=[item.model_dump() for item in request.net_merge_assignments],
@@ -206,6 +207,7 @@ class PipelineService:
             raise ValueError("Corrected recompute requires mapping components.")
 
         has_pin_corrections = bool(request.corrections)
+        has_port_annotations = bool(request.port_annotations)
         has_role_assignments = bool(request.net_role_assignments)
         has_alias_assignments = bool(request.net_alias_assignments)
         has_merge_assignments = bool(request.net_merge_assignments)
@@ -213,13 +215,14 @@ class PipelineService:
 
         if not (
             has_pin_corrections
+            or has_port_annotations
             or has_role_assignments
             or has_alias_assignments
             or has_merge_assignments
             or has_polarity_assignments
         ):
             raise ValueError(
-                "Corrected recompute requires at least one pin correction, net role assignment, net alias assignment, net merge assignment, or pin polarity assignment."
+                "Corrected recompute requires at least one pin correction, port annotation, net role assignment, net alias assignment, net merge assignment, or pin polarity assignment."
             )
 
         # 统一解析参考电路（支持 reference_id 和 inline payload）
@@ -308,6 +311,7 @@ class PipelineService:
         manual_role_warnings, manual_roles_applied = apply_net_role_assignments(
             netlist_v2,
             [item.model_dump() for item in request.net_role_assignments],
+            port_annotations=[item.model_dump() for item in request.port_annotations],
         )
         net_normalization = normalize_current_netlist(
             netlist_v2,
@@ -332,6 +336,7 @@ class PipelineService:
             "components": components,
             "manual_corrections_applied": True,
             "manual_corrections": [item.model_dump() for item in request.corrections],
+            "port_annotations": [item.model_dump() for item in request.port_annotations],
             "manual_pin_polarity_assignments": [item.model_dump() for item in request.pin_polarity_assignments],
             "duration_ms": 0.0,
         }
@@ -341,10 +346,15 @@ class PipelineService:
         runtime_metadata: dict[str, Any] = {
             "manual_corrections_applied": True,
             "manual_corrections": [item.model_dump() for item in request.corrections],
+            "port_annotations": [item.model_dump() for item in request.port_annotations],
             "manual_net_role_assignments": [item.model_dump() for item in request.net_role_assignments],
             "manual_net_alias_assignments": [item.model_dump() for item in request.net_alias_assignments],
             "manual_net_merge_assignments": [item.model_dump() for item in request.net_merge_assignments],
             "manual_pin_polarity_assignments": [item.model_dump() for item in request.pin_polarity_assignments],
+            "port_annotations_applied": [
+                item for item in manual_roles_applied
+                if item.get("source") == "port_annotation"
+            ],
             "manual_roles_applied": manual_roles_applied,
             "net_normalization": net_normalization,
             "source_job_id": request.job_id,
@@ -352,6 +362,10 @@ class PipelineService:
         }
         if manual_role_warnings:
             runtime_metadata["manual_role_warnings"] = manual_role_warnings
+            runtime_metadata["port_annotation_warnings"] = [
+                item for item in manual_role_warnings
+                if (item.get("assignment") or {}).get("source") == "port_annotation"
+            ]
 
         raw = {
             "stages": {
@@ -378,6 +392,7 @@ class PipelineService:
             images_b64=request.images_b64,
             reference_circuit=reference_circuit,
             rail_assignments=request.rail_assignments,
+            port_annotations=[item.model_dump() for item in request.port_annotations],
             net_role_assignments=[item.model_dump() for item in request.net_role_assignments],
             net_alias_assignments=[item.model_dump() for item in request.net_alias_assignments],
             net_merge_assignments=[item.model_dump() for item in request.net_merge_assignments],
@@ -453,6 +468,7 @@ class PipelineService:
             iou=request.iou,
             imgsz=request.imgsz,
             rail_assignments=request.rail_assignments,
+            port_annotations=[item.model_dump() for item in request.port_annotations],
             net_role_assignments=[item.model_dump() for item in request.net_role_assignments],
             net_alias_assignments=[item.model_dump() for item in request.net_alias_assignments],
             net_merge_assignments=[item.model_dump() for item in request.net_merge_assignments],

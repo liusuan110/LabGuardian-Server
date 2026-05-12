@@ -1,6 +1,7 @@
 # Validator Error Codes
 
-`CircuitValidator` 当前输出的正式诊断格式版本为 `validator_report_v2`。
+S4 逻辑比较当前由 `compare_logical_graphs` 输出正式诊断报告；历史报告格式名
+`validator_report_v2` 仍保留给前端协议兼容。
 
 每条诊断项结构：
 
@@ -93,8 +94,8 @@
 - `pin_keypoint_ref`: 指向某视角下的 pin keypoint，可用于高亮引脚。
 - `hole_candidate_ref`: 指向当前孔位、目标孔位和候选孔位集合。
 - `node_trace_ref`: 指向当前导通节点、目标导通节点和候选节点集合。
-- `validator_rule_ref`: 指向触发该诊断的 validator 规则。
-- `kb_reference_ref`: 预留给 RAG / 教学知识库引用，不由 validator 直接生成。
+- `validator_rule_ref`: 指向触发该诊断的逻辑比较规则。
+- `kb_reference_ref`: 预留给 RAG / 教学知识库引用，不由逻辑比较器直接生成。
 
 ## Frontend Highlight Protocol
 

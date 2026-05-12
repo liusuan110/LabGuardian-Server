@@ -133,6 +133,34 @@ def test_compare_netlist_infers_canonical_vlp(client: TestClient) -> None:
     assert any(net["source_id"] == "NET_002" and net["canonical_name"] == "VLP" for net in logical_nets)
 
 
+def test_compare_netlist_accepts_minimal_port_annotations(client: TestClient) -> None:
+    resp = client.post("/api/v1/pipeline/compare-netlist", json={
+        "reference_circuit": _rc_reference_with_vlp(),
+        "current_netlist_v2": _rc_netlist_unlabeled(),
+        "port_annotations": [
+            {
+                "role": "input",
+                "target": {"component_id": "R2", "pin_name": "pin1"},
+            }
+        ],
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["is_correct"] is True
+    applied = data["comparison_report"]["summary"]["port_annotations_applied"]
+    assert applied == [
+        {
+            "role": "input",
+            "role_label": "",
+            "electrical_net_id": "NET_001",
+            "source": "port_annotation",
+            "resolved_by": "component_pin",
+            "component_id": "R2",
+            "pin_name": "pin1",
+        }
+    ]
+
+
 def test_compare_netlist_manual_alias_overrides_inference(client: TestClient) -> None:
     resp = client.post("/api/v1/pipeline/compare-netlist", json={
         "reference_circuit": _rc_reference_with_vlp(),

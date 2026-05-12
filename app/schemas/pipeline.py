@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -30,6 +30,27 @@ class JobStatus(StrEnum):
     FAILED = "failed"
 
 
+class PinSelector(BaseModel):
+    """选择一个当前电路端点/网络。"""
+
+    hole_id: str | None = None
+    component_id: str | None = None
+    pin_name: str | None = None
+    electrical_net_id: str | None = None
+    electrical_node_id: str | None = None
+    x_image: float | None = None
+    y_image: float | None = None
+
+
+class PortAnnotation(BaseModel):
+    """用户最小端口标注：只需指定输入/输出端口。"""
+
+    role: Literal["input", "output"]
+    target: PinSelector
+    label: str | None = None
+    source: str = "port_annotation"
+
+
 class PipelineRequest(BaseModel):
     """Pipeline 任务提交请求"""
 
@@ -51,6 +72,7 @@ class PipelineRequest(BaseModel):
             '"bot_plus": "GND", "bot_minus": "GND"}'
         ),
     )
+    port_annotations: list[PortAnnotation] = Field(default_factory=list)
     net_role_assignments: list[ManualNetRoleAssignment] = Field(default_factory=list)
     net_alias_assignments: list[ManualNetAliasAssignment] = Field(default_factory=list)
     net_merge_assignments: list[ManualNetMergeAssignment] = Field(default_factory=list)
@@ -120,6 +142,7 @@ class CorrectedRecomputeRequest(BaseModel):
     components: list[dict[str, Any]] = Field(default_factory=list)
     corrections: list[ManualCorrectionPatch] = Field(default_factory=list)
     rail_assignments: dict[str, str] | None = None
+    port_annotations: list[PortAnnotation] = Field(default_factory=list)
     net_role_assignments: list[ManualNetRoleAssignment] = Field(default_factory=list)
     net_alias_assignments: list[ManualNetAliasAssignment] = Field(default_factory=list)
     net_merge_assignments: list[ManualNetMergeAssignment] = Field(default_factory=list)
@@ -217,6 +240,7 @@ class CompareNetlistRequest(BaseModel):
     net_alias_assignments: list[ManualNetAliasAssignment] = Field(default_factory=list)
     net_merge_assignments: list[ManualNetMergeAssignment] = Field(default_factory=list)
     net_role_assignments: list[ManualNetRoleAssignment] = Field(default_factory=list)
+    port_annotations: list[PortAnnotation] = Field(default_factory=list)
 
 
 class CompareNetlistResponse(BaseModel):

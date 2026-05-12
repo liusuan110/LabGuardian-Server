@@ -43,6 +43,16 @@ def _node_match_for_role_inference(ref_data: dict[str, Any], cur_data: dict[str,
         return _component_types_equivalent(ref_data.get("ctype"), cur_data.get("ctype"))
     cur_role_source = str(cur_data.get("role_source") or "")
     cur_role = normalize_net_role(cur_data.get("role"))
+    ref_role = normalize_net_role(ref_data.get("role"))
+    ref_label = normalize_role_label(ref_data.get("role_label"))
+    cur_label = normalize_role_label(cur_data.get("role_label"))
+    if (
+        ref_role in {"input", "output"}
+        and ref_label in CRITICAL_ROLE_LABELS
+        and cur_label in CRITICAL_ROLE_LABELS
+        and cur_label != ref_label
+    ):
+        return _node_match(ref_data, cur_data)
     if cur_role_source != "default_signal" and cur_role in STRICT_INFERRED_ROLES:
         return _node_match(ref_data, cur_data)
     if cur_role_source != "manual_role":

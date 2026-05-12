@@ -113,6 +113,44 @@
 - `rail_bot+ -> RP`
 - `rail_bot- -> RN`
 
+## 最小用户标注
+
+前端现在只需要让用户标注电源轨和输入/输出端口，内部 signal 不需要人工命名。
+推荐请求结构：
+
+```json
+{
+  "rail_assignments": {
+    "top_plus": "VCC",
+    "top_minus": "VCC",
+    "bot_plus": "GND",
+    "bot_minus": "GND"
+  },
+  "port_annotations": [
+    {
+      "role": "input",
+      "target": {"component_id": "R1", "pin_name": "pin1"},
+      "label": "UI1"
+    },
+    {
+      "role": "output",
+      "target": {"hole_id": "A12"}
+    }
+  ]
+}
+```
+
+`target` 可选择以下任一定位方式：
+
+- `electrical_net_id`: 已知当前电气网络时直接指定。
+- `component_id` + `pin_name`: 用户点中元件引脚时使用。
+- `hole_id`: 用户点中面包板孔位时使用。
+- `electrical_node_id`: 已知静态导通节点时使用。
+
+`label` 可选。若不传，系统只写入 `input` / `output` 角色，具体 `UI1` / `UO1`
+等端口标签由逻辑参考电路和比较阶段推断。`signal` 不再建议由前端手动标注；
+电源/地仍通过 `rail_assignments` 设置。
+
 ## Future Work
 
 默认 schema 已经覆盖当前 63 行双电源轨比赛板假设。后续工作不再是简单“补完整

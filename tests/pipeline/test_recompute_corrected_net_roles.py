@@ -5,7 +5,13 @@ import pytest
 from app.domain.logical_reference import current_netlist_v2_to_graph, normalize_net_role
 from app.domain.graph_compare import compare_logical_graphs
 from app.pipeline.net_roles import apply_net_role_assignments
-from app.schemas.pipeline import CorrectedRecomputeRequest, ManualCorrectionPatch, ManualNetRoleAssignment
+from app.schemas.pipeline import (
+    CorrectedRecomputeRequest,
+    ManualCorrectionPatch,
+    ManualNetRoleAssignment,
+    PinSelector,
+    PortAnnotation,
+)
 from app.services.pipeline_service import PipelineService
 
 
@@ -98,6 +104,31 @@ class TestManualNetRoleAssignmentSchema:
         )
         assert len(request.net_role_assignments) == 2
         assert request.net_role_assignments[0].role == "VIN"
+
+    def test_port_annotation_schema_uses_pin_selector(self) -> None:
+        annotation = PortAnnotation(
+            role="input",
+            target=PinSelector(component_id="R1", pin_name="pin1"),
+        )
+        assert annotation.role == "input"
+        assert annotation.target.component_id == "R1"
+        assert annotation.label is None
+        assert annotation.source == "port_annotation"
+
+    def test_corrected_recompute_request_accepts_port_annotations(self) -> None:
+        request = CorrectedRecomputeRequest(
+            station_id="S01",
+            components=[{"component_id": "R1"}],
+            port_annotations=[
+                PortAnnotation(
+                    role="input",
+                    target=PinSelector(component_id="R1", pin_name="pin1"),
+                    label="UI1",
+                ),
+            ],
+        )
+        assert len(request.port_annotations) == 1
+        assert request.port_annotations[0].label == "UI1"
 
 
 class TestCurrentNetlistV2ToGraphRoles:
@@ -194,6 +225,75 @@ class TestApplyNetRoleAssignments:
         assert net["role"] == "input"
         assert net["manual_role"] == "input"
         assert net["role_label"] == "VIN"
+
+    def test_apply_port_annotation_by_component_pin(self) -> None:
+        netlist = {
+            "components": [
+                {
+                    "component_id": "R1",
+                    "pins": [{"pin_name": "pin1", "electrical_net_id": "NET_001"}],
+                }
+            ],
+            "nets": [{"electrical_net_id": "NET_001", "member_hole_ids": ["A1"]}],
+        }
+
+        warnings, applied = apply_net_role_assignments(
+            netlist,
+            [],
+            port_annotations=[
+                {
+                    "role": "input",
+                    "target": {"component_id": "R1", "pin_name": "pin1"},
+                    "label": "UI1",
+                }
+            ],
+        )
+
+        assert warnings == []
+        assert applied == [
+            {
+                "role": "input",
+                "role_label": "UI1",
+                "electrical_net_id": "NET_001",
+                "source": "port_annotation",
+                "resolved_by": "component_pin",
+                "component_id": "R1",
+                "pin_name": "pin1",
+            }
+        ]
+        net = netlist["nets"][0]
+        assert net["role"] == "input"
+        assert net["manual_role"] == "input"
+        assert net["role_label"] == "UI1"
+        assert net["role_source"] == "port_annotation"
+
+    def test_apply_port_annotation_without_label_keeps_label_blank(self) -> None:
+        netlist = {
+            "components": [
+                {
+                    "component_id": "J1",
+                    "pins": [{"pin_name": "pin1", "electrical_net_id": "NET_001"}],
+                }
+            ],
+            "nets": [{"electrical_net_id": "NET_001", "member_hole_ids": ["A1"]}],
+        }
+
+        warnings, applied = apply_net_role_assignments(
+            netlist,
+            [],
+            port_annotations=[
+                {
+                    "role": "output",
+                    "target": {"component_id": "J1", "pin_name": "pin1"},
+                }
+            ],
+        )
+
+        assert warnings == []
+        assert applied[0]["role"] == "output"
+        assert applied[0]["role_label"] == ""
+        assert netlist["nets"][0]["role"] == "output"
+        assert netlist["nets"][0]["role_label"] == ""
 
 
 class TestGraphCompareRoleMismatch:
@@ -417,6 +517,26 @@ class TestRecomputeCorrectedWithNetRoles:
         assert "manual_roles_applied" in meta
         assert len(meta["manual_roles_applied"]) == 2
 
+    def test_recompute_corrected_only_port_annotations_no_corrections(self) -> None:
+        """只提交 port_annotations、不提交 corrections 时也能正常重算。"""
+        service = PipelineService()
+        components = _build_components_for_role_test()
+        request = CorrectedRecomputeRequest(
+            station_id="S01",
+            components=components,
+            corrections=[],
+            reference_circuit=_build_reference_logical_v1(),
+            port_annotations=[
+                PortAnnotation(
+                    role="input",
+                    target=PinSelector(component_id="R1", pin_name="pin1"),
+                ),
+            ],
+        )
+        result = service.recompute_corrected(request)
+        meta = result.runtime_metadata
+        assert meta["port_annotations_applied"][0]["role"] == "input"
+        assert meta["manual_roles_applied"][0]["source"] == "port_annotation"
 
     def test_recompute_corrected_empty_hole_warning(self) -> None:
         """点击未连接的空孔时，应返回 ROLE_TARGET_NOT_CONNECTED warning，不崩溃。"""

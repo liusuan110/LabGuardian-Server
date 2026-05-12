@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 SUPPORTED_REFERENCE_FORMAT = "logical_reference_v1"
+DSL_REFERENCE_SOURCE_TYPE = "dsl_python_v1"
 LEGACY_REFERENCE_FORMATS = {"labguardian_ref_v4", "netlist_v2"}
 
 
@@ -40,3 +41,10 @@ def ensure_supported_reference_format(payload: Any) -> None:
     actual = get_reference_format(payload)
     if actual != SUPPORTED_REFERENCE_FORMAT:
         raise ValueError(unsupported_reference_format_message(actual))
+
+
+def is_dsl_compiled_reference(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    source = payload.get("source")
+    return isinstance(source, dict) and source.get("type") == DSL_REFERENCE_SOURCE_TYPE

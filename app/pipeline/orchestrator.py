@@ -82,6 +82,7 @@ def run_pipeline(
     images_b64: list[str],
     reference_circuit: dict[str, Any] | str | None = None,
     rail_assignments: dict[str, str] | None = None,
+    port_annotations: list[Any] | None = None,
     net_role_assignments: list[Any] | None = None,
     net_alias_assignments: list[Any] | None = None,
     net_merge_assignments: list[Any] | None = None,
@@ -96,6 +97,7 @@ def run_pipeline(
         images_b64: 1-3 张 base64 图片
         reference_circuit: 参考电路 JSON 路径或内联 reference payload
         rail_assignments: 电源轨道指定, 如 {"top_plus": "VCC", "top_minus": "GND", ...}
+        port_annotations: 用户最小输入/输出端口标注
         conf: YOLO 置信度阈值, 默认使用 settings
         iou: YOLO NMS IoU 阈值, 默认使用 settings
         imgsz: YOLO 推理尺寸, 默认使用 settings
@@ -192,6 +194,7 @@ def run_pipeline(
     manual_role_warnings, manual_roles_applied = apply_net_role_assignments(
         s3.get("netlist_v2") or {},
         net_role_assignments,
+        port_annotations=port_annotations,
     )
     net_normalization = normalize_current_netlist(
         s3.get("netlist_v2") or {},
@@ -237,8 +240,22 @@ def run_pipeline(
         iou=eff_iou,
         imgsz=eff_imgsz,
     )
+    port_roles_applied = [
+        item for item in manual_roles_applied
+        if item.get("source") == "port_annotation"
+    ]
+    if port_annotations:
+        runtime_metadata["port_annotations"] = _dump_items(port_annotations)
+        runtime_metadata["port_annotations_applied"] = port_roles_applied
+        port_warnings = [
+            item for item in manual_role_warnings
+            if (item.get("assignment") or {}).get("source") == "port_annotation"
+        ]
+        if port_warnings:
+            runtime_metadata["port_annotation_warnings"] = port_warnings
     if net_role_assignments:
         runtime_metadata["manual_net_role_assignments"] = _dump_items(net_role_assignments)
+    if net_role_assignments or port_annotations:
         runtime_metadata["manual_roles_applied"] = manual_roles_applied
         if manual_role_warnings:
             runtime_metadata["manual_role_warnings"] = manual_role_warnings

@@ -69,6 +69,8 @@ def _node_match(a: dict[str, Any], b: dict[str, Any]) -> bool:
     if role_a in PORT_NET_ROLES and label_a in CRITICAL_ROLE_LABELS:
         if role_b != role_a:
             return False
+        if not label_b:
+            return True
         return _role_labels_equivalent(a, b)
     return True
 

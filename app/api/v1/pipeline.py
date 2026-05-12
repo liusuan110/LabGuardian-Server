@@ -173,6 +173,7 @@ async def compare_netlist(request: CompareNetlistRequest):
         role_warnings, role_applied = apply_net_role_assignments(
             current_netlist_v2,
             [item.model_dump() for item in request.net_role_assignments],
+            port_annotations=[item.model_dump() for item in request.port_annotations],
         )
         normalization = normalize_current_netlist(
             current_netlist_v2,
@@ -193,7 +194,15 @@ async def compare_netlist(request: CompareNetlistRequest):
 
     report = result.get("report", {})
     summary = dict(report.get("summary", {}))
+    summary["port_annotations_applied"] = [
+        item for item in role_applied
+        if item.get("source") == "port_annotation"
+    ]
     summary["manual_roles_applied"] = role_applied
+    summary["port_annotation_warnings"] = [
+        item for item in role_warnings
+        if (item.get("assignment") or {}).get("source") == "port_annotation"
+    ]
     summary["manual_role_warnings"] = role_warnings
     summary["net_normalization"] = normalization
     report["summary"] = summary
