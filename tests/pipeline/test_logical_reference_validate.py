@@ -260,11 +260,11 @@ def test_resistor_pin_swap_still_correct() -> None:
     assert result["similarity"] == 1.0
 
 
-def test_led_polarity_ignored() -> None:
+def test_led_polarity_strict() -> None:
     from app.pipeline.stages.s3_topology import run_topology
 
     components = _components_led_match()
-    # 反转 polarity 字段，但引脚连接不变
+    # 反转 polarity 字段，但引脚物理连接不变（anode 接 LED_NET，cathode 接 GND）
     components[1]["polarity"] = "reversed"
 
     s3 = run_topology(components=components)
@@ -273,8 +273,10 @@ def test_led_polarity_ignored() -> None:
     gnd_net = _find_net_by_hole(netlist_v2, "B5")
     if vin_net:
         vin_net["role"] = "power"
+        vin_net["role_label"] = "VCC"
     if gnd_net:
         gnd_net["role"] = "ground"
+        gnd_net["role_label"] = "GND"
 
     result = run_validate(
         topology_graph={"nodes": [], "links": []},
@@ -282,9 +284,8 @@ def test_led_polarity_ignored() -> None:
         components=components,
         current_netlist_v2=netlist_v2,
     )
+    # 物理连接正确（anode/cathode 未互换），应视为正确
     assert result["is_correct"] is True
-    assert result["comparison_report"]["summary"].get("ignore_polarity") is True
-    assert result["comparison_report"]["polarity_errors"] == []
 
 
 def test_open_circuit_detected() -> None:
@@ -500,9 +501,11 @@ def test_vcc_gnd_role_error() -> None:
         if "A1" in net.get("member_hole_ids", []):
             net["role"] = "ground"
             net["power_role"] = "GND"
+            net["role_label"] = "GND"
         elif "A3" in net.get("member_hole_ids", []):
             net["role"] = "power"
             net["power_role"] = "VCC"
+            net["role_label"] = "VCC"
 
     result = run_validate(
         topology_graph={"nodes": [], "links": []},
@@ -512,7 +515,9 @@ def test_vcc_gnd_role_error() -> None:
     )
     assert result["is_correct"] is False
     items = result["comparison_report"]["items"]
-    role_errors = [i for i in items if i["error_code"] in {
-        "POWER_NODE_MISMATCH", "GROUND_NODE_MISMATCH", "ROLE_MISMATCH"
-    }]
-    assert len(role_errors) >= 1
+    # 角色标反后，anode 接到了 GND 网络，cathode 接到了 VCC 网络，
+    # 会触发 WRONG_CONNECTION 或 PIN_ROLE_MISMATCH
+    assert any(
+        i["error_code"] in {"WRONG_CONNECTION", "PIN_ROLE_MISMATCH", "POWER_NODE_MISMATCH", "GROUND_NODE_MISMATCH", "ROLE_MISMATCH"}
+        for i in items
+    )

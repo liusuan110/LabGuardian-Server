@@ -133,6 +133,65 @@ class TestEndToEndS4Validate:
         report = result.get("comparison_report", {})
         assert report.get("summary", {}).get("comparison_mode") == "logical_graph"
 
+    def test_s4_validate_infers_missing_reference_roles_when_topology_matches(self) -> None:
+        svc = ReferenceService()
+        ref_payload = svc.load_reference("basic_series_resistor_v1")
+
+        components = _build_correct_led_components()
+        analyzer, _ = build_analyzer_from_components(components)
+        topology_graph = analyzer.to_node_link_data()
+        netlist_v2 = analyzer.export_netlist_v2()
+
+        result = run_validate(
+            topology_graph=topology_graph,
+            reference_circuit=ref_payload,
+            components=components,
+            current_netlist_v2=netlist_v2,
+        )
+
+        assert result["is_correct"] is True
+        report = result.get("comparison_report", {})
+        summary = report.get("summary", {})
+        assert summary.get("role_inference_applied") is True
+        inferred = summary.get("inferred_net_roles", [])
+        assert {item["role_label"] for item in inferred} >= {"VCC", "GND"}
+
+    def test_s4_validate_does_not_override_explicit_wrong_roles(self) -> None:
+        svc = ReferenceService()
+        ref_payload = svc.load_reference("basic_series_resistor_v1")
+
+        components = _build_correct_led_components()
+        analyzer, _ = build_analyzer_from_components(components)
+        topology_graph = analyzer.to_node_link_data()
+        netlist_v2 = analyzer.export_netlist_v2()
+
+        for net in netlist_v2.get("nets", []):
+            member_holes = set(net.get("member_hole_ids", []))
+            if "B12" in member_holes:
+                net["role"] = "ground"
+                net["role_label"] = "GND"
+            elif "B14" in member_holes:
+                net["role"] = "power"
+                net["role_label"] = "VCC"
+
+        result = run_validate(
+            topology_graph=topology_graph,
+            reference_circuit=ref_payload,
+            components=components,
+            current_netlist_v2=netlist_v2,
+        )
+
+        assert result["is_correct"] is False
+        summary = result.get("comparison_report", {}).get("summary", {})
+        assert summary.get("role_inference_applied") is not True
+        codes = {item.get("error_code") for item in result.get("comparison_report", {}).get("items", [])}
+        assert codes & {
+            "POWER_NODE_MISMATCH",
+            "GROUND_NODE_MISMATCH",
+            "ROLE_LABEL_MISMATCH",
+            "WRONG_CONNECTION",
+        }
+
     def test_s4_validate_with_logical_reference_missing_component(self) -> None:
         svc = ReferenceService()
         ref_payload = svc.load_reference("basic_series_resistor_v1")

@@ -32,6 +32,6 @@
 
 约定：
 
-- `reference_*.json` 是 `labguardian_ref_v4` 参考文件
+- `reference_*.json` 是历史 `labguardian_ref_v4` 参考文件，只保留为旧诊断 fixture，不再作为主链路输入
 - `mapped_*.json` 是当前输入组件列表
-- `test_validator_error_codes.py` 会逐一加载这些样例并断言目标 code 存在
+- 新 S4 参考电路应使用 `logical_reference_v1`

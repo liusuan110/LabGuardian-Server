@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import PROJECT_ROOT
+from app.domain.reference_formats import (
+    SUPPORTED_REFERENCE_FORMAT,
+    get_reference_format,
+    unsupported_reference_format_message,
+)
 
 
 _REFERENCE_DIR = PROJECT_ROOT / "knowledge" / "references"
@@ -31,7 +36,7 @@ class ReferenceService:
                 payload = self._load_file(path)
             except Exception:
                 continue
-            if payload.get("format") != "logical_reference_v1":
+            if get_reference_format(payload) != SUPPORTED_REFERENCE_FORMAT:
                 continue
             components = payload.get("components", [])
             nets = payload.get("nets", [])
@@ -40,7 +45,7 @@ class ReferenceService:
                     "reference_id": payload.get("reference_id", path.stem),
                     "name": payload.get("name", ""),
                     "description": payload.get("description", ""),
-                    "format": "logical_reference_v1",
+                    "format": SUPPORTED_REFERENCE_FORMAT,
                     "component_count": len(components),
                     "net_count": len(nets),
                 }
@@ -78,11 +83,9 @@ class ReferenceService:
     def _validate_payload(
         payload: dict[str, Any], *, expected_reference_id: str | None = None
     ) -> None:
-        if payload.get("format") != "logical_reference_v1":
-            raise ValueError(
-                f"参考电路 format 必须是 'logical_reference_v1'，"
-                f"实际为: {payload.get('format')}"
-            )
+        actual_format = get_reference_format(payload)
+        if actual_format != SUPPORTED_REFERENCE_FORMAT:
+            raise ValueError(unsupported_reference_format_message(actual_format))
 
         if expected_reference_id is not None:
             actual = payload.get("reference_id")
@@ -134,6 +137,8 @@ class ReferenceService:
                 pin_name = str(pin.get("pin") or "").strip()
                 if not pin_name:
                     raise ValueError(f"components[{idx}].pins[{pidx}] 必须包含 pin")
+                if pin.get("nc") is True:
+                    continue
                 pin_net = str(pin.get("net") or "").strip()
                 if not pin_net:
                     raise ValueError(f"components[{idx}].pins[{pidx}] 必须包含 net")

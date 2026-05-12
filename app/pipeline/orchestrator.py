@@ -21,6 +21,8 @@ from app.pipeline.stages.s2_mapping import run_mapping
 from app.pipeline.stages.s3_topology import run_topology
 from app.pipeline.stages.s4_validate import run_validate
 from app.pipeline.stages.s5_semantic_analysis import run_semantic_analysis
+from app.domain.net_normalization import normalize_current_netlist
+from app.pipeline.net_roles import apply_net_role_assignments
 from app.pipeline.vision.calibrator import BreadboardCalibrator
 from app.pipeline.vision.detector import ComponentDetector
 from app.pipeline.vision.pin_model import PinRoiDetector
@@ -80,6 +82,9 @@ def run_pipeline(
     images_b64: list[str],
     reference_circuit: dict[str, Any] | str | None = None,
     rail_assignments: dict[str, str] | None = None,
+    net_role_assignments: list[Any] | None = None,
+    net_alias_assignments: list[Any] | None = None,
+    net_merge_assignments: list[Any] | None = None,
     conf: float | None = None,
     iou: float | None = None,
     imgsz: int | None = None,
@@ -181,15 +186,25 @@ def run_pipeline(
     if rail_assignments:
         effective_rails.update(rail_assignments)
     s3 = run_topology(s2["components"], rail_assignments=effective_rails)
+    effective_reference = (
+        reference_circuit if reference_circuit is not None else ctx.reference_circuit
+    )
+    manual_role_warnings, manual_roles_applied = apply_net_role_assignments(
+        s3.get("netlist_v2") or {},
+        net_role_assignments,
+    )
+    net_normalization = normalize_current_netlist(
+        s3.get("netlist_v2") or {},
+        reference_circuit=effective_reference if isinstance(effective_reference, dict) else None,
+        net_alias_assignments=net_alias_assignments,
+        net_merge_assignments=net_merge_assignments,
+    )
     stages["topology"] = s3
     logger.info("S3 topology: %d nodes (%.0fms)", s3["component_count"], s3["duration_ms"])
     _notify("topology", 1.0)
 
     # ── S4: 检错 ──
     _notify("validate", 0.0)
-    effective_reference = (
-        reference_circuit if reference_circuit is not None else ctx.reference_circuit
-    )
     s4 = run_validate(
         s3["topology_graph"],
         reference_circuit=effective_reference,
@@ -217,14 +232,26 @@ def run_pipeline(
     _notify("semantic_analysis", 1.0)
 
     total_ms = (time.time() - t0) * 1000
+    runtime_metadata = _build_runtime_metadata(
+        conf=eff_conf,
+        iou=eff_iou,
+        imgsz=eff_imgsz,
+    )
+    if net_role_assignments:
+        runtime_metadata["manual_net_role_assignments"] = _dump_items(net_role_assignments)
+        runtime_metadata["manual_roles_applied"] = manual_roles_applied
+        if manual_role_warnings:
+            runtime_metadata["manual_role_warnings"] = manual_role_warnings
+    if net_alias_assignments:
+        runtime_metadata["manual_net_alias_assignments"] = _dump_items(net_alias_assignments)
+    if net_merge_assignments:
+        runtime_metadata["manual_net_merge_assignments"] = _dump_items(net_merge_assignments)
+    runtime_metadata["net_normalization"] = net_normalization
+
     return {
         "stages": stages,
         "total_duration_ms": total_ms,
-        "runtime_metadata": _build_runtime_metadata(
-            conf=eff_conf,
-            iou=eff_iou,
-            imgsz=eff_imgsz,
-        ),
+        "runtime_metadata": runtime_metadata,
     }
 
 
@@ -245,3 +272,15 @@ def _build_runtime_metadata(*, conf: float, iou: float, imgsz: int) -> dict[str,
         "board_rows": settings.BREADBOARD_ROWS,
         "board_cols_per_side": settings.BREADBOARD_COLS_PER_SIDE,
     }
+
+
+def _dump_items(items: list[Any] | None) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for item in items or []:
+        if hasattr(item, "model_dump"):
+            out.append(item.model_dump())
+        elif isinstance(item, dict):
+            out.append(dict(item))
+        elif hasattr(item, "__dict__"):
+            out.append(dict(item.__dict__))
+    return out

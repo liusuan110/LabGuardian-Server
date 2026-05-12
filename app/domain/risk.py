@@ -1,7 +1,7 @@
 """
-风险分级引擎 (← shared/risk.py)
+风险分级引擎
 
-将 CircuitValidator.diagnose() 输出映射到风险等级
+将 compare_logical_graphs 产出的 diagnostics 文本映射到风险等级
 """
 
 from __future__ import annotations

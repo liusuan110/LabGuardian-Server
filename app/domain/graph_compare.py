@@ -1,16 +1,25 @@
 from __future__ import annotations
 
+import copy
 from collections import Counter, defaultdict
 from typing import Any
 
 import networkx as nx
 from networkx.algorithms.isomorphism import GraphMatcher
 
-from app.domain.logical_reference import normalize_component_type, normalize_net_role
+from app.domain.logical_reference import (
+    CRITICAL_ROLE_LABELS,
+    normalize_component_type,
+    normalize_net_role,
+    normalize_pin_role,
+    normalize_role_label,
+)
 
 
 STRICT_NET_ROLES = {"ground", "power", "input", "output"}
 PASSIVE_TWO_PIN_TYPES = {"Resistor", "Capacitor", "CapacitorCeramic", "Wire"}
+STRICT_PIN_ROLE_TYPES = {"Transistor", "Potentiometer", "LED", "Diode", "CapacitorElectrolytic"}
+NON_POLAR_CAPACITOR_TYPES = {"Capacitor", "CapacitorCeramic"}
 
 
 def compare_logical_graphs(
@@ -25,16 +34,41 @@ def compare_logical_graphs(
     当提供 ref_payload 和 cur_netlist_v2 时，会生成带有 expected/actual
     细节的 enriched error items，便于前端精确定位错误。
     """
-    if _is_isomorphic(reference_graph, current_graph):
+    role_inferences: list[dict[str, Any]] = []
+    inference_applied = False
+    iso_mapping = _find_isomorphism(reference_graph, current_graph)
+    if iso_mapping is None and ref_payload is not None and cur_netlist_v2 is not None:
+        inferred = _infer_current_net_roles_from_reference(reference_graph, current_graph, cur_netlist_v2)
+        if inferred is not None:
+            inferred_graph, inferred_netlist, role_inferences = inferred
+            inferred_mapping = _find_isomorphism(reference_graph, inferred_graph)
+            if inferred_mapping is not None:
+                current_graph = inferred_graph
+                cur_netlist_v2 = inferred_netlist
+                iso_mapping = inferred_mapping
+                inference_applied = True
+
+    if iso_mapping is not None:
+        match_type = "full_isomorphism"
+        if _mapping_uses_allowed_symmetry(iso_mapping, reference_graph, current_graph):
+            match_type = "equivalent_with_allowed_symmetry"
+        if inference_applied:
+            match_type = "full_isomorphism_with_inferred_roles"
         result = _result(
             logic_correct=True,
             similarity=1.0,
             progress=1.0,
             message="电路逻辑连接与参考电路一致",
             items=[],
-            details={"match_type": "full_isomorphism"},
+            details={"match_type": match_type},
             ref_payload=ref_payload,
         )
+        if ref_payload is not None and cur_netlist_v2 is not None:
+            result = _enrich_result(
+                result, reference_graph, current_graph, ref_payload, cur_netlist_v2
+            )
+        if inference_applied:
+            _attach_role_inferences(result, role_inferences)
         return result
 
     if _contains_subgraph(current_graph, reference_graph):
@@ -52,12 +86,12 @@ def compare_logical_graphs(
                 )
             ]
         result = _result(
-            logic_correct=False,
+            logic_correct=True,
             similarity=max(0.85, _approximate_similarity(reference_graph, current_graph)),
             progress=1.0,
             message="参考电路逻辑已存在，但当前电路包含额外元件或连接",
             items=items,
-            details={"match_type": "reference_subgraph_in_current"},
+            details={"match_type": "equivalent_with_extra"},
             ref_payload=ref_payload,
         )
         if ref_payload is not None and cur_netlist_v2 is not None:
@@ -113,16 +147,40 @@ def compare_logical_graphs(
 
 
 def _is_isomorphic(reference_graph: nx.Graph, current_graph: nx.Graph) -> bool:
+    return _find_isomorphism(reference_graph, current_graph) is not None
+
+
+def _find_isomorphism(reference_graph: nx.Graph, current_graph: nx.Graph) -> dict[Any, Any] | None:
     if reference_graph.number_of_nodes() != current_graph.number_of_nodes():
-        return False
+        return None
     if reference_graph.number_of_edges() != current_graph.number_of_edges():
-        return False
-    return GraphMatcher(
+        return None
+    matcher = GraphMatcher(
         reference_graph,
         current_graph,
         node_match=_node_match,
         edge_match=_edge_match,
-    ).is_isomorphic()
+    )
+    if not matcher.is_isomorphic():
+        return None
+    return next(matcher.isomorphisms_iter())
+
+
+def _mapping_uses_allowed_symmetry(
+    mapping: dict[Any, Any],
+    reference_graph: nx.Graph,
+    current_graph: nx.Graph,
+) -> bool:
+    for ref_node, cur_node in mapping.items():
+        ref_data = reference_graph.nodes.get(ref_node, {})
+        cur_data = current_graph.nodes.get(cur_node, {})
+        if ref_data.get("kind") != "net" or cur_data.get("kind") != "net":
+            continue
+        ref_label = normalize_role_label(ref_data.get("role_label"))
+        cur_label = normalize_role_label(cur_data.get("role_label"))
+        if ref_label and cur_label and ref_label != cur_label and _role_labels_equivalent(ref_data, cur_data):
+            return True
+    return False
 
 
 def _contains_subgraph(container: nx.Graph, pattern: nx.Graph) -> bool:
@@ -142,12 +200,35 @@ def _node_match(a: dict[str, Any], b: dict[str, Any]) -> bool:
     if a.get("kind") != b.get("kind"):
         return False
     if a.get("kind") == "comp":
-        return a.get("ctype") == b.get("ctype")
+        return _component_types_equivalent(a.get("ctype"), b.get("ctype"))
     role_a = str(a.get("role") or "signal")
     role_b = str(b.get("role") or "signal")
     if role_a in STRICT_NET_ROLES or role_b in STRICT_NET_ROLES:
-        return role_a == role_b
+        if role_a != role_b:
+            return False
+    label_a = normalize_role_label(a.get("role_label"))
+    label_b = normalize_role_label(b.get("role_label"))
+    if label_a in CRITICAL_ROLE_LABELS or label_b in CRITICAL_ROLE_LABELS:
+        return _role_labels_equivalent(a, b)
     return True
+
+
+def _component_types_equivalent(left: Any, right: Any) -> bool:
+    left_type = normalize_component_type(left)
+    right_type = normalize_component_type(right)
+    if left_type == right_type:
+        return True
+    return (
+        left_type in NON_POLAR_CAPACITOR_TYPES
+        and right_type in NON_POLAR_CAPACITOR_TYPES
+    )
+
+
+def _component_type_key(value: Any) -> str:
+    ctype = normalize_component_type(value)
+    if ctype in NON_POLAR_CAPACITOR_TYPES:
+        return "Capacitor"
+    return ctype
 
 
 def _edge_match(a: dict[str, Any], b: dict[str, Any]) -> bool:
@@ -155,7 +236,175 @@ def _edge_match(a: dict[str, Any], b: dict[str, Any]) -> bool:
     comp_type_b = b.get("comp_type", "")
     if comp_type_a in PASSIVE_TWO_PIN_TYPES and comp_type_b in PASSIVE_TWO_PIN_TYPES:
         return True
-    return a.get("pin") == b.get("pin")
+    pin_a = str(a.get("pin_role") or a.get("pin") or "")
+    pin_b = str(b.get("pin_role") or b.get("pin") or "")
+    if comp_type_a in STRICT_PIN_ROLE_TYPES or comp_type_b in STRICT_PIN_ROLE_TYPES:
+        return pin_a == pin_b
+    return pin_a == pin_b
+
+
+def _role_labels_equivalent(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    label_a = normalize_role_label(a.get("role_label"))
+    label_b = normalize_role_label(b.get("role_label"))
+    if not label_a or not label_b:
+        return False
+    if label_a == label_b:
+        return True
+    allowed_a = {normalize_role_label(value) for value in a.get("allowed_role_labels", []) or []}
+    allowed_b = {normalize_role_label(value) for value in b.get("allowed_role_labels", []) or []}
+    return label_b in allowed_a or label_a in allowed_b
+
+
+def _infer_current_net_roles_from_reference(
+    reference_graph: nx.Graph,
+    current_graph: nx.Graph,
+    cur_netlist_v2: dict[str, Any],
+) -> tuple[nx.Graph, dict[str, Any], list[dict[str, Any]]] | None:
+    matcher = GraphMatcher(
+        reference_graph,
+        current_graph,
+        node_match=_node_match_for_role_inference,
+        edge_match=_edge_match,
+    )
+    if not matcher.is_isomorphic():
+        return None
+
+    selected_inferences: list[dict[str, Any]] | None = None
+    checked_count = 0
+    for mapping in matcher.isomorphisms_iter():
+        checked_count += 1
+        inferences = _role_inferences_for_mapping(mapping, reference_graph, current_graph)
+        if not inferences:
+            return None
+        if selected_inferences is None:
+            selected_inferences = inferences
+        elif _inference_signature(selected_inferences) != _inference_signature(inferences):
+            return None
+        if checked_count >= 50:
+            break
+
+    if not selected_inferences:
+        return None
+
+    inferred_graph = current_graph.copy()
+    inferred_netlist = copy.deepcopy(cur_netlist_v2)
+    _apply_role_inferences_to_graph(inferred_graph, selected_inferences)
+    _apply_role_inferences_to_netlist(inferred_netlist, selected_inferences)
+    return inferred_graph, inferred_netlist, selected_inferences
+
+
+def _node_match_for_role_inference(ref_data: dict[str, Any], cur_data: dict[str, Any]) -> bool:
+    if ref_data.get("kind") != cur_data.get("kind"):
+        return False
+    if ref_data.get("kind") == "comp":
+        return _component_types_equivalent(ref_data.get("ctype"), cur_data.get("ctype"))
+
+    cur_role_source = str(cur_data.get("role_source") or "")
+    cur_label = normalize_role_label(cur_data.get("role_label"))
+    if cur_role_source == "default_signal" and not cur_label:
+        return True
+    return _node_match(ref_data, cur_data)
+
+
+def _role_inferences_for_mapping(
+    mapping: dict[Any, Any],
+    reference_graph: nx.Graph,
+    current_graph: nx.Graph,
+) -> list[dict[str, Any]]:
+    inferences_by_current: dict[str, dict[str, Any]] = {}
+    for ref_node, cur_node in mapping.items():
+        ref_data = reference_graph.nodes.get(ref_node, {})
+        cur_data = current_graph.nodes.get(cur_node, {})
+        if ref_data.get("kind") != "net" or cur_data.get("kind") != "net":
+            continue
+        if cur_data.get("role_source") != "default_signal" or normalize_role_label(cur_data.get("role_label")):
+            continue
+
+        ref_role = normalize_net_role(ref_data.get("role"))
+        ref_label = normalize_role_label(ref_data.get("role_label"))
+        if ref_role == "signal" and ref_label not in CRITICAL_ROLE_LABELS:
+            continue
+
+        current_net = str(cur_data.get("source_id") or "")
+        record = {
+            "reference_net": ref_data.get("source_id"),
+            "current_net": current_net,
+            "role": ref_role,
+            "role_label": ref_label,
+            "source": "inferred_from_reference",
+        }
+        existing = inferences_by_current.get(current_net)
+        if existing and (
+            existing.get("role") != record["role"]
+            or existing.get("role_label") != record["role_label"]
+        ):
+            return []
+        inferences_by_current[current_net] = record
+    return sorted(inferences_by_current.values(), key=lambda item: str(item.get("current_net") or ""))
+
+
+def _inference_signature(inferences: list[dict[str, Any]]) -> tuple[tuple[Any, ...], ...]:
+    return tuple(
+        (
+            item.get("reference_net"),
+            item.get("current_net"),
+            item.get("role"),
+            item.get("role_label"),
+        )
+        for item in inferences
+    )
+
+
+def _apply_role_inferences_to_graph(graph: nx.Graph, inferences: list[dict[str, Any]]) -> None:
+    for item in inferences:
+        net_node = f"cur_net:{item.get('current_net')}"
+        if not graph.has_node(net_node):
+            continue
+        graph.nodes[net_node]["role"] = item.get("role") or "signal"
+        graph.nodes[net_node]["role_label"] = item.get("role_label") or ""
+        graph.nodes[net_node]["canonical_name"] = item.get("role_label") or item.get("reference_net") or item.get("current_net")
+        graph.nodes[net_node]["role_source"] = "inferred_from_reference"
+        graph.nodes[net_node]["inferred_reference_net"] = item.get("reference_net")
+
+
+def _apply_role_inferences_to_netlist(
+    netlist_v2: dict[str, Any],
+    inferences: list[dict[str, Any]],
+) -> None:
+    by_net = {str(item.get("current_net") or ""): item for item in inferences}
+    for net in netlist_v2.get("nets", []) or []:
+        if not isinstance(net, dict):
+            continue
+        net_id = str(net.get("electrical_net_id") or net.get("net_id") or "")
+        item = by_net.get(net_id)
+        if not item:
+            continue
+        role = str(item.get("role") or "signal")
+        label = str(item.get("role_label") or "")
+        net["role"] = role
+        net["role_label"] = label
+        net["canonical_name"] = label or str(item.get("reference_net") or net_id)
+        net["aliases"] = list(dict.fromkeys([net["canonical_name"], net_id, *list(net.get("aliases") or [])]))
+        net["role_source"] = "inferred_from_reference"
+        net["inferred_reference_net"] = item.get("reference_net")
+        if role == "power":
+            net["power_role"] = label if label in {"VCC", "VEE", "VDD", "VSS"} else "VCC"
+        elif role == "ground":
+            net["power_role"] = "GND"
+
+
+def _attach_role_inferences(result: dict[str, Any], inferences: list[dict[str, Any]]) -> None:
+    details = dict(result.get("details", {}))
+    details["role_inference_applied"] = True
+    details["inferred_net_roles"] = inferences
+    result["details"] = details
+
+    report = dict(result.get("report", {}))
+    summary = dict(report.get("summary", {}))
+    summary["role_inference_applied"] = True
+    summary["inferred_net_roles"] = inferences
+    report["summary"] = summary
+    result["report"] = report
 
 
 def _result(
@@ -177,8 +426,13 @@ def _result(
         "ignore_component_id": True,
         "ignore_hole_id": True,
         "ignore_passive_pin_order": True,
-        "ignore_polarity": True,
-        "equivalence_rule": "component_type_and_topology",
+        "strict_functional_pin_roles": True,
+        "equivalence_rule": "logical_topology_with_port_semantics",
+        "match_type": details.get("match_type"),
+        "report_layers": {
+            "erc": {"source": "semantic_analysis", "included": False},
+            "reference_compare": {"source": "s4_validate", "included": True},
+        },
     }
     if ref_payload:
         summary["reference_id"] = ref_payload.get("reference_id")
@@ -226,9 +480,13 @@ def _item(
         "error_code": error_code,
         "error_family": error_family,
         "severity": severity,
+        "title": _default_title(error_code),
         "message": message,
         "expected": expected,
         "actual": actual,
+        "component_ref": None,
+        "component_actual": None,
+        "evidence_refs": [],
         "suggested_action": suggested_action,
     }
     if evidence:
@@ -238,6 +496,11 @@ def _item(
 
 def _default_title(error_code: str) -> str:
     return {
+        "PIN_ROLE_MISMATCH": "功能引脚错误",
+        "SHORT_CIRCUIT": "短路",
+        "ROLE_LABEL_MISMATCH": "端口标签错误",
+        "UNSUPPORTED_REFERENCE_FORMAT": "不支持的参考格式",
+        "REFERENCE_NOT_SET": "未设置参考电路",
         "COMPONENT_MISSING": "缺元件",
         "COMPONENT_EXTRA": "多余元件",
         "OPEN_CIRCUIT": "断路",
@@ -265,18 +528,25 @@ def _enrich_result(
 ) -> dict[str, Any]:
     """用原始 payload / netlist 数据对 error items 做精细化增强。"""
     match_type = result.get("details", {}).get("match_type")
+    comp_map, net_map = _build_mappings(ref_graph, cur_graph, ref_payload, cur_netlist_v2)
+    _attach_mappings(result, comp_map, net_map)
     detailed_items = _generate_detailed_items(
-        ref_graph, cur_graph, ref_payload, cur_netlist_v2, match_type
+        ref_graph, cur_graph, ref_payload, cur_netlist_v2, match_type, comp_map, net_map
     )
     if not detailed_items:
         return result
 
     # Replace items with detailed versions
     result["items"] = detailed_items
+    if any(item.get("severity") == "error" for item in detailed_items):
+        result["logic_correct"] = False
+        result["is_correct"] = False
+        result["is_match"] = False
     report = dict(result.get("report", {}))
     report["items"] = detailed_items
     report["summary"] = dict(report.get("summary", {}))
     report["summary"]["total_item_count"] = len(detailed_items)
+    report["summary"]["logic_correct"] = result["logic_correct"]
     report["topology_errors"] = [
         item for item in detailed_items
         if item.get("error_family") in {"wiring_mismatch", "open_circuit", "extra_connection", "incomplete_circuit"}
@@ -289,21 +559,49 @@ def _enrich_result(
     return result
 
 
+def _attach_mappings(result: dict[str, Any], comp_map: dict[str, str], net_map: dict[str, str]) -> None:
+    details = dict(result.get("details", {}))
+    details["ref_to_current_component_mapping"] = comp_map
+    details["ref_to_current_net_mapping"] = net_map
+    result["details"] = details
+    report = dict(result.get("report", {}))
+    summary = dict(report.get("summary", {}))
+    summary["ref_to_current_component_mapping"] = comp_map
+    summary["ref_to_current_net_mapping"] = net_map
+    report["summary"] = summary
+    result["report"] = report
+
+
 def _generate_detailed_items(
     ref_graph: nx.Graph,
     cur_graph: nx.Graph,
     ref_payload: dict[str, Any],
     cur_netlist_v2: dict[str, Any],
     match_type: str | None,
+    comp_map: dict[str, str] | None = None,
+    net_map: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    comp_map, net_map = _build_mappings(ref_graph, cur_graph, ref_payload, cur_netlist_v2)
+    if comp_map is None or net_map is None:
+        comp_map, net_map = _build_mappings(ref_graph, cur_graph, ref_payload, cur_netlist_v2)
     ref_comp_by_id = {c["ref_id"]: c for c in ref_payload.get("components", [])}
     cur_comp_by_id = {
         c["component_id"]: c
         for c in cur_netlist_v2.get("components", [])
         if c.get("component_type") != "Wire"
     }
-    ref_net_roles = {n["net"]: n.get("role", "signal") for n in ref_payload.get("nets", [])}
+    ref_net_roles = {
+        n["net"]: normalize_net_role(n.get("role") or n.get("role_label") or n.get("label") or n.get("net"))
+        for n in ref_payload.get("nets", [])
+    }
+    ref_net_labels = {
+        n["net"]: normalize_role_label(n.get("role_label") or n.get("label") or n.get("net"))
+        for n in ref_payload.get("nets", [])
+    }
+    cur_net_by_id = {
+        n.get("electrical_net_id"): n
+        for n in cur_netlist_v2.get("nets", [])
+        if n.get("electrical_net_id")
+    }
 
     items: list[dict[str, Any]] = []
 
@@ -353,16 +651,25 @@ def _generate_detailed_items(
         cur_comp = cur_comp_by_id.get(cur_id, {})
         ctype = normalize_component_type(ref_comp.get("type"))
 
-        ref_pins = {p["pin"]: p["net"] for p in ref_comp.get("pins", [])}
+        connected_ref_pins = [p for p in ref_comp.get("pins", []) if p.get("nc") is not True]
+        ref_pins = {p["pin"]: p["net"] for p in connected_ref_pins}
+        ref_pin_roles = {p["pin"]: normalize_pin_role(ctype, p) for p in connected_ref_pins}
         cur_pins = {p["pin_name"]: p for p in cur_comp.get("pins", [])}
+        cur_pins_by_role = {normalize_pin_role(ctype, p): p for p in cur_comp.get("pins", [])}
 
         if ctype in PASSIVE_TWO_PIN_TYPES:
             # For passive two-pin components, treat pins as an unordered set.
-            ref_nets = {p["net"] for p in ref_comp.get("pins", [])}
+            ref_nets = {p["net"] for p in connected_ref_pins}
             cur_nets = {p.get("electrical_net_id") for p in cur_comp.get("pins", [])}
             mapped_ref_nets = {net_map.get(rn) for rn in ref_nets}
+            known_mapped_ref_nets = {net_id for net_id in mapped_ref_nets if net_id}
             # Only flag when all reference nets are mapped and the sets differ.
             if None not in mapped_ref_nets and mapped_ref_nets != cur_nets:
+                actual_net_descriptors = [
+                    _current_net_descriptor(net_id, cur_net_by_id)
+                    for net_id in sorted(cur_nets)
+                    if net_id
+                ]
                 wrong_connection_items.append(_detailed_item(
                     error_code="WRONG_CONNECTION",
                     error_family="wiring_mismatch",
@@ -374,57 +681,110 @@ def _generate_detailed_items(
                     },
                     actual={
                         "actual_component_id": cur_id,
-                        "nets": sorted(cur_nets) if cur_nets else [],
+                        "nets": actual_net_descriptors,
                     },
                     component_ref={"ref_id": ref_id, "type": ref_comp.get("type")},
                     component_actual={"component_id": cur_id, "type": cur_comp.get("component_type")},
                     evidence_refs=[{"type": "component", "component_id": cur_id}],
                     suggested_action=f"请将 {cur_id} 改接到与 {ref_id} 对应的网络。",
                 ))
+            elif None in mapped_ref_nets and known_mapped_ref_nets:
+                extra_actual_nets = sorted(
+                    net_id for net_id in cur_nets - known_mapped_ref_nets if net_id
+                )
+                if extra_actual_nets:
+                    extra_actual_net_descriptors = [
+                        _current_net_descriptor(net_id, cur_net_by_id)
+                        for net_id in extra_actual_nets
+                    ]
+                    wrong_connection_items.append(_detailed_item(
+                        error_code="WRONG_CONNECTION",
+                        error_family="wiring_mismatch",
+                        severity="error",
+                        message=f"{ref_id} 的部分参考网络无法映射到当前电路，连接关系不完整。",
+                        expected={
+                            "ref_id": ref_id,
+                            "nets": sorted(ref_nets),
+                            "mapped_nets": sorted(known_mapped_ref_nets),
+                        },
+                        actual={
+                            "actual_component_id": cur_id,
+                            "unmatched_actual_nets": extra_actual_net_descriptors,
+                        },
+                        component_ref={"ref_id": ref_id, "type": ref_comp.get("type")},
+                        component_actual={
+                            "component_id": cur_id,
+                            "type": cur_comp.get("component_type"),
+                        },
+                        evidence_refs=[{"type": "component", "component_id": cur_id}],
+                        suggested_action=(
+                            f"请检查 {cur_id} 是否接到了参考电路中 {ref_id} 对应的两个网络。"
+                        ),
+                    ))
             continue
 
         for pin_name, ref_net in ref_pins.items():
-            cur_pin = cur_pins.get(pin_name)
+            ref_pin_role = ref_pin_roles.get(pin_name, normalize_pin_role(ctype, pin_name))
+            cur_pin = cur_pins_by_role.get(ref_pin_role) or cur_pins.get(pin_name)
             if not cur_pin:
+                if ctype in STRICT_PIN_ROLE_TYPES:
+                    wrong_connection_items.append(_detailed_item(
+                        error_code="PIN_ROLE_MISMATCH",
+                        error_family="wiring_mismatch",
+                        severity="error",
+                        message=f"{ref_id}.{pin_name} 需要功能引脚 {ref_pin_role}，但当前元件 {cur_id} 未找到对应功能引脚。",
+                        expected={"ref_pin": f"{ref_id}.{pin_name}", "pin_role": ref_pin_role},
+                        actual={"actual_component_id": cur_id, "available_pin_roles": sorted(cur_pins_by_role)},
+                        component_ref={"ref_id": ref_id, "type": ref_comp.get("type")},
+                        component_actual={"component_id": cur_id, "type": cur_comp.get("component_type")},
+                        evidence_refs=[{"type": "component", "component_id": cur_id}],
+                        suggested_action=f"请重新标注 {cur_id} 的功能引脚，确保 {ref_pin_role} 接到正确网络。",
+                    ))
                 continue
             cur_net = cur_pin.get("electrical_net_id")
             mapped_cur_net = net_map.get(ref_net)
 
             if mapped_cur_net and cur_net != mapped_cur_net:
+                actual_pin_role = normalize_pin_role(ctype, cur_pin)
+                error_code = "PIN_ROLE_MISMATCH" if ctype in STRICT_PIN_ROLE_TYPES and actual_pin_role != ref_pin_role else "WRONG_CONNECTION"
+                cur_net_desc = _current_net_descriptor(cur_net, cur_net_by_id)
+                expected_net_desc = _current_net_descriptor(mapped_cur_net, cur_net_by_id)
                 wrong_connection_items.append(_detailed_item(
-                    error_code="WRONG_CONNECTION",
+                    error_code=error_code,
                     error_family="wiring_mismatch",
                     severity="error",
-                    message=f"{ref_id}.{pin_name} 应连接到参考网络 {ref_net}，但当前实际连接到 {cur_net}。",
+                    message=f"{ref_id}.{pin_name} 应连接到参考网络 {ref_net}，但当前实际连接到 {cur_net_desc['canonical_name']}。",
                     expected={
                         "ref_pin": f"{ref_id}.{pin_name}",
+                        "pin_role": ref_pin_role,
                         "expected_net": ref_net,
                     },
                     actual={
                         "actual_component_id": cur_id,
-                        "actual_pin": pin_name,
-                        "actual_net": cur_net,
+                        "actual_pin": cur_pin.get("pin_name"),
+                        "pin_role": actual_pin_role,
+                        "actual_net": cur_net_desc,
+                        "expected_current_net": expected_net_desc,
                         "hole_id": cur_pin.get("hole_id"),
                     },
                     component_ref={"ref_id": ref_id, "type": ref_comp.get("type")},
                     component_actual={"component_id": cur_id, "type": cur_comp.get("component_type")},
                     evidence_refs=[
                         {"type": "component", "component_id": cur_id},
-                        {"type": "net", "electrical_net_id": cur_net},
+                        {"type": "net", "electrical_net_id": cur_net, "canonical_name": cur_net_desc["canonical_name"]},
                     ],
-                    suggested_action=f"请将 {cur_id}.{pin_name} 从 {cur_net} 改接到与 {ref_net} 对应的网络。",
+                    suggested_action=f"请将 {cur_id}.{pin_name} 从 {cur_net_desc['canonical_name']} 改接到与 {ref_net} 对应的网络。",
                 ))
 
     # 3.5 Net role mismatch checks for mapped nets
-    cur_net_by_id = {
-        n.get("electrical_net_id"): n
-        for n in cur_netlist_v2.get("nets", [])
-        if n.get("electrical_net_id")
-    }
     cur_net_roles = {
         net_id: normalize_net_role(
-            n.get("role") or n.get("manual_role") or n.get("power_role")
+            n.get("role") or n.get("manual_role") or n.get("role_label") or n.get("power_role")
         )
+        for net_id, n in cur_net_by_id.items()
+    }
+    cur_net_labels = {
+        net_id: normalize_role_label(n.get("role_label") or n.get("power_role"))
         for net_id, n in cur_net_by_id.items()
     }
 
@@ -443,6 +803,7 @@ def _generate_detailed_items(
             continue
         cur_role = cur_net_roles.get(mapped_cur_net, "signal")
         if cur_role != ref_role:
+            mapped_desc = _current_net_descriptor(mapped_cur_net, cur_net_by_id)
             ref_pins = []
             for rc in ref_payload.get("components", []):
                 for p in rc.get("pins", []):
@@ -459,7 +820,7 @@ def _generate_detailed_items(
             cur_net_obj = cur_net_by_id.get(mapped_cur_net, {})
             actual_data: dict[str, Any] = {
                 "role": cur_role,
-                "current_net": mapped_cur_net,
+                "current_net": mapped_desc,
                 "connected_pins": cur_connected_pins,
             }
             if cur_net_obj.get("role_label"):
@@ -471,7 +832,7 @@ def _generate_detailed_items(
                 error_code=role_error_code_map.get(ref_role, "ROLE_MISMATCH"),
                 error_family="wiring_mismatch",
                 severity="error",
-                message=f"参考电路中 {ref_net} 为 {ref_role} 节点，但当前映射网络 {mapped_cur_net} 实际为 {cur_role} 节点。",
+                message=f"参考电路中 {ref_net} 为 {ref_role} 节点，但当前映射网络 {mapped_desc['canonical_name']} 实际为 {cur_role} 节点。",
                 expected={
                     "role": ref_role,
                     "reference_net": ref_net,
@@ -480,15 +841,40 @@ def _generate_detailed_items(
                 actual=actual_data,
                 component_ref=None,
                 component_actual=None,
-                evidence_refs=[{"type": "net", "electrical_net_id": mapped_cur_net}],
+                evidence_refs=[{"type": "net", "electrical_net_id": mapped_cur_net, "canonical_name": mapped_desc["canonical_name"]}],
                 suggested_action=f"请在二维面包板图上重新点选正确的 {ref_role} 节点。",
             ))
+
+        ref_label = ref_net_labels.get(ref_net, "")
+        cur_label = cur_net_labels.get(mapped_cur_net, "")
+        if ref_label in CRITICAL_ROLE_LABELS and cur_label and cur_label != ref_label:
+            ref_node = ref_graph.nodes.get(f"ref_net:{ref_net}", {})
+            cur_node = cur_graph.nodes.get(f"cur_net:{mapped_cur_net}", {})
+            if not _role_labels_equivalent(ref_node, cur_node):
+                mapped_desc = _current_net_descriptor(mapped_cur_net, cur_net_by_id)
+                wrong_connection_items.append(_detailed_item(
+                    error_code="ROLE_LABEL_MISMATCH",
+                    error_family="wiring_mismatch",
+                    severity="error",
+                    message=(
+                        f"参考网络 {ref_net} 应匹配 role_label={ref_label} 的当前网络，"
+                        f"但当前映射到了 role_label={cur_label}。"
+                    ),
+                    expected={"reference_net": ref_net, "role": ref_role, "role_label": ref_label},
+                    actual={"current_net": mapped_desc, "role": cur_role, "role_label": cur_label},
+                    component_ref=None,
+                    component_actual=None,
+                    evidence_refs=[{"type": "net", "electrical_net_id": mapped_cur_net, "canonical_name": mapped_desc["canonical_name"]}],
+                    suggested_action=f"请将当前网络标注为 {ref_label}，或检查端口是否接反。",
+                ))
 
     # 4. OPEN_CIRCUIT: ref pins that should share a net but are on different cur nets
     for ref_net_id in ref_net_roles:
         ref_pins_on_net: list[tuple[str, str]] = []
         for ref_comp in ref_payload.get("components", []):
             for pin in ref_comp.get("pins", []):
+                if pin.get("nc") is True:
+                    continue
                 if pin["net"] == ref_net_id:
                     ref_pins_on_net.append((ref_comp["ref_id"], pin["pin"]))
 
@@ -525,7 +911,7 @@ def _generate_detailed_items(
                         {
                             "actual_component_id": cid,
                             "actual_pin": pname,
-                            "actual_net": cnet,
+                            "actual_net": _current_net_descriptor(cnet, cur_net_by_id),
                             "hole_id": hid,
                         }
                         for cid, pname, cnet, hid in cur_nets_for_pins
@@ -534,7 +920,11 @@ def _generate_detailed_items(
                 component_ref=None,
                 component_actual=None,
                 evidence_refs=[
-                    {"type": "net", "electrical_net_id": cnet}
+                    {
+                        "type": "net",
+                        "electrical_net_id": cnet,
+                        "canonical_name": _current_net_descriptor(cnet, cur_net_by_id)["canonical_name"],
+                    }
                     for _, _, cnet, _ in cur_nets_for_pins
                     if cnet
                 ],
@@ -543,9 +933,15 @@ def _generate_detailed_items(
 
     ref_net_count = _net_count(ref_graph)
     cur_net_count = _net_count(cur_graph)
+    short_circuit_items = _short_circuit_items(ref_net_roles, ref_net_labels, net_map, cur_net_by_id)
+    short_circuit_items.extend(
+        _pin_level_short_circuit_items(ref_payload, cur_netlist_v2, comp_map, cur_net_by_id)
+    )
+    short_circuit_items = _dedupe_detailed_items(short_circuit_items)
 
     # 5. Assemble items based on match_type
     if match_type == "current_subgraph_in_reference":
+        items.extend(short_circuit_items)
         items.extend(open_circuit_items)
         items.append(_detailed_item(
             error_code="INCOMPLETE_CIRCUIT",
@@ -565,7 +961,8 @@ def _generate_detailed_items(
             evidence_refs=[],
             suggested_action="请补齐缺失的元件和连接后重新验证。",
         ))
-    elif match_type == "reference_subgraph_in_current":
+    elif match_type in {"reference_subgraph_in_current", "equivalent_with_extra"}:
+        items.extend(short_circuit_items)
         if cur_net_count < ref_net_count:
             all_cur_nets = sorted({
                 n.get("electrical_net_id")
@@ -585,6 +982,7 @@ def _generate_detailed_items(
                 suggested_action="请检查是否有不应相连的节点被错误地连接到了一起。",
             ))
     else:  # graph_edit_distance_or_fallback
+        items.extend(short_circuit_items)
         items.extend(wrong_connection_items)
         items.extend(open_circuit_items)
         if cur_net_count < ref_net_count:
@@ -607,6 +1005,141 @@ def _generate_detailed_items(
             ))
 
     return _dedupe_detailed_items(items)
+
+
+def _short_circuit_items(
+    ref_net_roles: dict[str, str],
+    ref_net_labels: dict[str, str],
+    net_map: dict[str, str],
+    cur_net_by_id: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    mapped_by_current: dict[str, list[str]] = defaultdict(list)
+    for ref_net, cur_net in net_map.items():
+        if cur_net:
+            mapped_by_current[cur_net].append(ref_net)
+
+    items: list[dict[str, Any]] = []
+    for cur_net, ref_nets in mapped_by_current.items():
+        if len(ref_nets) < 2:
+            continue
+        for i, left in enumerate(ref_nets):
+            for right in ref_nets[i + 1:]:
+                if not _is_harmful_merge(left, right, ref_net_roles, ref_net_labels):
+                    continue
+                left_label = ref_net_labels.get(left, normalize_role_label(left))
+                right_label = ref_net_labels.get(right, normalize_role_label(right))
+                cur_desc = _current_net_descriptor(cur_net, cur_net_by_id)
+                items.append(_detailed_item(
+                    error_code="SHORT_CIRCUIT",
+                    error_family="extra_connection",
+                    severity="error",
+                    message=f"参考中应分离的关键网络 {left_label} 与 {right_label} 在当前电路中被合并到 {cur_desc['canonical_name']}。",
+                    expected={"separate_nets": [left, right], "role_labels": [left_label, right_label]},
+                    actual={"current_net": cur_desc, "merged_reference_nets": ref_nets},
+                    component_ref=None,
+                    component_actual=None,
+                    evidence_refs=[{"type": "net", "electrical_net_id": cur_net, "canonical_name": cur_desc["canonical_name"]}],
+                    suggested_action="请检查是否有多余导线或元件把两个关键网络短接在一起。",
+                ))
+    return _dedupe_detailed_items(items)
+
+
+def _is_harmful_merge(
+    left: str,
+    right: str,
+    ref_net_roles: dict[str, str],
+    ref_net_labels: dict[str, str],
+) -> bool:
+    role_pair = {ref_net_roles.get(left, "signal"), ref_net_roles.get(right, "signal")}
+    labels = {ref_net_labels.get(left, normalize_role_label(left)), ref_net_labels.get(right, normalize_role_label(right))}
+    if role_pair == {"power", "ground"}:
+        return True
+    if {"VCC", "VEE"} <= labels:
+        return True
+    if {"input", "output"} <= role_pair:
+        return True
+    if {"UO1", "UO2"} <= labels:
+        return True
+    if {"UI1", "UI2"} <= labels:
+        return True
+    return False
+
+
+def _pin_level_short_circuit_items(
+    ref_payload: dict[str, Any],
+    cur_netlist_v2: dict[str, Any],
+    comp_map: dict[str, str],
+    cur_net_by_id: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """通过元件引脚级别比对检测短路：若对应不同参考网络的引脚在当前电路中共享同一电气网络，则视为短路。"""
+    cur_pin_to_net: dict[tuple[str, str], str] = {}
+    for comp in cur_netlist_v2.get("components", []):
+        cid = comp.get("component_id")
+        for pin in comp.get("pins", []):
+            cur_pin_to_net[(cid, pin.get("pin_name"))] = pin.get("electrical_net_id")
+
+    ref_net_roles = {
+        n["net"]: normalize_net_role(n.get("role") or n.get("role_label") or n.get("label") or n["net"])
+        for n in ref_payload.get("nets", [])
+    }
+    ref_net_labels = {
+        n["net"]: normalize_role_label(n.get("role_label") or n.get("label") or n["net"])
+        for n in ref_payload.get("nets", [])
+    }
+
+    # 收集每个参考网络对应的引脚
+    ref_net_pins: dict[str, list[tuple[str, str]]] = {}
+    for comp in ref_payload.get("components", []):
+        ref_id = comp["ref_id"]
+        for pin in comp.get("pins", []):
+            if pin.get("nc") is True:
+                continue
+            net = pin.get("net")
+            if net:
+                ref_net_pins.setdefault(net, []).append((ref_id, pin.get("pin")))
+
+    items: list[dict[str, Any]] = []
+    ref_nets = sorted(ref_net_pins.keys())
+    for i, left in enumerate(ref_nets):
+        for right in ref_nets[i + 1 :]:
+            if not _is_harmful_merge(left, right, ref_net_roles, ref_net_labels):
+                continue
+
+            left_cur_nets: set[str] = set()
+            for ref_id, pin_name in ref_net_pins.get(left, []):
+                if ref_id in comp_map:
+                    net_id = cur_pin_to_net.get((comp_map[ref_id], pin_name))
+                    if net_id:
+                        left_cur_nets.add(net_id)
+
+            right_cur_nets: set[str] = set()
+            for ref_id, pin_name in ref_net_pins.get(right, []):
+                if ref_id in comp_map:
+                    net_id = cur_pin_to_net.get((comp_map[ref_id], pin_name))
+                    if net_id:
+                        right_cur_nets.add(net_id)
+
+            shared = left_cur_nets & right_cur_nets
+            for cur_net in shared:
+                left_label = ref_net_labels.get(left, normalize_role_label(left))
+                right_label = ref_net_labels.get(right, normalize_role_label(right))
+                cur_desc = _current_net_descriptor(cur_net, cur_net_by_id)
+                items.append(
+                    _detailed_item(
+                        error_code="SHORT_CIRCUIT",
+                        error_family="extra_connection",
+                        severity="error",
+                        message=f"参考中应分离的关键网络 {left_label} 与 {right_label} 在当前电路中被合并到 {cur_desc['canonical_name']}。",
+                        expected={"separate_nets": [left, right], "role_labels": [left_label, right_label]},
+                        actual={"current_net": cur_desc, "merged_reference_nets": [left, right]},
+                        component_ref=None,
+                        component_actual=None,
+                        evidence_refs=[{"type": "net", "electrical_net_id": cur_net, "canonical_name": cur_desc["canonical_name"]}],
+                        suggested_action="请检查是否有多余导线或元件把两个关键网络短接在一起。",
+                    )
+                )
+
+    return items
 
 
 def _detailed_item(
@@ -638,6 +1171,35 @@ def _detailed_item(
     }
 
 
+def _current_net_descriptor(
+    net_id: Any,
+    cur_net_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    source_id = str(net_id or "")
+    net = cur_net_by_id.get(source_id, {})
+    canonical = str(
+        net.get("canonical_name")
+        or net.get("role_label")
+        or net.get("power_role")
+        or source_id
+    )
+    aliases = [
+        str(item)
+        for item in net.get("aliases", []) or []
+        if str(item)
+    ]
+    if canonical and canonical not in aliases:
+        aliases.insert(0, canonical)
+    return {
+        "source_id": source_id,
+        "canonical_name": canonical,
+        "role": normalize_net_role(net.get("role") or net.get("manual_role") or canonical),
+        "role_label": normalize_role_label(net.get("role_label") or net.get("power_role") or canonical),
+        "aliases": list(dict.fromkeys(aliases)),
+        "merged_source_ids": list(net.get("merged_source_ids", []) or []),
+    }
+
+
 def _dedupe_detailed_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen: set[str] = set()
     deduped: list[dict[str, Any]] = []
@@ -661,38 +1223,51 @@ def _build_mappings(
     cur_netlist_v2: dict[str, Any],
 ) -> tuple[dict[str, str], dict[str, str]]:
     """返回 (comp_map: ref_id -> cur_id, net_map: ref_net -> cur_net)。"""
-    comp_map = _build_component_mapping(ref_graph, cur_graph, ref_payload, cur_netlist_v2)
+    iso_mapping = _find_any_isomorphism_mapping(ref_graph, cur_graph)
+    if iso_mapping is not None:
+        comp_map = _extract_comp_mapping(iso_mapping, ref_graph, cur_graph)
+        net_map = _extract_net_mapping(iso_mapping, ref_graph, cur_graph)
+        return comp_map, net_map
+
+    comp_map = _fallback_comp_mapping(ref_graph, cur_graph)
     net_map = _build_net_mapping(ref_graph, cur_graph, comp_map)
     return comp_map, net_map
 
 
-def _build_component_mapping(
-    ref_graph: nx.Graph,
-    cur_graph: nx.Graph,
-    ref_payload: dict[str, Any],
-    cur_netlist_v2: dict[str, Any],
-) -> dict[str, str]:
-    """尝试用图同构建立 ref 与 current 的元件映射，失败则回退到类型匹配。"""
-    # 1. 尝试完整同构
+def _find_any_isomorphism_mapping(
+    ref_graph: nx.Graph, cur_graph: nx.Graph
+) -> dict[Any, Any] | None:
+    """尝试完整同构或子图同构，返回 ref_node -> cur_node 映射。"""
     matcher = GraphMatcher(ref_graph, cur_graph, node_match=_node_match, edge_match=_edge_match)
     if matcher.is_isomorphic():
-        mapping = next(matcher.isomorphisms_iter())
-        return _extract_comp_mapping(mapping, ref_graph, cur_graph)
+        return next(matcher.isomorphisms_iter())
 
-    # 2. 尝试子图同构（ref ⊂ cur）
+    # ref ⊂ cur
     matcher = GraphMatcher(cur_graph, ref_graph, node_match=_node_match, edge_match=_edge_match)
     if matcher.subgraph_is_isomorphic():
         mapping = next(matcher.subgraph_isomorphisms_iter())  # cur_node -> ref_node
-        return _extract_comp_mapping({v: k for k, v in mapping.items()}, ref_graph, cur_graph)
+        return {v: k for k, v in mapping.items()}
 
-    # 3. 尝试子图同构（cur ⊂ ref）
+    # cur ⊂ ref
     matcher = GraphMatcher(ref_graph, cur_graph, node_match=_node_match, edge_match=_edge_match)
     if matcher.subgraph_is_isomorphic():
-        mapping = next(matcher.subgraph_isomorphisms_iter())
-        return _extract_comp_mapping(mapping, ref_graph, cur_graph)
+        return next(matcher.subgraph_isomorphisms_iter())
 
-    # 4. 回退：基于连接签名的最小代价匹配
-    return _fallback_comp_mapping(ref_graph, cur_graph)
+    return None
+
+
+def _extract_net_mapping(
+    ref_to_cur_mapping: dict[Any, Any],
+    ref_graph: nx.Graph,
+    cur_graph: nx.Graph,
+) -> dict[str, str]:
+    net_map: dict[str, str] = {}
+    for ref_node, cur_node in ref_to_cur_mapping.items():
+        ref_data = ref_graph.nodes.get(ref_node, {})
+        cur_data = cur_graph.nodes.get(cur_node, {})
+        if ref_data.get("kind") == "net" and cur_data.get("kind") == "net":
+            net_map[ref_data["source_id"]] = cur_data["source_id"]
+    return net_map
 
 
 def _extract_comp_mapping(
@@ -730,11 +1305,11 @@ def _fallback_comp_mapping(
 
     ref_by_type: dict[str, list[tuple[str, dict]]] = defaultdict(list)
     for n, data in ref_comps:
-        ref_by_type[data.get("ctype", "UNKNOWN")].append((n, data))
+        ref_by_type[_component_type_key(data.get("ctype", "UNKNOWN"))].append((n, data))
 
     cur_by_type: dict[str, list[tuple[str, dict]]] = defaultdict(list)
     for n, data in cur_comps:
-        cur_by_type[data.get("ctype", "UNKNOWN")].append((n, data))
+        cur_by_type[_component_type_key(data.get("ctype", "UNKNOWN"))].append((n, data))
 
     comp_map: dict[str, str] = {}
     for ctype, ref_list in ref_by_type.items():
@@ -828,13 +1403,27 @@ def _build_net_mapping(
     cur_graph: nx.Graph,
     comp_map: dict[str, str],
 ) -> dict[str, str]:
-    """基于元件映射，按共享元件数量最多的原则建立网络映射。"""
-    net_map: dict[str, str] = {}
+    """基于元件映射，按共享元件数量最多的原则建立网络映射。
+
+    使用贪心算法确保 1-to-1 映射，避免多个参考网络映射到同一当前网络。
+    """
+    ref_nets: list[tuple[str, dict[str, Any]]] = []
     for ref_node in ref_graph.nodes:
         ref_data = ref_graph.nodes[ref_node]
-        if ref_data.get("kind") != "net":
-            continue
+        if ref_data.get("kind") == "net":
+            ref_nets.append((ref_node, ref_data))
+
+    cur_nets: list[tuple[str, dict[str, Any]]] = []
+    for cur_node in cur_graph.nodes:
+        cur_data = cur_graph.nodes[cur_node]
+        if cur_data.get("kind") == "net":
+            cur_nets.append((cur_node, cur_data))
+
+    scores: list[tuple[float, str, str]] = []
+    for ref_node, ref_data in ref_nets:
         ref_net_id = ref_data["source_id"]
+        ref_role = str(ref_data.get("role") or "signal")
+        ref_label = normalize_role_label(ref_data.get("role_label"))
 
         ref_neighbors = {
             ref_graph.nodes[n]["source_id"]
@@ -842,13 +1431,10 @@ def _build_net_mapping(
             if ref_graph.nodes[n].get("kind") == "comp"
         }
 
-        best_cur_net: str | None = None
-        best_score = -1
-        for cur_node in cur_graph.nodes:
-            cur_data = cur_graph.nodes[cur_node]
-            if cur_data.get("kind") != "net":
-                continue
+        for cur_node, cur_data in cur_nets:
             cur_net_id = cur_data["source_id"]
+            cur_role = str(cur_data.get("role") or "signal")
+            cur_label = normalize_role_label(cur_data.get("role_label"))
 
             cur_neighbors = {
                 cur_graph.nodes[n]["source_id"]
@@ -856,16 +1442,28 @@ def _build_net_mapping(
                 if cur_graph.nodes[n].get("kind") == "comp"
             }
 
-            score = sum(
+            score = float(sum(
                 1 for ref_comp in ref_neighbors
                 if ref_comp in comp_map and comp_map[ref_comp] in cur_neighbors
-            )
-            if score > best_score:
-                best_score = score
-                best_cur_net = cur_net_id
+            ))
+            if ref_role == cur_role:
+                score += 2.0
+            if ref_label and cur_label and ref_label == cur_label:
+                score += 4.0
+            elif ref_label in CRITICAL_ROLE_LABELS and cur_label in CRITICAL_ROLE_LABELS:
+                score -= 4.0
+            scores.append((score, ref_net_id, cur_net_id))
 
-        if best_cur_net and best_score > 0:
-            net_map[ref_net_id] = best_cur_net
+    scores.sort(key=lambda x: x[0], reverse=True)
+
+    net_map: dict[str, str] = {}
+    used_cur: set[str] = set()
+    for score, ref_net_id, cur_net_id in scores:
+        if ref_net_id in net_map or cur_net_id in used_cur:
+            continue
+        if score > 0:
+            net_map[ref_net_id] = cur_net_id
+            used_cur.add(cur_net_id)
 
     return net_map
 
@@ -1017,7 +1615,7 @@ def _node_subst_cost(a: dict[str, Any], b: dict[str, Any]) -> float:
     if a.get("kind") != b.get("kind"):
         return 2.0
     if a.get("kind") == "comp":
-        return 0.0 if a.get("ctype") == b.get("ctype") else 1.5
+        return 0.0 if _component_types_equivalent(a.get("ctype"), b.get("ctype")) else 1.5
     return 0.0 if _node_match(a, b) else 1.0
 
 
@@ -1056,7 +1654,7 @@ def _component_progress(reference_graph: nx.Graph, current_graph: nx.Graph) -> f
 
 def _component_type_counts(graph: nx.Graph) -> Counter[str]:
     return Counter(
-        str(data.get("ctype") or "UNKNOWN")
+        _component_type_key(data.get("ctype") or "UNKNOWN")
         for _node, data in graph.nodes(data=True)
         if data.get("kind") == "comp"
     )
@@ -1077,7 +1675,12 @@ def _edge_signatures(graph: nx.Graph) -> list[tuple[str, str]]:
         v_data = graph.nodes[v]
         comp_data = u_data if u_data.get("kind") == "comp" else v_data
         net_data = v_data if u_data.get("kind") == "comp" else u_data
-        signatures.append((str(comp_data.get("ctype") or "UNKNOWN"), str(net_data.get("role") or "signal")))
+        signatures.append(
+            (
+                _component_type_key(comp_data.get("ctype") or "UNKNOWN"),
+                str(net_data.get("role") or "signal"),
+            )
+        )
     return sorted(signatures)
 
 

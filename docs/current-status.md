@@ -66,7 +66,7 @@ RAG、PCM Agent、VLM 和前端指导都应消费这条主链输出，不应绕�
 - `board_schema.py`
 - `netlist_models.py`
 - `export_netlist_v2()`
-- `labguardian_ref_v4`
+- `logical_reference_v1`
 - `validator_report_v2`
 - `error_code + suggested_action + evidence_refs`
 - `circuit.py / validator.py / ic_models.py / polarity.py` 已围绕

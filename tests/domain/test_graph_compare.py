@@ -97,8 +97,9 @@ class TestCompareLogicalGraphs:
 
     def test_extra_component(self) -> None:
         result = compare_logical_graphs(_build_ref(), _build_cur_extra_resistor())
-        assert result["logic_correct"] is False
-        assert result["details"]["match_type"] == "reference_subgraph_in_current"
+        # 额外元件未合并关键网络时视为无害 extra，logic_correct 可为 true
+        assert result["logic_correct"] is True
+        assert result["details"]["match_type"] == "equivalent_with_extra"
         items = result["report"]["items"]
         assert any(i["error_code"] == "COMPONENT_EXTRA" for i in items)
 
@@ -181,34 +182,97 @@ class TestCompareLogicalGraphs:
         assert result["logic_correct"] is True
         assert result["details"]["match_type"] == "full_isomorphism"
 
+    def test_non_polar_capacitor_class_aliases_match(self) -> None:
+        """Generic non-polar Capacitor and CapacitorCeramic should match."""
+        g_ref = nx.Graph()
+        g_ref.add_node("ref_comp:C1", kind="comp", ctype="Capacitor")
+        g_ref.add_node("ref_net:A", kind="net", role="signal")
+        g_ref.add_node("ref_net:B", kind="net", role="ground")
+        g_ref.add_edge("ref_comp:C1", "ref_net:A", pin="pin1", comp_type="Capacitor")
+        g_ref.add_edge("ref_comp:C1", "ref_net:B", pin="pin2", comp_type="Capacitor")
+
+        g_cur = nx.Graph()
+        g_cur.add_node("cur_comp:C9", kind="comp", ctype="CapacitorCeramic")
+        g_cur.add_node("cur_net:NET_0", kind="net", role="signal")
+        g_cur.add_node("cur_net:NET_1", kind="net", role="ground")
+        g_cur.add_edge("cur_comp:C9", "cur_net:NET_0", pin="pin2", comp_type="CapacitorCeramic")
+        g_cur.add_edge("cur_comp:C9", "cur_net:NET_1", pin="pin1", comp_type="CapacitorCeramic")
+
+        result = compare_logical_graphs(g_ref, g_cur)
+        assert result["logic_correct"] is True
+        assert result["similarity"] == 1.0
+        assert result["details"]["match_type"] == "full_isomorphism"
+
+    def test_electrolytic_capacitor_still_strict(self) -> None:
+        """Electrolytic capacitors must not match non-polar capacitors."""
+        g_ref = nx.Graph()
+        g_ref.add_node("ref_comp:C1", kind="comp", ctype="CapacitorElectrolytic")
+        g_ref.add_node("ref_net:VCC", kind="net", role="power", role_label="VCC")
+        g_ref.add_node("ref_net:GND", kind="net", role="ground", role_label="GND")
+        g_ref.add_edge(
+            "ref_comp:C1",
+            "ref_net:VCC",
+            pin="positive",
+            pin_role="positive",
+            comp_type="CapacitorElectrolytic",
+        )
+        g_ref.add_edge(
+            "ref_comp:C1",
+            "ref_net:GND",
+            pin="negative",
+            pin_role="negative",
+            comp_type="CapacitorElectrolytic",
+        )
+
+        g_cur = nx.Graph()
+        g_cur.add_node("cur_comp:C9", kind="comp", ctype="CapacitorCeramic")
+        g_cur.add_node("cur_net:NET_0", kind="net", role="power", role_label="VCC")
+        g_cur.add_node("cur_net:NET_1", kind="net", role="ground", role_label="GND")
+        g_cur.add_edge("cur_comp:C9", "cur_net:NET_0", pin="pin1", comp_type="CapacitorCeramic")
+        g_cur.add_edge("cur_comp:C9", "cur_net:NET_1", pin="pin2", comp_type="CapacitorCeramic")
+
+        result = compare_logical_graphs(g_ref, g_cur)
+        assert result["logic_correct"] is False
+
     def test_summary_metadata(self) -> None:
         result = compare_logical_graphs(_build_ref(), _build_cur_match())
         summary = result["report"]["summary"]
         assert summary.get("ignore_component_id") is True
         assert summary.get("ignore_hole_id") is True
         assert summary.get("ignore_passive_pin_order") is True
-        assert summary.get("equivalence_rule") == "component_type_and_topology"
+        assert summary.get("strict_functional_pin_roles") is True
+        assert summary.get("equivalence_rule") == "logical_topology_with_port_semantics"
 
-    def test_led_polarity_field_ignored(self) -> None:
-        """LED polarity 字段不同，但图比较应视为正确（本阶段忽略极性）。"""
+    def test_led_polarity_strict(self) -> None:
+        """LED anode/cathode 正确连接时应通过；anode 接到 ground 网络时应失败。"""
         g_ref = nx.Graph()
         g_ref.add_node("ref_comp:D1", kind="comp", ctype="LED")
-        g_ref.add_node("ref_net:A", kind="net", role="signal")
-        g_ref.add_node("ref_net:B", kind="net", role="signal")
-        g_ref.add_edge("ref_comp:D1", "ref_net:A", pin="anode", comp_type="LED")
-        g_ref.add_edge("ref_comp:D1", "ref_net:B", pin="cathode", comp_type="LED")
+        g_ref.add_node("ref_net:VCC", kind="net", role="power", role_label="VCC")
+        g_ref.add_node("ref_net:GND", kind="net", role="ground", role_label="GND")
+        g_ref.add_edge("ref_comp:D1", "ref_net:VCC", pin="anode", pin_role="anode", comp_type="LED")
+        g_ref.add_edge("ref_comp:D1", "ref_net:GND", pin="cathode", pin_role="cathode", comp_type="LED")
 
-        g_cur = nx.Graph()
-        g_cur.add_node("cur_comp:D1", kind="comp", ctype="LED")
-        g_cur.add_node("cur_net:NET_0", kind="net", role="signal")
-        g_cur.add_node("cur_net:NET_1", kind="net", role="signal")
-        g_cur.add_edge("cur_comp:D1", "cur_net:NET_0", pin="anode", comp_type="LED")
-        g_cur.add_edge("cur_comp:D1", "cur_net:NET_1", pin="cathode", comp_type="LED")
+        # 正确连接
+        g_cur_ok = nx.Graph()
+        g_cur_ok.add_node("cur_comp:D1", kind="comp", ctype="LED")
+        g_cur_ok.add_node("cur_net:N0", kind="net", role="power", role_label="VCC")
+        g_cur_ok.add_node("cur_net:N1", kind="net", role="ground", role_label="GND")
+        g_cur_ok.add_edge("cur_comp:D1", "cur_net:N0", pin="anode", pin_role="anode", comp_type="LED")
+        g_cur_ok.add_edge("cur_comp:D1", "cur_net:N1", pin="cathode", pin_role="cathode", comp_type="LED")
 
-        result = compare_logical_graphs(g_ref, g_cur)
-        assert result["logic_correct"] is True
-        assert result["report"]["summary"].get("ignore_polarity") is True
-        assert result["report"]["polarity_errors"] == []
+        result_ok = compare_logical_graphs(g_ref, g_cur_ok)
+        assert result_ok["logic_correct"] is True
+
+        # anode/cathode 接反（anode 接到 GND，cathode 接到 VCC）
+        g_cur_bad = nx.Graph()
+        g_cur_bad.add_node("cur_comp:D1", kind="comp", ctype="LED")
+        g_cur_bad.add_node("cur_net:N0", kind="net", role="power", role_label="VCC")
+        g_cur_bad.add_node("cur_net:N1", kind="net", role="ground", role_label="GND")
+        g_cur_bad.add_edge("cur_comp:D1", "cur_net:N1", pin="anode", pin_role="anode", comp_type="LED")
+        g_cur_bad.add_edge("cur_comp:D1", "cur_net:N0", pin="cathode", pin_role="cathode", comp_type="LED")
+
+        result_bad = compare_logical_graphs(g_ref, g_cur_bad)
+        assert result_bad["logic_correct"] is False
 
     def test_vcc_ground_role_mismatch(self) -> None:
         """VCC/GND 网络角色不匹配时应检测为错误。"""

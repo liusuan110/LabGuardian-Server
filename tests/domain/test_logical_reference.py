@@ -30,11 +30,13 @@ class TestNormalizeNetRole:
     def test_ground_variants(self) -> None:
         assert normalize_net_role("GND") == "ground"
         assert normalize_net_role("ground") == "ground"
-        assert normalize_net_role("VSS") == "ground"
         assert normalize_net_role("0V") == "ground"
 
     def test_power_variants(self) -> None:
         assert normalize_net_role("VCC") == "power"
+        assert normalize_net_role("VEE") == "power"
+        assert normalize_net_role("VSS") == "power"
+        assert normalize_net_role("negative_supply") == "power"
         assert normalize_net_role("power") == "power"
         assert normalize_net_role("+5V") == "power"
 
