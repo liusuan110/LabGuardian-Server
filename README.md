@@ -208,7 +208,8 @@ component_id + pin_name + hole_id
 
 职责:
 
-- 与 `labguardian_ref_v4` 参考电路比较
+- 与 `logical_reference_v1` 参考电路做逻辑图比较
+- 旧 `labguardian_ref_v4` / 直接 `netlist_v2` 参考文件已不作为主链路输入
 - 输出 `validator_report_v2`
 - 生成:
   - `error_code`

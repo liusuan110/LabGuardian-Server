@@ -52,6 +52,8 @@ class PipelineRequest(BaseModel):
         ),
     )
     net_role_assignments: list[ManualNetRoleAssignment] = Field(default_factory=list)
+    net_alias_assignments: list[ManualNetAliasAssignment] = Field(default_factory=list)
+    net_merge_assignments: list[ManualNetMergeAssignment] = Field(default_factory=list)
 
 
 class ManualCorrectionPatch(BaseModel):
@@ -79,6 +81,28 @@ class ManualNetRoleAssignment(BaseModel):
     y_image: float | None = None
 
 
+class ManualNetAliasAssignment(BaseModel):
+    """前端手动指定 current net 的稳定逻辑名/别名。"""
+
+    canonical_name: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    source: str = "manual_net_alias"
+    role: str | None = None
+    hole_id: str | None = None
+    component_id: str | None = None
+    pin_name: str | None = None
+    electrical_net_id: str | None = None
+    electrical_node_id: str | None = None
+
+
+class ManualNetMergeAssignment(BaseModel):
+    """前端手动合并被视觉/拓扑拆开的 current nets。"""
+
+    source_net_ids: list[str] = Field(default_factory=list)
+    target_canonical_name: str | None = None
+    source: str = "manual_net_merge"
+
+
 class ManualPinPolarityAssignment(BaseModel):
     """前端手动指定三极管引脚极性。"""
 
@@ -97,6 +121,8 @@ class CorrectedRecomputeRequest(BaseModel):
     corrections: list[ManualCorrectionPatch] = Field(default_factory=list)
     rail_assignments: dict[str, str] | None = None
     net_role_assignments: list[ManualNetRoleAssignment] = Field(default_factory=list)
+    net_alias_assignments: list[ManualNetAliasAssignment] = Field(default_factory=list)
+    net_merge_assignments: list[ManualNetMergeAssignment] = Field(default_factory=list)
     pin_polarity_assignments: list[ManualPinPolarityAssignment] = Field(default_factory=list)
     reference_id: str | None = None
     reference_circuit: dict[str, Any] | None = None
@@ -188,6 +214,9 @@ class CompareNetlistRequest(BaseModel):
     reference_id: str | None = None
     reference_circuit: dict[str, Any] | None = None
     current_netlist_v2: dict[str, Any] = Field(..., description="当前识别的 netlist_v2")
+    net_alias_assignments: list[ManualNetAliasAssignment] = Field(default_factory=list)
+    net_merge_assignments: list[ManualNetMergeAssignment] = Field(default_factory=list)
+    net_role_assignments: list[ManualNetRoleAssignment] = Field(default_factory=list)
 
 
 class CompareNetlistResponse(BaseModel):

@@ -4,6 +4,7 @@ import pytest
 
 from app.domain.logical_reference import current_netlist_v2_to_graph, normalize_net_role
 from app.domain.graph_compare import compare_logical_graphs
+from app.pipeline.net_roles import apply_net_role_assignments
 from app.schemas.pipeline import CorrectedRecomputeRequest, ManualCorrectionPatch, ManualNetRoleAssignment
 from app.services.pipeline_service import PipelineService
 
@@ -161,6 +162,38 @@ class TestCurrentNetlistV2ToGraphRoles:
         assert graph.nodes["cur_net:NET_003"]["role"] == "power"
         assert graph.nodes["cur_net:NET_004"]["role"] == "ground"
         assert graph.nodes["cur_net:NET_001"]["role_label"] == "VIN"
+
+
+class TestApplyNetRoleAssignments:
+    def test_apply_net_role_assignments_by_electrical_net_id(self) -> None:
+        netlist = {
+            "components": [
+                {
+                    "component_id": "R1",
+                    "pins": [{"pin_name": "pin1", "electrical_net_id": "NET_001"}],
+                }
+            ],
+            "nets": [{"electrical_net_id": "NET_001", "member_hole_ids": ["A1"]}],
+        }
+
+        warnings, applied = apply_net_role_assignments(
+            netlist,
+            [
+                {
+                    "role": "VIN",
+                    "role_label": "VIN",
+                    "electrical_net_id": "NET_001",
+                    "source": "manual_netlist_select",
+                }
+            ],
+        )
+
+        assert warnings == []
+        assert applied[0]["electrical_net_id"] == "NET_001"
+        net = netlist["nets"][0]
+        assert net["role"] == "input"
+        assert net["manual_role"] == "input"
+        assert net["role_label"] == "VIN"
 
 
 class TestGraphCompareRoleMismatch:

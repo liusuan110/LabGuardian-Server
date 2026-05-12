@@ -57,9 +57,10 @@ def run_semantic_analysis(
     netlist = netlist_v2 or {}
     components = _extract_components(netlist)
     net_roles = _extract_net_roles(netlist)
+    net_display_names = _extract_net_display_names(netlist)
     net_pins = _index_pins_by_net(components)
 
-    wiring_errors = _diagnose_wiring_errors(components, net_roles, net_pins)
+    wiring_errors = _diagnose_wiring_errors(components, net_roles, net_pins, net_display_names)
     template = _match_templates(components, net_roles, wiring_errors)
     recognized_roles = template["recognized_roles"]
     suggested_pin_moves = _build_suggested_pin_moves(template, wiring_errors, net_roles)
@@ -127,12 +128,31 @@ def _extract_net_roles(netlist: dict[str, Any]) -> dict[str, set[str]]:
         explicit_role = str(net.get("power_role") or "").upper()
         if explicit_role in {POWER_ROLE_VCC, POWER_ROLE_GND}:
             current.add(explicit_role)
+        for label in [net.get("role_label"), *list(net.get("aliases") or []), *list(net.get("merged_role_labels") or [])]:
+            normalized = str(label or "").upper()
+            if normalized in {POWER_ROLE_VCC, POWER_ROLE_GND}:
+                current.add(normalized)
         for item in list(net.get("member_node_ids") or []) + list(net.get("member_hole_ids") or []):
             inferred = _infer_power_role(str(item))
             if inferred:
                 current.add(inferred)
         roles[net_id] = current
     return roles
+
+
+def _extract_net_display_names(netlist: dict[str, Any]) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for net in netlist.get("nets") or []:
+        net_id = str(net.get("electrical_net_id") or net.get("net_id") or "")
+        if not net_id:
+            continue
+        names[net_id] = str(
+            net.get("canonical_name")
+            or net.get("role_label")
+            or net.get("power_role")
+            or net_id
+        )
+    return names
 
 
 def _infer_power_role(value: str) -> str | None:
@@ -165,17 +185,20 @@ def _diagnose_wiring_errors(
     components: list[SemanticComponent],
     net_roles: dict[str, set[str]],
     net_pins: dict[str, list[SemanticPin]],
+    net_display_names: dict[str, str],
 ) -> list[dict[str, Any]]:
     errors: list[dict[str, Any]] = []
 
     for net_id, roles in net_roles.items():
+        net_name = net_display_names.get(net_id, net_id)
         if {POWER_ROLE_VCC, POWER_ROLE_GND}.issubset(roles):
             errors.append(
                 {
                     "error_code": "POWER_GND_SHORT",
                     "severity": "danger",
-                    "message": f"{net_id}: VCC 与 GND 出现在同一电气网络，疑似电源地短路",
-                    "net_id": net_id,
+                    "message": f"{net_name}: VCC 与 GND 出现在同一电气网络，疑似电源地短路",
+                    "net_id": net_name,
+                    "source_net_id": net_id,
                     "expected": "VCC and GND separated",
                     "actual": sorted(roles),
                 }
@@ -186,6 +209,7 @@ def _diagnose_wiring_errors(
             continue
         unique_nets = [net_id for net_id in comp.unique_net_ids if net_id]
         if len(unique_nets) == 1 and len(comp.net_ids) >= 2:
+            net_name = net_display_names.get(unique_nets[0], unique_nets[0])
             errors.append(
                 {
                     "error_code": "COMPONENT_SHORTED_SAME_NET",
@@ -193,10 +217,11 @@ def _diagnose_wiring_errors(
                     "message": f"{comp.component_id}: {comp.component_type} 两个引脚落在同一电气网络，元件被短接",
                     "component_id": comp.component_id,
                     "component_type": comp.component_type,
-                    "current_net_id": unique_nets[0],
+                    "current_net_id": net_name,
+                    "source_net_id": unique_nets[0],
                     "current_hole_id": [pin.hole_id for pin in comp.pins],
                     "expected": "component pins on different nets",
-                    "actual": unique_nets[0],
+                    "actual": net_name,
                 }
             )
 
@@ -209,6 +234,7 @@ def _diagnose_wiring_errors(
             # S5 只对更可能代表接线遗漏的器件端点给出悬空告警。
             if pin.component_type == "Resistor":
                 continue
+            net_name = net_display_names.get(net_id, net_id)
             errors.append(
                 {
                     "error_code": "FLOATING_PIN",
@@ -217,7 +243,8 @@ def _diagnose_wiring_errors(
                     "component_id": pin.component_id,
                     "component_type": pin.component_type,
                     "pin_name": pin.pin_name,
-                    "current_net_id": net_id,
+                    "current_net_id": net_name,
+                    "source_net_id": net_id,
                     "current_hole_id": pin.hole_id,
                     "expected": "signal net connected to at least two non-wire pins or a power rail",
                     "actual": "single_pin_net",

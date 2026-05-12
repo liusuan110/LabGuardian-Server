@@ -17,14 +17,49 @@ def _load_json(path: Path):
         return json.load(f)
 
 
+def _reference_resistor_components() -> list[dict]:
+    return [
+        {
+            "component_id": "R1",
+            "component_type": "Resistor",
+            "package_type": "axial_2pin",
+            "symmetry_group": [["pin1", "pin2"]],
+            "pins": [
+                {
+                    "pin_id": 1,
+                    "pin_name": "pin1",
+                    "hole_id": "B12",
+                    "electrical_node_id": "ROW_12_L",
+                    "confidence": 1.0,
+                },
+                {
+                    "pin_id": 2,
+                    "pin_name": "pin2",
+                    "hole_id": "F12",
+                    "electrical_node_id": "ROW_12_R",
+                    "confidence": 1.0,
+                },
+            ],
+        }
+    ]
+
+
+def _validator_with_reference() -> CircuitValidator:
+    reference_analyzer, _normalized = build_analyzer_from_components(
+        _reference_resistor_components()
+    )
+    validator = CircuitValidator()
+    validator.set_reference(reference_analyzer)
+    return validator
+
+
 def test_validator_report_v2_exposes_locator_fields_and_evidence_objects() -> None:
     mapped_components = _load_json(FIXTURE_DIR / "mapped_node_mismatch.json")
     mapped_components[0]["bbox"] = [100, 100, 180, 140]
     analyzer, _normalized = build_analyzer_from_components(
         mapped_components
     )
-    validator = CircuitValidator()
-    validator.load_reference(str(FIXTURE_DIR / "reference_resistor_v4.json"))
+    validator = _validator_with_reference()
 
     result = validator.compare(analyzer)
     item = next(
@@ -58,8 +93,7 @@ def test_agent_evidence_exposes_frontend_highlight_protocol() -> None:
     mapped_components = _load_json(FIXTURE_DIR / "mapped_node_mismatch.json")
     mapped_components[0]["bbox"] = [100, 100, 180, 140]
     analyzer, _normalized = build_analyzer_from_components(mapped_components)
-    validator = CircuitValidator()
-    validator.load_reference(str(FIXTURE_DIR / "reference_resistor_v4.json"))
+    validator = _validator_with_reference()
     comparison_report = validator.compare(analyzer)["report"]
     evidence = build_runtime_evidence_from_station(
         station_id="S01",

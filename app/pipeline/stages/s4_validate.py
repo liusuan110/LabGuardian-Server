@@ -14,6 +14,11 @@ from typing import Any, Dict, List
 
 from app.domain.graph_compare import compare_logical_graphs
 from app.domain.logical_reference import current_netlist_v2_to_graph, logical_reference_to_graph
+from app.domain.reference_formats import (
+    SUPPORTED_REFERENCE_FORMAT,
+    get_reference_format,
+    unsupported_reference_format_message,
+)
 from app.domain.risk import classify_risk
 
 logger = logging.getLogger(__name__)
@@ -74,8 +79,10 @@ def run_validate(
             started_at=t0,
         )
 
+    reference_format = get_reference_format(reference_circuit)
+
     # 2. 支持 logical_reference_v1
-    if isinstance(reference_circuit, dict) and reference_circuit.get("format") == "logical_reference_v1":
+    if isinstance(reference_circuit, dict) and reference_format == SUPPORTED_REFERENCE_FORMAT:
         return _run_logical_reference_validate(
             reference_circuit=reference_circuit,
             components=components,
@@ -89,13 +96,10 @@ def run_validate(
         "error_code": "UNSUPPORTED_REFERENCE_FORMAT",
         "error_family": "reference_format",
         "severity": "error",
-        "message": (
-            f"不支持的参考电路格式: {reference_circuit.get('format') if isinstance(reference_circuit, dict) else type(reference_circuit).__name__}。"
-            "当前仅支持 logical_reference_v1。"
-        ),
-        "expected": {"format": "logical_reference_v1"},
-        "actual": {"format": reference_circuit.get("format") if isinstance(reference_circuit, dict) else str(reference_circuit)},
-        "suggested_action": "请将参考电路转换为 logical_reference_v1 格式后重试。",
+        "message": unsupported_reference_format_message(reference_format),
+        "expected": {"format": SUPPORTED_REFERENCE_FORMAT},
+        "actual": {"format": reference_format or str(type(reference_circuit).__name__)},
+        "suggested_action": f"请将参考电路转换为 {SUPPORTED_REFERENCE_FORMAT} 格式后重试。",
     }
     comparison_report = _logical_error_report(item, similarity=0.0)
     return _logical_s4_response(
@@ -178,7 +182,7 @@ def _run_logical_reference_validate(
             "error_family": "reference_format",
             "severity": "error",
             "message": f"logical_reference_v1 参考电路格式无效: {exc}",
-            "expected": {"format": "logical_reference_v1"},
+            "expected": {"format": SUPPORTED_REFERENCE_FORMAT},
             "actual": {},
             "suggested_action": "请检查上传的参考电路 JSON 格式。",
         }
@@ -233,6 +237,10 @@ def _logical_error_report(item: Dict[str, Any], *, similarity: float) -> Dict[st
             "ignore_passive_pin_order": True,
             "strict_functional_pin_roles": True,
             "equivalence_rule": "logical_topology_with_port_semantics",
+            "report_layers": {
+                "erc": {"source": "semantic_analysis", "included": False},
+                "reference_compare": {"source": "s4_validate", "included": True},
+            },
         },
         "items": [item],
         "topology_errors": [],

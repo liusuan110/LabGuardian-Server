@@ -83,10 +83,40 @@ class TestReferenceService:
             }
         )
 
+    def test_validate_reference_accepts_nc_pin_without_net(self) -> None:
+        svc = ReferenceService()
+        svc.validate_reference(
+            {
+                "format": "logical_reference_v1",
+                "reference_id": "nc_ok",
+                "components": [
+                    {
+                        "ref_id": "J1",
+                        "type": "Header",
+                        "pins": [
+                            {"pin": "pin1", "net": "VIN"},
+                            {"pin": "pin2", "nc": True},
+                        ],
+                    }
+                ],
+                "nets": [{"net": "VIN"}],
+            }
+        )
+
     def test_validate_reference_missing_format(self) -> None:
         svc = ReferenceService()
-        with pytest.raises(ValueError, match="format 必须是"):
+        with pytest.raises(ValueError, match="不支持的参考电路格式"):
             svc.validate_reference({"components": []})
+
+    def test_validate_reference_rejects_legacy_ref_v4(self) -> None:
+        svc = ReferenceService()
+        with pytest.raises(ValueError, match="不支持旧参考电路格式"):
+            svc.validate_reference(
+                {
+                    "meta": {"format": "labguardian_ref_v4"},
+                    "netlist_v2": {"components": [], "nets": []},
+                }
+            )
 
     def test_validate_reference_empty_components(self) -> None:
         svc = ReferenceService()

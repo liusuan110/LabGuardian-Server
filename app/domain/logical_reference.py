@@ -142,6 +142,8 @@ def validate_logical_reference(payload: dict[str, Any]) -> None:
                 raise ValueError(f"components[{idx}].pins[{pin_idx}] must be an object")
             if not str(pin.get("pin") or "").strip():
                 raise ValueError(f"components[{idx}].pins[{pin_idx}] must contain pin")
+            if pin.get("nc") is True:
+                continue
             pin_net = str(pin.get("net") or "").strip()
             if not pin_net:
                 raise ValueError(f"components[{idx}].pins[{pin_idx}] must contain net")
@@ -167,6 +169,7 @@ def logical_reference_to_graph(payload: dict[str, Any]) -> nx.Graph:
         str(pin["net"])
         for comp in payload.get("components", [])
         for pin in comp.get("pins", [])
+        if pin.get("nc") is not True
     }
     for net_name in sorted(referenced_nets | set(net_roles)):
         graph.add_node(
@@ -189,6 +192,8 @@ def logical_reference_to_graph(payload: dict[str, Any]) -> nx.Graph:
             source_id=ref_id,
         )
         for pin in comp.get("pins", []):
+            if pin.get("nc") is True:
+                continue
             net_name = str(pin["net"])
             graph.add_edge(
                 comp_node,
@@ -212,32 +217,51 @@ def current_netlist_v2_to_graph(netlist_v2: dict[str, Any]) -> nx.Graph:
     graph = nx.Graph()
     net_roles: dict[str, str] = {}
     net_role_labels: dict[str, str] = {}
+    net_role_sources: dict[str, str] = {}
     for net in netlist_v2.get("nets", []) or []:
         if not isinstance(net, dict):
             continue
         net_id = str(net.get("electrical_net_id") or net.get("net_id") or "").strip()
         if not net_id:
             continue
+        canonical_name = normalize_role_label(net.get("canonical_name"))
         role_label = normalize_role_label(net.get("role_label"))
         power_role = normalize_role_label(net.get("power_role"))
         if not role_label and power_role in {"VCC", "VDD", "VEE", "VSS", "GND"}:
             role_label = power_role
+        if not role_label and canonical_name and not canonical_name.startswith("NET_"):
+            role_label = canonical_name
 
-        role = (
-            net.get("role")
-            or net.get("manual_role")
-            or role_label
-            or power_role
-            or "signal"
-        )
+        manual_role = net.get("manual_role")
+        explicit_role = net.get("role")
+        if manual_role:
+            role = manual_role
+            role_source = "manual_role"
+        elif role_label:
+            role = role_label
+            role_source = "role_label"
+        elif power_role:
+            role = power_role
+            role_source = "power_role"
+        elif explicit_role:
+            role = explicit_role
+            role_source = "explicit_role"
+        else:
+            role = "signal"
+            role_source = "default_signal"
         net_roles[net_id] = normalize_net_role(role)
         net_role_labels[net_id] = role_label
+        net_role_sources[net_id] = role_source
         graph.add_node(
             _cur_net_node_id(net_id),
             kind="net",
             role=net_roles[net_id],
             source_id=net_id,
             role_label=role_label,
+            role_source=role_source,
+            canonical_name=canonical_name or role_label or net_id,
+            aliases=[normalize_role_label(value) for value in net.get("aliases", []) or []],
+            canonical_source=net.get("canonical_source"),
         )
 
     for comp in netlist_v2.get("components", []) or []:
@@ -271,6 +295,9 @@ def current_netlist_v2_to_graph(netlist_v2: dict[str, Any]) -> nx.Graph:
                     role=net_roles.get(net_id, "signal"),
                     source_id=net_id,
                     role_label=net_role_labels.get(net_id, ""),
+                    role_source=net_role_sources.get(net_id, "default_signal"),
+                    canonical_name=net_role_labels.get(net_id, "") or net_id,
+                    aliases=[],
                 )
             graph.add_edge(
                 comp_node,

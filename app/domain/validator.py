@@ -10,11 +10,9 @@ import json
 import logging
 import math
 from collections import Counter
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import networkx as nx
-from networkx.readwrite import json_graph
 
 from .board_schema import BoardSchema
 from .circuit import (
@@ -28,6 +26,11 @@ from .highlight_protocol import (
     build_highlight_targets_for_diagnostic,
 )
 from .netlist_models import ComponentInstance, PinAssignment
+from .reference_formats import (
+    SUPPORTED_REFERENCE_FORMAT,
+    get_reference_format,
+    unsupported_reference_format_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,22 +96,9 @@ class CircuitValidator:
             self.ref_topology = None
 
     def save_reference(self, file_path: str):
-        if not self.has_reference:
-            raise ValueError("No reference circuit set.")
-        topo_payload = None
-        if self.ref_topology is not None:
-            topo_payload = json_graph.node_link_data(self.ref_topology)
-        payload = {
-            "meta": {
-                "created_at": datetime.now().isoformat(timespec="seconds"),
-                "format": "labguardian_ref_v4",
-            },
-            "components": [],
-            "netlist_v2": self.ref_netlist_v2,
-            "topology": topo_payload,
-        }
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+        raise ValueError(
+            f"CircuitValidator 不再保存旧参考格式；请使用 {SUPPORTED_REFERENCE_FORMAT}。"
+        )
 
     def load_reference(self, file_path: str):
         with open(file_path, "r", encoding="utf-8") as f:
@@ -116,55 +106,22 @@ class CircuitValidator:
         self._load_reference_payload(payload)
 
     def load_reference_payload(self, payload: Dict):
-        """从内联 dict 加载 reference.
+        """Reject old physical reference payloads.
 
-        支持两种输入:
-        1. 完整 `labguardian_ref_v4` payload, 包含 `netlist_v2`
-        2. 直接传 `netlist_v2` 对象
+        New validation uses logical_reference_v1 through S4/graph_compare.
         """
         self._load_reference_payload(payload)
 
     def _load_reference_payload(self, payload: Dict):
         if not isinstance(payload, dict):
             raise ValueError("Reference payload must be a dict.")
-
-        if "netlist_v2" in payload:
-            netlist_v2 = payload.get("netlist_v2")
-            topo_data = payload.get("topology")
-        elif "components" in payload and "nets" in payload:
-            netlist_v2 = payload
-            topo_data = None
-        else:
-            raise ValueError("Reference payload must contain netlist_v2 or be a netlist_v2 object.")
-
-        self.ref_netlist_v2 = netlist_v2
-        if not self.ref_netlist_v2:
-            raise ValueError("Reference payload must contain netlist_v2 in labguardian_ref_v4 format.")
-
-        self.ref_component_instances = []
-        netlist_v2 = self.ref_netlist_v2 or {}
-        board_schema_id = netlist_v2.get("board_schema_id", "breadboard_legacy_v1")
-        board_schema = BoardSchema.default_breadboard()
-        if board_schema.schema_id != board_schema_id:
-            logger.info("Reference requested board schema %s, fallback to default schema", board_schema_id)
-
-        tmp = CircuitAnalyzer(board_schema=board_schema)
-        for item in netlist_v2.get("components", []):
-            instance = _component_instance_from_dict(item)
-            tmp.add_component_instance(instance)
-
-        self.ref_graph = tmp.graph.copy()
-        self.ref_component_instances = list(tmp.component_instances)
-        if topo_data:
-            try:
-                self.ref_topology = json_graph.node_link_graph(topo_data)
-                return
-            except Exception:
-                self.ref_topology = None
-        try:
-            self.ref_topology = tmp.build_topology_graph()
-        except Exception:
-            self.ref_topology = None
+        actual_format = get_reference_format(payload)
+        if actual_format == SUPPORTED_REFERENCE_FORMAT:
+            raise ValueError(
+                f"CircuitValidator 不再加载参考文件；{SUPPORTED_REFERENCE_FORMAT} "
+                "请通过 S4 logical graph 比较入口使用。"
+            )
+        raise ValueError(unsupported_reference_format_message(actual_format))
 
     def _deprecated_legacy_logic_reference(self, file_path: str):
         """加载纯逻辑参考电路（不含物理孔位，仅描述逻辑连接关系）。"""
@@ -1382,113 +1339,6 @@ class CircuitValidator:
             )
 
         return issues
-
-
-def _component_instance_from_dict(item: Dict) -> ComponentInstance:
-    pins = []
-    for pin in item.get("pins", []):
-        pins.append(
-            PinAssignment(
-                pin_id=int(pin.get("pin_id", len(pins) + 1)),
-                pin_name=str(pin.get("pin_name") or f"pin{len(pins) + 1}"),
-                hole_id=str(pin.get("hole_id") or ""),
-                electrical_node_id=pin.get("electrical_node_id"),
-                electrical_net_id=pin.get("electrical_net_id"),
-                confidence=float(pin.get("confidence", 0.0)),
-                is_ambiguous=bool(pin.get("is_ambiguous", False)),
-                metadata=dict(pin.get("metadata") or {}),
-            )
-        )
-    return ComponentInstance(
-        component_id=str(item.get("component_id") or "UNKNOWN"),
-        component_type=str(item.get("component_type") or item.get("type") or "UNKNOWN"),
-        package_type=str(item.get("package_type") or "legacy"),
-        part_subtype=str(item.get("part_subtype") or ""),
-        polarity=str(item.get("polarity") or "none"),
-        orientation=float(item.get("orientation", 0.0)),
-        symmetry_group=[list(group) for group in item.get("symmetry_group", [])],
-        pins=pins,
-        confidence=float(item.get("confidence", 1.0)),
-        metadata=dict(item.get("metadata") or {}),
-    )
-
-
-def _build_topology_from_logic_ref(payload: Dict) -> Tuple[nx.Graph, List[Dict]]:
-    """将旧版纯逻辑参考转换为拓扑图。
-
-    输出格式与 CircuitAnalyzer.build_topology_graph() 完全一致：
-    - comp 节点: kind='comp', ctype=..., polarity=..., pins=N
-    - net 节点: kind='net', power=...(可选)
-    - 边: role=pin_name, pin_role=pin_name
-    """
-    components = payload.get("components", [])
-    nets = payload.get("nets", [])
-
-    # net_label -> 内部 net_id (N0, N1, ...)
-    net_label_to_id: Dict[str, str] = {}
-    for i, net in enumerate(nets):
-        label = net.get("net_label") or net.get("net_id") or f"NET_{i}"
-        net_label_to_id[label] = f"N{i}"
-
-    topo = nx.Graph()
-    logic_components: List[Dict] = []
-
-    # 添加 net 节点
-    for net in nets:
-        label = net.get("net_label") or net.get("net_id")
-        net_id = net_label_to_id.get(label, label)
-        attrs: Dict[str, Any] = {"kind": "net"}
-        power_role = net.get("power_role", "")
-        if power_role:
-            attrs["power"] = power_role
-        topo.add_node(net_id, **attrs)
-
-    # 添加 comp 节点和边
-    for comp in components:
-        instance_id = comp.get("instance_id") or comp.get("component_id", "UNKNOWN")
-        ctype = norm_component_type(comp.get("component_type", "UNKNOWN"))
-        polarity = str(comp.get("polarity", "none"))
-        package_type = str(comp.get("package_type", ""))
-
-        pin_map: Dict[str, str] = {}
-        net_ids: List[str] = []
-        net_roles: Dict[str, str] = {}
-
-        for pin in comp.get("pins", []):
-            pin_name = pin.get("pin_name") or "generic"
-            net_label = pin.get("net_label") or pin.get("net", "")
-            net_id = net_label_to_id.get(net_label, net_label)
-            pin_map[pin_name] = net_id
-            net_ids.append(net_id)
-            if net_id not in net_roles:
-                net_roles[net_id] = pin_name
-
-        unique_nets = list(dict.fromkeys(net_ids))
-        node_attrs = {
-            "kind": "comp",
-            "ctype": ctype,
-            "polarity": polarity,
-            "pins": len(comp.get("pins", [])),
-        }
-        if len(unique_nets) == 1 and len(net_ids) > 1:
-            node_attrs["same_net"] = True
-        topo.add_node(instance_id, **node_attrs)
-
-        for net_id in unique_nets:
-            role = net_roles.get(net_id, "generic")
-            topo.add_edge(instance_id, net_id, role=role, pin_role=role)
-
-        logic_components.append({
-            "instance_id": instance_id,
-            "component_type": ctype,
-            "package_type": package_type,
-            "polarity": polarity,
-            "symmetry_group": [list(g) for g in comp.get("symmetry_group", [])],
-            "pins": pin_map,
-            "raw_pins": comp.get("pins", []),
-        })
-
-    return topo, logic_components
 
 
 def _needs_polarity_check(comp: ComponentInstance) -> bool:

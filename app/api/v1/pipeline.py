@@ -12,6 +12,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.core.deps import get_classroom, get_guidance_service, get_pipeline_service
 from app.domain.graph_compare import compare_logical_graphs
 from app.domain.logical_reference import current_netlist_v2_to_graph, logical_reference_to_graph
+from app.domain.net_normalization import normalize_current_netlist
+from app.domain.reference_formats import (
+    SUPPORTED_REFERENCE_FORMAT,
+    get_reference_format,
+    unsupported_reference_format_message,
+)
 from app.schemas.pipeline import (
     CircuitAnalysisResult,
     CompareNetlistRequest,
@@ -26,6 +32,7 @@ from app.services.classroom_state import ClassroomState
 from app.services.guidance_service import GuidanceService
 from app.services.pipeline_service import PipelineService
 from app.services.reference_service import ReferenceService
+from app.pipeline.net_roles import apply_net_role_assignments
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
@@ -151,10 +158,11 @@ async def compare_netlist(request: CompareNetlistRequest):
     if not ref_payload:
         raise HTTPException(status_code=400, detail="必须提供 reference_id 或 reference_circuit")
 
-    if ref_payload.get("format") != "logical_reference_v1":
+    reference_format = get_reference_format(ref_payload)
+    if reference_format != SUPPORTED_REFERENCE_FORMAT:
         raise HTTPException(
             status_code=400,
-            detail="当前仅支持 format='logical_reference_v1' 的参考电路",
+            detail=unsupported_reference_format_message(reference_format),
         )
 
     current_netlist_v2 = request.current_netlist_v2
@@ -162,6 +170,16 @@ async def compare_netlist(request: CompareNetlistRequest):
         raise HTTPException(status_code=400, detail="必须提供 current_netlist_v2")
 
     try:
+        role_warnings, role_applied = apply_net_role_assignments(
+            current_netlist_v2,
+            [item.model_dump() for item in request.net_role_assignments],
+        )
+        normalization = normalize_current_netlist(
+            current_netlist_v2,
+            reference_circuit=ref_payload,
+            net_alias_assignments=[item.model_dump() for item in request.net_alias_assignments],
+            net_merge_assignments=[item.model_dump() for item in request.net_merge_assignments],
+        )
         reference_graph = logical_reference_to_graph(ref_payload)
         current_graph = current_netlist_v2_to_graph(current_netlist_v2)
         result = compare_logical_graphs(
@@ -174,6 +192,11 @@ async def compare_netlist(request: CompareNetlistRequest):
         raise HTTPException(status_code=500, detail=f"比较失败: {exc}")
 
     report = result.get("report", {})
+    summary = dict(report.get("summary", {}))
+    summary["manual_roles_applied"] = role_applied
+    summary["manual_role_warnings"] = role_warnings
+    summary["net_normalization"] = normalization
+    report["summary"] = summary
     diagnostics = [str(item.get("message")) for item in report.get("items", []) if item.get("message")]
     if not diagnostics:
         diagnostics = [str(result.get("message") or "电路逻辑连接与参考电路一致")]

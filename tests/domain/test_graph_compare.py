@@ -182,6 +182,58 @@ class TestCompareLogicalGraphs:
         assert result["logic_correct"] is True
         assert result["details"]["match_type"] == "full_isomorphism"
 
+    def test_non_polar_capacitor_class_aliases_match(self) -> None:
+        """Generic non-polar Capacitor and CapacitorCeramic should match."""
+        g_ref = nx.Graph()
+        g_ref.add_node("ref_comp:C1", kind="comp", ctype="Capacitor")
+        g_ref.add_node("ref_net:A", kind="net", role="signal")
+        g_ref.add_node("ref_net:B", kind="net", role="ground")
+        g_ref.add_edge("ref_comp:C1", "ref_net:A", pin="pin1", comp_type="Capacitor")
+        g_ref.add_edge("ref_comp:C1", "ref_net:B", pin="pin2", comp_type="Capacitor")
+
+        g_cur = nx.Graph()
+        g_cur.add_node("cur_comp:C9", kind="comp", ctype="CapacitorCeramic")
+        g_cur.add_node("cur_net:NET_0", kind="net", role="signal")
+        g_cur.add_node("cur_net:NET_1", kind="net", role="ground")
+        g_cur.add_edge("cur_comp:C9", "cur_net:NET_0", pin="pin2", comp_type="CapacitorCeramic")
+        g_cur.add_edge("cur_comp:C9", "cur_net:NET_1", pin="pin1", comp_type="CapacitorCeramic")
+
+        result = compare_logical_graphs(g_ref, g_cur)
+        assert result["logic_correct"] is True
+        assert result["similarity"] == 1.0
+        assert result["details"]["match_type"] == "full_isomorphism"
+
+    def test_electrolytic_capacitor_still_strict(self) -> None:
+        """Electrolytic capacitors must not match non-polar capacitors."""
+        g_ref = nx.Graph()
+        g_ref.add_node("ref_comp:C1", kind="comp", ctype="CapacitorElectrolytic")
+        g_ref.add_node("ref_net:VCC", kind="net", role="power", role_label="VCC")
+        g_ref.add_node("ref_net:GND", kind="net", role="ground", role_label="GND")
+        g_ref.add_edge(
+            "ref_comp:C1",
+            "ref_net:VCC",
+            pin="positive",
+            pin_role="positive",
+            comp_type="CapacitorElectrolytic",
+        )
+        g_ref.add_edge(
+            "ref_comp:C1",
+            "ref_net:GND",
+            pin="negative",
+            pin_role="negative",
+            comp_type="CapacitorElectrolytic",
+        )
+
+        g_cur = nx.Graph()
+        g_cur.add_node("cur_comp:C9", kind="comp", ctype="CapacitorCeramic")
+        g_cur.add_node("cur_net:NET_0", kind="net", role="power", role_label="VCC")
+        g_cur.add_node("cur_net:NET_1", kind="net", role="ground", role_label="GND")
+        g_cur.add_edge("cur_comp:C9", "cur_net:NET_0", pin="pin1", comp_type="CapacitorCeramic")
+        g_cur.add_edge("cur_comp:C9", "cur_net:NET_1", pin="pin2", comp_type="CapacitorCeramic")
+
+        result = compare_logical_graphs(g_ref, g_cur)
+        assert result["logic_correct"] is False
+
     def test_summary_metadata(self) -> None:
         result = compare_logical_graphs(_build_ref(), _build_cur_match())
         summary = result["report"]["summary"]
