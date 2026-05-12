@@ -93,15 +93,44 @@ def _generate_detailed_items(ref_graph: nx.Graph, cur_graph: nx.Graph, ref_paylo
         items.append(_detailed_item(error_code="COMPONENT_EXTRA", error_family="extra_component", severity=severity, message=f"当前电路包含多余的元件 {cur_id}（{cur_comp.get('component_type')}）。", expected=None, actual={"component_id": cur_id, "type": cur_comp.get("component_type")}, component_ref=None, component_actual={"component_id": cur_id, "type": cur_comp.get("component_type")}, evidence_refs=[{"type": "component", "component_id": cur_id}], suggested_action=f"请移除多余的元件 {cur_id}（{cur_comp.get('component_type')}）或确认是否需要它。"))
     items.extend(_wrong_connection_items(ref_payload, cur_netlist_v2, comp_map, net_map, ref_comp_by_id, cur_comp_by_id, cur_net_by_id))
     items.extend(_role_mismatch_items(ref_payload, ref_graph, cur_graph, ref_net_roles, ref_net_labels, net_map, cur_net_by_id, cur_netlist_v2))
-    items.extend(_open_circuit_items(ref_payload, cur_netlist_v2, comp_map, cur_net_by_id))
+    if not _is_topology_equivalent_match(match_type):
+        items.extend(_open_circuit_items(ref_payload, cur_netlist_v2, comp_map, cur_net_by_id))
     items.extend(_short_circuit_items(ref_net_roles, ref_net_labels, net_map, cur_net_by_id))
-    items.extend(_pin_level_short_circuit_items(ref_payload, cur_netlist_v2, comp_map, cur_net_by_id))
+    if not _is_topology_equivalent_match(match_type):
+        items.extend(_pin_level_short_circuit_items(ref_payload, cur_netlist_v2, comp_map, cur_net_by_id))
     if match_type == "current_subgraph_in_reference":
         items.append(_detailed_item(error_code="INCOMPLETE_CIRCUIT", error_family="incomplete_circuit", severity="error", message="当前电路只匹配到参考电路的一部分，电路尚未完整实现。", expected={"reference_component_count": len(ref_comp_by_id), "reference_edge_count": ref_graph.number_of_edges()}, actual={"current_component_count": len(cur_comp_by_id), "current_edge_count": cur_graph.number_of_edges()}, component_ref=None, component_actual=None, evidence_refs=[], suggested_action="请补齐缺失的元件和连接后重新验证。"))
     if _net_count(cur_graph) < _net_count(ref_graph):
         all_cur_nets = sorted(n.get("electrical_net_id") for n in cur_netlist_v2.get("nets", []) if n.get("electrical_net_id"))
         items.append(_detailed_item(error_code="EXTRA_CONNECTION", error_family="extra_connection", severity="warning", message=f"当前电路的电气网络数（{_net_count(cur_graph)}）少于参考电路（{_net_count(ref_graph)}），可能存在不应有的短接。", expected={"net_count": _net_count(ref_graph), "separate_nets": sorted(ref_net_roles)}, actual={"net_count": _net_count(cur_graph), "merged_nets": all_cur_nets}, component_ref=None, component_actual=None, evidence_refs=[], suggested_action="请检查是否有不应相连的节点被错误地连接到了一起。"))
+    if (
+        match_type == "graph_edit_distance_or_fallback"
+        and items
+        and not any(item.get("error_code") == "WRONG_CONNECTION" for item in items)
+    ):
+        items.append(
+            _detailed_item(
+                error_code="WRONG_CONNECTION",
+                error_family="wiring_mismatch",
+                severity="error",
+                message="检测到元件连接关系与参考电路不一致，可能存在错接。",
+                expected={"edge_signatures": _edge_signatures(ref_graph)},
+                actual={"edge_signatures": _edge_signatures(cur_graph)},
+                component_ref=None,
+                component_actual=None,
+                evidence_refs=[],
+                suggested_action="请检查相关元件是否连接到正确的电气节点。",
+            )
+        )
     return _dedupe_detailed_items(items)
+
+
+def _is_topology_equivalent_match(match_type: str | None) -> bool:
+    return match_type in {
+        "full_isomorphism",
+        "full_isomorphism_with_inferred_roles",
+        "equivalent_with_allowed_symmetry",
+    }
 
 
 def _wrong_connection_items(ref_payload: dict[str, Any], cur_netlist_v2: dict[str, Any], comp_map: dict[str, str], net_map: dict[str, str], ref_comp_by_id: dict[str, dict[str, Any]], cur_comp_by_id: dict[str, dict[str, Any]], cur_net_by_id: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -146,8 +175,8 @@ def _wire_item(ref_id: str, cur_id: str, ref_comp: dict[str, Any], cur_comp: dic
 
 def _role_mismatch_items(ref_payload: dict[str, Any], ref_graph: nx.Graph, cur_graph: nx.Graph, ref_net_roles: dict[str, str], ref_net_labels: dict[str, str], net_map: dict[str, str], cur_net_by_id: dict[str, dict[str, Any]], cur_netlist_v2: dict[str, Any]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    cur_net_roles = {nid: normalize_net_role(n.get("role") or n.get("manual_role") or n.get("role_label") or n.get("power_role")) for nid, n in cur_net_by_id.items()}
-    cur_net_labels = {nid: normalize_role_label(n.get("role_label") or n.get("power_role")) for nid, n in cur_net_by_id.items()}
+    cur_net_roles = {nid: _current_net_role(n) for nid, n in cur_net_by_id.items()}
+    cur_net_labels = {nid: _current_net_label(n) for nid, n in cur_net_by_id.items()}
     code_map = {"input": "INPUT_NODE_MISMATCH", "output": "OUTPUT_NODE_MISMATCH", "power": "POWER_NODE_MISMATCH", "ground": "GROUND_NODE_MISMATCH"}
     for ref_net, ref_role in ref_net_roles.items():
         if ref_role == "signal" or not net_map.get(ref_net):
@@ -164,6 +193,31 @@ def _role_mismatch_items(ref_payload: dict[str, Any], ref_graph: nx.Graph, cur_g
                 desc = _current_net_descriptor(mapped, cur_net_by_id)
                 items.append(_detailed_item(error_code="ROLE_LABEL_MISMATCH", error_family="wiring_mismatch", severity="error", message=f"参考网络 {ref_net} 应匹配 role_label={ref_label} 的当前网络，但当前映射到了 role_label={cur_label}。", expected={"reference_net": ref_net, "role": ref_role, "role_label": ref_label}, actual={"current_net": desc, "role": cur_role, "role_label": cur_label}, component_ref=None, component_actual=None, evidence_refs=[{"type": "net", "electrical_net_id": mapped, "canonical_name": desc["canonical_name"]}], suggested_action=f"请将当前网络标注为 {ref_label}，或检查端口是否接反。"))
     return items
+
+
+def _current_net_role(net: dict[str, Any]) -> str:
+    manual_role = net.get("manual_role")
+    if manual_role:
+        return normalize_net_role(manual_role)
+    label = _current_net_label(net)
+    if label:
+        return normalize_net_role(label)
+    if net.get("power_role"):
+        return normalize_net_role(net.get("power_role"))
+    return normalize_net_role(net.get("role"))
+
+
+def _current_net_label(net: dict[str, Any]) -> str:
+    label = normalize_role_label(net.get("role_label"))
+    if label:
+        return label
+    power_role = normalize_role_label(net.get("power_role"))
+    if power_role in {"VCC", "VDD", "VEE", "VSS", "GND"}:
+        return power_role
+    canonical_name = normalize_role_label(net.get("canonical_name"))
+    if canonical_name and not canonical_name.startswith("NET_"):
+        return canonical_name
+    return ""
 
 
 def _ref_pins(ref_payload: dict[str, Any], ref_net: str) -> list[str]:
