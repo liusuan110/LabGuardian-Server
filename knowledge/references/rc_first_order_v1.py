@@ -7,7 +7,7 @@ circuit = Circuit(
     created_at="2026-05-11T00:00:00",
     source={
         "type": "logical_reference_json",
-        "note": "按“低通级 R1+C1 → 高通级 C2+R2”的级联结构修订；只表达电路连接拓扑，不包含具体面包板 hole_id。",
+        "note": "按低通级 R1+C1 → 高通级 C2+R2 的级联结构修订；只表达电路连接拓扑，不包含具体面包板 hole_id。",
     },
     compare_options={
         "ignore_hole_id": True,
@@ -18,15 +18,15 @@ circuit = Circuit(
     },
 )
 
-VIN = circuit.input("VIN", label="input signal / R1 input")
-VLP = circuit.net("VLP", label="low-pass output node / C2 input node")
-VOUT = circuit.output("VOUT", label="band-pass filtered output signal")
-GND = circuit.ground(label="0V")
+VIN = circuit.input("VIN", label="UI1", description="输入信号 / R1 输入端")
+VLP = circuit.net("VLP", description="低通级输出 / C2 输入端 (内部节点)")
+VOUT = circuit.output("VOUT", label="UO1", description="带通滤波后的输出信号")
+GND = circuit.ground(description="0V 参考地")
 
-R1 = Resistor("R1", value="", description="series resistor of the low-pass stage; connects VIN to VLP")
-C1 = CapacitorCeramic("C1", value="", description="shunt capacitor of the low-pass stage from VLP to ground")
-C2 = CapacitorCeramic("C2", value="", description="input coupling capacitor of the high-pass stage; connects VLP to VOUT")
-R2 = Resistor("R2", value="", description="high-pass stage pull-down resistor from VOUT to ground")
+R1 = Resistor("R1", description="低通级串联电阻：连接 VIN 与 VLP")
+C1 = CapacitorCeramic("C1", description="低通级对地电容：从 VLP 到地")
+C2 = CapacitorCeramic("C2", description="高通级输入耦合电容：连接 VLP 与 VOUT")
+R2 = Resistor("R2", description="高通级下拉电阻：从 VOUT 到地")
 
 R1[1, 2] += VIN, VLP
 C1[1, 2] += VLP, GND

@@ -42,12 +42,15 @@ def circuit_to_logical_reference(circuit: Circuit) -> dict[str, Any]:
 def _compile_net(net: Net) -> dict[str, Any]:
     item: dict[str, Any] = {"net": net.name}
     role = normalize_net_role(net.role)
-    if role != "signal":
+    # Only emit ``role`` when the user explicitly set one OR it is non-default.
+    # Default-signal nets carry no role field; the matcher will treat them as
+    # internal signals and rely on inference.
+    if role != "signal" or net.role_explicit:
         item["role"] = role
-    elif net.role:
-        item["role"] = "signal"
     if net.label:
-        item["label"] = net.label
+        item["role_label"] = net.label
+    if net.description:
+        item["description"] = net.description
     item.update(net.metadata)
     return item
 

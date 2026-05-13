@@ -8,19 +8,32 @@ from app.domain.logical_reference import normalize_net_role, normalize_role_labe
 
 @dataclass(eq=False)
 class Net:
-    """Logical net in a DSL reference circuit."""
+    """Logical net in a DSL reference circuit.
+
+    - ``name`` is the canonical net id (used everywhere; case preserved).
+    - ``label`` is an optional short canonical role label (UI1/UO1/VCC/GND/...).
+      Auto-uppercased. Used by the matcher to enforce critical-port equivalence.
+    - ``description`` is free-form prose for documentation only — never read by
+      matching, compiled into the JSON ``description`` field.
+    - ``role_explicit`` records whether the user passed ``role`` so the
+      compiler can drop the field for default-signal nets.
+    """
 
     name: str
     role: str = "signal"
     label: str | None = None
+    description: str | None = None
     circuit: Circuit | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    role_explicit: bool = False
 
     def __post_init__(self) -> None:
         self.name = str(self.name)
         self.role = normalize_net_role(self.role)
         if self.label is not None:
             self.label = normalize_role_label(self.label)
+        if self.description is not None:
+            self.description = str(self.description)
 
     def connect(self, pin: Pin) -> Net:
         pin.connect(self)
@@ -208,30 +221,58 @@ class Circuit:
     def symmetry_groups(self) -> list[dict[str, Any]]:
         return list(self._symmetry_groups)
 
-    def net(self, name: str, *, role: str = "signal", label: str | None = None, **metadata: Any) -> Net:
+    def net(
+        self,
+        name: str,
+        *,
+        role: str | None = None,
+        label: str | None = None,
+        description: str | None = None,
+        **metadata: Any,
+    ) -> Net:
         net_name = str(name)
         existing = self._nets.get(net_name)
         if existing is not None:
-            existing.role = normalize_net_role(role or existing.role)
+            if role is not None:
+                existing.role = normalize_net_role(role)
+                existing.role_explicit = True
             if label is not None:
                 existing.label = normalize_role_label(label)
-            existing.metadata.update({key: value for key, value in metadata.items() if value is not None})
+            if description is not None:
+                existing.description = str(description)
+            existing.metadata.update({k: v for k, v in metadata.items() if v is not None})
             return existing
-        net = Net(net_name, role=role, label=label, circuit=self, metadata=metadata)
+        net = Net(
+            net_name,
+            role=role or "signal",
+            label=label,
+            description=description,
+            circuit=self,
+            metadata=metadata,
+            role_explicit=role is not None,
+        )
         self._nets[net_name] = net
         return net
 
-    def input(self, name: str, *, label: str | None = None, **metadata: Any) -> Net:
-        return self.net(name, role="input", label=label, **metadata)
+    def input(
+        self, name: str, *, label: str | None = None, description: str | None = None, **metadata: Any
+    ) -> Net:
+        return self.net(name, role="input", label=label, description=description, **metadata)
 
-    def output(self, name: str, *, label: str | None = None, **metadata: Any) -> Net:
-        return self.net(name, role="output", label=label, **metadata)
+    def output(
+        self, name: str, *, label: str | None = None, description: str | None = None, **metadata: Any
+    ) -> Net:
+        return self.net(name, role="output", label=label, description=description, **metadata)
 
-    def power(self, name: str = "VCC", *, label: str | None = None, **metadata: Any) -> Net:
-        return self.net(name, role="power", label=label, **metadata)
+    def power(
+        self, name: str = "VCC", *, label: str | None = None, description: str | None = None, **metadata: Any
+    ) -> Net:
+        return self.net(name, role="power", label=label, description=description, **metadata)
 
-    def ground(self, name: str = "GND", *, label: str | None = None, **metadata: Any) -> Net:
-        return self.net(name, role="ground", label=label, **metadata)
+    def ground(
+        self, name: str = "GND", *, label: str | None = None, description: str | None = None, **metadata: Any
+    ) -> Net:
+        return self.net(name, role="ground", label=label, description=description, **metadata)
 
     def add(self, *components: Component) -> Circuit:
         for component in components:
