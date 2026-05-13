@@ -19,10 +19,15 @@ class MragService:
         query: str = "",
         scene_id: str = DEFAULT_SCENE_ID,
         error_tags: list[str] | None = None,
+        circuit_snapshot: str = "",
         structured_context: dict[str, Any] | None = None,
         top_k: int = 5,
     ) -> dict[str, Any]:
         scene = self._teaching_kb_service.get_scene(scene_id) or {}
+        context = dict(structured_context or {})
+        snapshot = str(circuit_snapshot or "").strip()
+        if snapshot and not context.get("circuit_snapshot"):
+            context["circuit_snapshot"] = snapshot
         fault_cases = self._teaching_kb_service.search_fault_cases(
             query=query,
             scene_id=scene_id,
@@ -41,7 +46,7 @@ class MragService:
             },
             "query": query,
             "error_tags": error_tags or [],
-            "structured_context": structured_context or {},
+            "structured_context": context,
             "fault_cases": compact_cases,
             "references": self._collect_references(compact_cases),
             "fix_steps": self._collect_fix_steps(compact_cases),

@@ -513,6 +513,70 @@ class AgentService:
         evidence_contract.history_facts = history_facts
         evidence_contract.history_summary = history_summary
 
+        question = request.user_message or request.query
+        if (
+            question
+            and not _is_agent_identity_question(question)
+            and not _looks_like_current_context_follow_up(question)
+            and not _is_circuit_related_question(question)
+        ):
+            answer, actual_provider, actual_model = self._llm_concept_not_found_answer(
+                question=question,
+                evidence=evidence_contract,
+            )
+            from app.agent.contracts import ContextPack
+
+            stub_pack = ContextPack(
+                pack_id=f"{request.station_id}:off_topic_stub",
+                error_family="unknown",
+                risk_level=evidence_contract.risk_level,
+            )
+            verification = verify_draft_answer(
+                evidence=evidence_contract,
+                context_pack=stub_pack,
+                draft_answer=answer,
+                intent="concept_tutor",
+                concept=None,
+            )
+            actions = self._build_actions(
+                risk_level=evidence_contract.risk_level,
+                diagnostics=evidence_contract.diagnostics,
+            )
+            return AngntJobResult(
+                job_id=job_id,
+                station_id=request.station_id,
+                mode=request.mode,
+                answer=answer,
+                actual_llm_provider=actual_provider,
+                actual_llm_model=actual_model,
+                follow_up_suggestions=[
+                    "你想问当前电路的哪个元件/引脚？（例如 R1、CC1、LED1）",
+                    "你是想排查哪一个错误码？（把错误码贴出来）",
+                    "你希望我解释原理，还是给改线/测量的下一步？",
+                ],
+                citations=build_concept_citations(
+                    station_id=request.station_id,
+                    concept=None,
+                    tool_results=[],
+                ),
+                evidence=build_concept_evidence(
+                    station_id=request.station_id,
+                    intent="concept_tutor",
+                    concept=None,
+                    tool_results=[],
+                    verification_passed=verification.passed,
+                    verification_issues=verification.issues,
+                    evidence=evidence_contract,
+                ),
+                actions=actions,
+                used_retrieval=False,
+                created_at=created_at,
+                debug=AngntChatDebug(
+                    job_id=job_id,
+                    used_context_refs=[],
+                ),
+            )
+
         graph_state = run_diagnostic_graph(
             evidence=evidence_contract,
             query=request.query,
@@ -538,7 +602,6 @@ class AgentService:
         used_context_refs = [
             ref.ref_id for ref in evidence_contract.evidence_refs
         ] + [tool.tool_name for tool in tool_results]
-        question = request.user_message or request.query
         rewritten_answer, actual_provider, actual_model = self._llm_rewrite_diagnostic_answer(
             question=question,
             draft_answer=graph_state.final_answer,
@@ -902,7 +965,7 @@ class AgentService:
         prompt = "\n".join(
             [
                 "你是电路实验故障诊断助教，请对现有答案做自然中文改写。",
-                "关键要求：只能重写表达，不能新增任何事实、孔位、器件、测量值。",
+                "关键要求：只能重写表达，不能新增任何事实、孔位、器件、测量值；可以补充通用的、可执行的排查建议，但不得声称已经测量/已更换/已确认。",
                 "第一句必须直接围绕当前电路的错误码、参考电路和涉及元件展开，不要先寒暄或泛泛说明。",
                 "如果原始答案包含历史对比、上一轮、仍然存在、有所改善或错误码变化，必须保留这些判断。",
                 "必须保留并原样包含：至少 1 个错误码；至少 1 个 evidence_ref 的 component_id/pin_name/hole_id（如果给出）。",
@@ -914,7 +977,13 @@ class AgentService:
                 f"evidence_ref：{refs_text}",
                 f"工具观察：{tool_text}",
                 f"context_pack.error_family={getattr(context_pack, 'error_family', 'unknown')}",
-                "输出要求：4-7句中文；保留排查步骤与安全提醒；最后一句给出下一步检查建议。",
+                "输出结构要求：",
+                "1) 结论：1-2句，必须包含错误码/参考电路/涉及元件；",
+                "2) 依据：1-2句，引用 finding 摘要与 evidence_ref（不要新增孔位）；",
+                "3) 建议：给出 3-5 条编号建议（每条是可执行动作，尽量指向具体元件/引脚/错误码）；",
+                "4) 追问建议：给出 3-6 条编号问题，帮助学生补充关键信息（例如孔位、测量、现象）；",
+                "5) 安全提醒：1句（断电/电源轨/短路/极性）。",
+                "格式约束：必须出现清晰的标题行“建议：”与“追问建议：”，并用 1) 2) 3) 编号。",
             ]
         )
         payload = {
@@ -927,7 +996,7 @@ class AgentService:
             ],
             "options": {
                 "temperature": 0.2,
-                "num_predict": 220,
+                "num_predict": 420,
             },
         }
         try:
@@ -951,6 +1020,30 @@ class AgentService:
                 text = f"{text}\n历史对比：{history_summary}。"
             if error_codes and not any(code in text for code in error_codes):
                 text = f"{text}\n补充定位：本轮关键错误码为 {','.join(error_codes[:3])}。"
+
+            def _extract_tail_section(src: str, markers: tuple[str, ...]) -> str:
+                raw = src or ""
+                for marker in markers:
+                    idx = raw.find(marker)
+                    if idx >= 0:
+                        return raw[idx:].strip()
+                return ""
+
+            has_suggestion_marker = any(token in text for token in ("建议：", "具体建议：", "可优先尝试："))
+            if not has_suggestion_marker:
+                snippet = _extract_tail_section(
+                    draft_answer,
+                    ("具体建议：", "可优先尝试：", "建议："),
+                )
+                if snippet:
+                    text = f"{text}\n{snippet}"
+
+            has_followup_marker = any(token in text for token in ("追问建议：", "引导追问：", "追问："))
+            if not has_followup_marker:
+                follow_ups = _build_follow_up_suggestions(evidence=evidence, context_pack=context_pack)
+                if follow_ups:
+                    numbered = "\n".join(f"{idx}) {item}" for idx, item in enumerate(follow_ups[:6], start=1))
+                    text = f"{text}\n追问建议：\n{numbered}"
             if getattr(evidence, "risk_level", "unknown") in {"danger", "warning"} and not any(
                 token in text for token in ("断电", "安全", "电源")
             ):

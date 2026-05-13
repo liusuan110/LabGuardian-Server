@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+
+from typing import Any
+
 from app.agent.contracts import AgentIntent, ConceptPack, ContextPack, RuntimeEvidence
 from app.agent.tools import ToolResult
 from app.agent.verification import verify_draft_answer
@@ -151,6 +155,7 @@ def _build_general_diagnostic_answer(
     evidence: RuntimeEvidence,
     context_pack: ContextPack,
     tool_results: list[ToolResult],
+    user_message: str,
 ) -> str:
     """通用诊断摘要，不暴露原始证据。"""
     conclusion = diagnostic_conclusion(evidence=evidence, context_pack=context_pack)
@@ -184,11 +189,50 @@ def _build_general_diagnostic_answer(
     if finding_descs:
         parts.append("关键发现：" + ", ".join(finding_descs) + "。")
 
+    msg = str(user_message or "").strip().lower()
+    is_wiring_question = _is_wiring_question(msg)
+    variant_seed = _stable_seed(
+        station_id=station_id,
+        evidence=evidence,
+        context_pack=context_pack,
+        user_message=user_message,
+    )
+
     # 下一步建议
     suggestions: list[str] = []
     for finding in evidence.findings[:3]:
         if finding.suggested_action:
             suggestions.append(finding.suggested_action)
+
+    if is_wiring_question and not evidence.findings:
+        suggestions.extend(_wiring_steps_from_snapshot(snapshot=evidence.circuit_snapshot, limit=6))
+        if not suggestions:
+            suggestions.extend(
+                _wiring_steps_from_reference(
+                    evidence=evidence,
+                    reference_label=_reference_label(evidence),
+                    seed=variant_seed,
+                    limit=6,
+                )
+            )
+        suggestions.extend(_action_suggestions_from_error_codes(evidence=evidence, context_pack=context_pack, seed=variant_seed, limit=4))
+        suggestions.extend(
+            _wiring_generic_steps(seed=variant_seed, limit=3)
+        )
+    else:
+        suggestions.extend(_action_suggestions_from_findings(evidence=evidence, seed=variant_seed, limit=6))
+        if not evidence.findings:
+            suggestions.extend(
+                _action_suggestions_from_error_codes(
+                    evidence=evidence,
+                    context_pack=context_pack,
+                    seed=variant_seed,
+                    limit=4,
+                )
+            )
+
+    suggestions.extend(extract_fix_steps(tool_results)[:4])
+    suggestions = _dedupe_texts(suggestions)[:6]
 
     if not suggestions:
         suggestions.append("对照参考电路逐项核对元件和连接")
@@ -201,9 +245,880 @@ def _build_general_diagnostic_answer(
         parts.append("建议：当前风险较低，继续验证剩余元件和连接完整性即可。")
 
     if suggestions:
-        parts.append("可优先尝试：" + ", ".join(suggestions[:3]) + "。")
+        numbered = "\n".join(f"{idx}) {item}" for idx, item in enumerate(suggestions[:5], start=1))
+        parts.append(("接线建议：\n" if is_wiring_question else "具体建议：\n") + numbered)
+
+    follow_ups = _build_follow_up_suggestions(evidence=evidence, context_pack=context_pack)
+    if follow_ups:
+        parts.append("追问建议：" + "；".join(follow_ups))
 
     return "".join(parts)
+
+
+def _is_wiring_question(msg: str) -> bool:
+    tokens = (
+        "怎么接",
+        "怎么连",
+        "怎么连接",
+        "如何接",
+        "如何连",
+        "接线",
+        "连线",
+        "导线",
+        "跳线",
+        "wire",
+        "wiring",
+        "jumper",
+    )
+    return any(t in msg for t in tokens)
+
+
+def _looks_like_fix_or_wiring_question(message: str) -> bool:
+    msg = str(message or "").strip().lower()
+    tokens = (
+        "怎么接",
+        "怎么连",
+        "怎么连接",
+        "如何接",
+        "如何连",
+        "接线",
+        "连线",
+        "导线",
+        "跳线",
+        "怎么修",
+        "怎么改",
+        "怎么排查",
+        "怎么检查",
+        "怎么处理",
+        "哪里错",
+        "哪里不对",
+        "有问题",
+        "不对劲",
+        "错接",
+        "短路",
+        "悬空",
+        "反了",
+        "wire",
+        "wiring",
+        "fix",
+    )
+    return any(t in msg for t in tokens)
+
+
+def _extract_target_component(message: str, evidence: RuntimeEvidence) -> str:
+    msg = str(message or "").strip()
+    if not msg:
+        return ""
+    msg_lower = msg.lower()
+
+    candidates: list[str] = []
+    for comp in (evidence.netlist_v2 or {}).get("components", []) or []:
+        if not isinstance(comp, dict):
+            continue
+        cid = str(comp.get("component_id") or "").strip()
+        if cid:
+            candidates.append(cid)
+    for finding in evidence.findings or []:
+        cid = str(getattr(finding, "component_id", "") or "").strip()
+        if cid:
+            candidates.append(cid)
+    for ref in evidence.evidence_refs or []:
+        cid = str(getattr(ref, "component_id", "") or "").strip()
+        if cid:
+            candidates.append(cid)
+
+    uniq: list[str] = []
+    for cid in candidates:
+        if cid not in uniq:
+            uniq.append(cid)
+
+    for cid in sorted(uniq, key=len, reverse=True):
+        if cid.lower() in msg_lower:
+            return cid
+    return ""
+
+
+def _build_component_fix_answer(
+    *,
+    evidence: RuntimeEvidence,
+    context_pack: ContextPack,
+    tool_results: list[ToolResult],
+    station_id: str,
+    user_message: str,
+    target_component_id: str,
+) -> str:
+    cid = str(target_component_id or "").strip()
+    seed = _stable_seed(
+        station_id=station_id,
+        evidence=evidence,
+        context_pack=context_pack,
+        user_message=user_message,
+    ) + f"|component={cid}"
+    comp = _component_by_id(evidence=evidence, component_id=cid)
+    comp_type = str((comp or {}).get("component_type") or (comp or {}).get("type") or "").strip()
+    ref_label = _reference_label(evidence)
+
+    related_findings = [f for f in (evidence.findings or []) if str(getattr(f, "component_id", "") or "") == cid]
+    suggestions: list[str] = []
+    suggestions.extend(_component_pin_check_steps(evidence=evidence, component_id=cid, seed=seed, limit=4))
+    if related_findings:
+        suggestions.extend(
+            _action_suggestions_from_findings(
+                evidence=evidence,
+                seed=seed,
+                limit=6,
+                findings_override=related_findings,
+            )
+        )
+    else:
+        suggestions.extend(
+            _choose_component_generic_steps(
+                seed=seed,
+                component_id=cid,
+                component_type=comp_type,
+                reference_label=ref_label,
+            )
+        )
+        suggestions.extend(_action_suggestions_from_error_codes(evidence=evidence, context_pack=context_pack, seed=seed, limit=3))
+
+    suggestions.extend(extract_fix_steps(tool_results)[:3])
+    suggestions = _dedupe_texts(suggestions)[:7]
+
+    header = f"你问的是 {cid}" + (f"（{comp_type}）" if comp_type else "") + "，我按它在当前电路里的连接关系给你一套更具体的核对步骤。"
+    if ref_label:
+        header += f"参考电路：{ref_label}。"
+
+    lines: list[str] = [header]
+    if suggestions:
+        numbered = "\n".join(f"{idx}) {item}" for idx, item in enumerate(suggestions[:6], start=1))
+        lines.append("具体建议：\n" + numbered)
+
+    followups = _component_follow_up_questions(evidence=evidence, component_id=cid, seed=seed)
+    if followups:
+        lines.append("追问建议：" + "；".join(followups))
+    return "".join(lines)
+
+
+def _component_by_id(*, evidence: RuntimeEvidence, component_id: str) -> dict[str, Any] | None:
+    for comp in (evidence.netlist_v2 or {}).get("components", []) or []:
+        if not isinstance(comp, dict):
+            continue
+        if str(comp.get("component_id") or "").strip() == component_id:
+            return comp
+    return None
+
+
+def _net_power_role_map(evidence: RuntimeEvidence) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for net in (evidence.netlist_v2 or {}).get("nets", []) or []:
+        if not isinstance(net, dict):
+            continue
+        net_id = str(net.get("electrical_net_id") or net.get("net_id") or "").strip()
+        if not net_id:
+            continue
+        role = str(net.get("power_role") or "").strip()
+        if role:
+            out[net_id] = role
+    return out
+
+
+def _component_pin_check_steps(*, evidence: RuntimeEvidence, component_id: str, seed: str, limit: int = 4) -> list[str]:
+    comp = _component_by_id(evidence=evidence, component_id=component_id) or {}
+    pins = comp.get("pins", []) if isinstance(comp, dict) else []
+    if not isinstance(pins, list) or not pins:
+        return [
+            _choose(
+                seed + "|pin|fallback",
+                (
+                    f"先确认 {component_id} 两端都插牢：两脚必须落在不同导通排，避免两端在同一排导致电路不起作用。",
+                    f"先做最基础排查：断电后重新插紧 {component_id}，确认两端没有插在同一导通排/同一电源轨。",
+                ),
+            )
+        ][:limit]
+
+    role_map = _net_power_role_map(evidence)
+    steps: list[str] = []
+    for pin in pins[:3]:
+        if not isinstance(pin, dict):
+            continue
+        pin_name = str(pin.get("pin_name") or pin.get("pin") or "").strip()
+        net_id = str(pin.get("electrical_net_id") or "").strip()
+        role = role_map.get(net_id, "")
+        connections = _pin_connected_components(
+            evidence=evidence,
+            component_id=component_id,
+            pin_name=pin_name,
+            limit=4,
+        )
+        conn_text = "、".join(connections) if connections else ""
+        if role:
+            steps.append(f"核对 {component_id}.{pin_name} 是否应接到 {role}（并确认共地/供电轨没有接反）。")
+        elif conn_text:
+            steps.append(f"核对 {component_id}.{pin_name} 当前与 {conn_text} 同网：确认这是不是参考电路要求的连接。")
+        else:
+            steps.append(f"核对 {component_id}.{pin_name}：先确认插孔接触可靠，再用通断档确认它是否连到目标节点。")
+        if len(steps) >= limit:
+            break
+    return _dedupe_texts(steps)[:limit]
+
+
+def _pin_connected_components(
+    *,
+    evidence: RuntimeEvidence,
+    component_id: str,
+    pin_name: str,
+    limit: int = 4,
+) -> list[str]:
+    comp = _component_by_id(evidence=evidence, component_id=component_id) or {}
+    pins = comp.get("pins", []) if isinstance(comp, dict) else []
+    net_id = ""
+    for pin in pins or []:
+        if not isinstance(pin, dict):
+            continue
+        name = str(pin.get("pin_name") or pin.get("pin") or "").strip()
+        if name == pin_name:
+            net_id = str(pin.get("electrical_net_id") or "").strip()
+            break
+    if not net_id:
+        return []
+
+    connected: list[str] = []
+    for other in (evidence.netlist_v2 or {}).get("components", []) or []:
+        if not isinstance(other, dict):
+            continue
+        other_id = str(other.get("component_id") or "").strip()
+        if not other_id or other_id == component_id:
+            continue
+        other_type = str(other.get("component_type") or other.get("type") or "").strip().lower()
+        if other_type in {"wire", "jumper", "lead", "dupont"} or other_id.lower().startswith("w"):
+            continue
+        for op in other.get("pins", []) or []:
+            if not isinstance(op, dict):
+                continue
+            if str(op.get("electrical_net_id") or "").strip() == net_id:
+                pin_n = str(op.get("pin_name") or op.get("pin") or "").strip()
+                label = f"{other_id}.{pin_n}" if pin_n else other_id
+                if label not in connected:
+                    connected.append(label)
+                if len(connected) >= limit:
+                    return connected
+    return connected
+
+
+def _choose_component_generic_steps(
+    *,
+    seed: str,
+    component_id: str,
+    component_type: str,
+    reference_label: str,
+) -> list[str]:
+    ctype = (component_type or "").lower()
+    ref = reference_label or ""
+    out: list[str] = []
+
+    if ctype in {"resistor", "r"} or component_id.lower().startswith("r"):
+        out.append(
+            _choose(
+                seed + "|cg|r|1",
+                (
+                    f"如果 {component_id} 是电阻：先核对阻值/型号是否符合参考电路，再确认两端确实跨在两个不同节点上。",
+                    f"{component_id}（电阻）优先检查两点：阻值是否对、两脚是否跨在不同导通排（不然等效短接）。",
+                ),
+            )
+        )
+        if "rc_highpass" in ref.lower() or "高通" in ref:
+            out.append(f"在 RC 高通里，电阻通常负责把输出节点下拉到地：你可以重点确认 {component_id} 是否有一端在输出节点、另一端在地。")
+        if "rc_lowpass" in ref.lower() or "低通" in ref:
+            out.append(f"在 RC 低通里，电阻通常串在输入到输出之间：你可以重点确认 {component_id} 是否位于输入与输出节点之间。")
+    elif ctype in {"capacitor", "c"} or component_id.lower().startswith("c"):
+        out.append(
+            _choose(
+                seed + "|cg|c|1",
+                (
+                    f"如果 {component_id} 是电容：先确认两端分别落在目标两个节点上（并注意是否为极性电容）。",
+                    f"{component_id}（电容）先核对连接位置：它应该跨在两个节点之间，别两端插在同一导通排。",
+                ),
+            )
+        )
+        if "rc_highpass" in ref.lower() or "高通" in ref:
+            out.append(f"在 RC 高通里，电容通常串联在输入与输出之间：你可以重点确认 {component_id} 是否真的串在“输入→输出”路径上。")
+        if "rc_lowpass" in ref.lower() or "低通" in ref:
+            out.append(f"在 RC 低通里，电容通常从输出节点并到地：你可以重点确认 {component_id} 是否有一端在输出节点、另一端在地。")
+    elif ctype in {"led", "diode"} or component_id.lower().startswith("led"):
+        out.append(
+            _choose(
+                seed + "|cg|led|1",
+                (
+                    f"如果 {component_id} 是 LED/二极管：先核对方向与限流电阻是否到位，再检查它两端是不是接到正确节点。",
+                    f"{component_id}（LED/二极管）先处理方向问题：方向反了通常不亮；再确认串联限流电阻存在。",
+                ),
+            )
+        )
+    else:
+        out.append(
+            _choose(
+                seed + "|cg|x|1",
+                (
+                    f"先把 {component_id} 的每个引脚对应到一个明确节点，再对照参考电路逐项核对是否接到该去的地方。",
+                    f"针对 {component_id}：建议按“引脚→节点→连接对象”三步核对，先用通断档确认连通性，再对照参考电路确认节点。",
+                ),
+            )
+        )
+
+    return _dedupe_texts(out)[:4]
+
+
+def _component_follow_up_questions(*, evidence: RuntimeEvidence, component_id: str, seed: str) -> list[str]:
+    comp = _component_by_id(evidence=evidence, component_id=component_id) or {}
+    pins = comp.get("pins", []) if isinstance(comp, dict) else []
+    pin_names = [
+        str(p.get("pin_name") or p.get("pin") or "").strip()
+        for p in (pins or [])
+        if isinstance(p, dict)
+    ]
+    pin_names = [p for p in pin_names if p][:3]
+    out: list[str] = []
+    if pin_names:
+        out.append(f"{component_id} 你想确认的是哪一脚：{ ' / '.join(pin_names) }？")
+    out.append(
+        _choose(
+            seed + "|fq|1",
+            (
+                f"{component_id} 两端目前分别接到了哪些对象/节点？（可以描述同一导通排上的元件或用通断档测）",
+                f"{component_id} 的两脚现在各自连到哪里？你可以用通断档说一下它分别和哪些点导通。",
+            ),
+        )
+    )
+    out.append(
+        _choose(
+            seed + "|fq|2",
+            (
+                "你测到的输入/输出波形或关键节点电压是什么（通电后）？",
+                "现象是什么：输出有没有变化、是否明显衰减/相位变化/不稳定？",
+            ),
+        )
+    )
+    if evidence.circuit_snapshot:
+        out.append(
+            _choose(
+                seed + "|fq|3",
+                (
+                    "电路快照里对这个元件的描述是哪一句？我可以按那一句逐条对照给你检查点。",
+                    "把电路快照里提到该元件的那一行贴出来，我可以更精确地指出应该连到哪。",
+                ),
+            )
+        )
+    return _dedupe_texts(out)[:4]
+
+def _stable_seed(
+    *,
+    station_id: str,
+    evidence: RuntimeEvidence,
+    context_pack: ContextPack,
+    user_message: str,
+) -> str:
+    first_code = evidence.error_codes[0] if evidence.error_codes else ""
+    first_finding = evidence.findings[0] if evidence.findings else None
+    first_component = str(getattr(first_finding, "component_id", "") or "") if first_finding else ""
+    first_ref = evidence.evidence_refs[0] if evidence.evidence_refs else None
+    ref_label = _reference_label(evidence)
+    ref_token = ""
+    if first_ref:
+        ref_token = ":".join(
+            str(item or "")
+            for item in (first_ref.ref_id, first_ref.component_id, first_ref.pin_name, first_ref.hole_id)
+        )
+    base = "|".join(
+        [
+            str(station_id or ""),
+            str(first_code or ""),
+            str(first_component or ""),
+            str(context_pack.error_family or ""),
+            str(ref_label or ""),
+            str(ref_token or ""),
+            str((user_message or "")[:80]),
+        ]
+    )
+    return base
+
+
+def _choose(seed: str, options: tuple[str, ...]) -> str:
+    if not options:
+        return ""
+    payload = (seed or "").encode("utf-8", errors="ignore")
+    digest = hashlib.md5(payload).hexdigest()
+    idx = int(digest[:8], 16) % len(options)
+    return options[idx]
+
+
+def _wiring_steps_from_snapshot(*, snapshot: str, limit: int = 6) -> list[str]:
+    text = str(snapshot or "").strip()
+    if not text:
+        return []
+    raw_lines = [line.strip(" \t\r\n-•") for line in text.splitlines()]
+    chunks: list[str] = []
+    for line in raw_lines:
+        if not line:
+            continue
+        for part in line.replace("。", "；").split("；"):
+            p = part.strip()
+            if p:
+                chunks.append(p)
+    steps: list[str] = []
+    for chunk in chunks:
+        if len(chunk) < 4:
+            continue
+        steps.append("按电路快照核对：" + chunk if not chunk.startswith("按") else chunk)
+        if len(steps) >= limit:
+            break
+    return steps
+
+
+def _wiring_steps_from_reference(
+    *,
+    evidence: RuntimeEvidence,
+    reference_label: str,
+    seed: str,
+    limit: int = 6,
+) -> list[str]:
+    label = str(reference_label or "").lower()
+    steps: list[str] = []
+    resistor = _component_label_by_hint(evidence=evidence, hints=("resistor", "电阻", "r"))
+    capacitor = _component_label_by_hint(evidence=evidence, hints=("capacitor", "电容", "c"))
+    led = _component_label_by_hint(evidence=evidence, hints=("led", "发光", "d"))
+    r_text = resistor or "电阻"
+    c_text = capacitor or "电容"
+    led_text = led or "LED/负载"
+
+    if "rc_highpass" in label or "高通" in reference_label:
+        steps.append(
+            _choose(
+                seed + "|hp|1",
+                (
+                    f"按高通思路连：输入先串联经过 {c_text}，到输出节点。",
+                    f"高通连接：让信号先通过 {c_text}（串联），再到输出节点。",
+                    f"先把 {c_text} 串在输入与输出节点之间，输出点取在 {c_text} 后侧。",
+                ),
+            )
+        )
+        steps.append(
+            _choose(
+                seed + "|hp|2",
+                (
+                    f"在输出节点用 {r_text} 下拉到地（输出通常取在 {r_text} 上）。",
+                    f"输出节点接 {r_text} 到地，构成 RC 高通（输出点看 {r_text} 对地）。",
+                    f"把 {r_text} 一端接输出节点，另一端接地，输出用“输出节点对地”测。",
+                ),
+            )
+        )
+        steps.append(
+            _choose(
+                seed + "|hp|3",
+                (
+                    "信号源 GND、面包板地、示波器地必须共地，否则输出会漂或测不准。",
+                    "先把地线统一：信号源 GND 与示波器地夹都接到同一地轨/地节点。",
+                ),
+            )
+        )
+        steps.append(
+            _choose(
+                seed + "|hp|4",
+                (
+                    "示波器建议：CH1 看输入，CH2 看输出；探头地夹一定夹地，别夹到输出节点。",
+                    "测量建议：CH1 输入、CH2 输出；地夹只夹地轨，避免把输出短到地。",
+                ),
+            )
+        )
+    elif "rc_lowpass" in label or "低通" in reference_label:
+        steps.append(
+            _choose(
+                seed + "|lp|1",
+                (
+                    f"按低通思路连：输入先串联经过 {r_text}，到输出节点。",
+                    f"低通连接：让输入先过 {r_text}（串联）再到输出点。",
+                    f"先把 {r_text} 串在输入与输出节点之间，输出点取在 {r_text} 后侧。",
+                ),
+            )
+        )
+        steps.append(
+            _choose(
+                seed + "|lp|2",
+                (
+                    f"在输出节点把 {c_text} 并到地（输出通常看输出节点对地）。",
+                    f"输出节点并联 {c_text} 到地，构成 RC 低通（输出点看节点对地）。",
+                    f"{c_text} 一端接输出节点、另一端接地，输出用“输出节点对地”测。",
+                ),
+            )
+        )
+        steps.append(
+            _choose(
+                seed + "|lp|3",
+                (
+                    "信号源 GND 与示波器地必须接到同一地节点/地轨，保证参考一致。",
+                    "共地优先：信号源地与示波器地夹都接地轨，否则波形会漂。",
+                ),
+            )
+        )
+        steps.append(
+            _choose(
+                seed + "|lp|4",
+                (
+                    "示波器：CH1 输入、CH2 输出；地夹夹地轨，避免夹到输出点造成短路。",
+                    "测量：CH1 看输入、CH2 看输出；确认地夹位置正确。",
+                ),
+            )
+        )
+    elif "basic_series_resistor" in label or "串联电阻" in reference_label:
+        steps.append(
+            _choose(
+                seed + "|sr|1",
+                (
+                    f"供电链路按串联来：电源正端 → {r_text} → {led_text} → 地（电源负端）。",
+                    f"串联电阻连接：V+ → {r_text} → {led_text} → GND。",
+                    f"先把 {r_text} 串到回路里：V+ 经 {r_text} 再到 {led_text}，最后回到地。",
+                ),
+            )
+        )
+        steps.append(
+            _choose(
+                seed + "|sr|2",
+                (
+                    f"如果包含 LED，先核对方向后再上电：方向反了通常不亮。",
+                    f"极性器件要先看方向（如 LED/二极管），方向错了会导致不导通或异常。",
+                ),
+            )
+        )
+        steps.append(
+            _choose(
+                seed + "|sr|3",
+                (
+                    "上电前确认电阻值与供电电压匹配，避免电流过大。",
+                    "先核对限流电阻是否到位，再上电测试。",
+                ),
+            )
+        )
+
+    if len(steps) > limit:
+        return steps[:limit]
+    return [step for step in steps if step][:limit]
+
+
+def _wiring_generic_steps(*, seed: str, limit: int = 3) -> list[str]:
+    pool = [
+        _choose(
+            seed + "|wg|1",
+            (
+                "先把“输入/输出/地”三点标清：信号源 GND 与示波器地必须共地，再确认输出点取在正确节点。",
+                "先固定测量基准：信号源地、示波器地夹都接到地轨，然后再找输出节点。",
+            ),
+        ),
+        _choose(
+            seed + "|wg|2",
+            (
+                "用万用表蜂鸣档做两类确认：该通的两端是否真通；不该通的两点是否被误短接。",
+                "断电后用通断档快速扫一遍：导线两端是否导通、以及电源与地之间是否意外导通。",
+            ),
+        ),
+        _choose(
+            seed + "|wg|3",
+            (
+                "如果面包板跨中缝插接：两脚器件务必跨到不同导通排，避免两端落在同一排导致等效短接。",
+                "检查两端器件是否插在同一导通排：如果是，两端电位相同，电路不会按预期工作。",
+            ),
+        ),
+    ]
+    return [item for item in _dedupe_texts(pool) if item][:limit]
+
+
+def _dedupe_texts(values: list[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        if text not in result:
+            result.append(text)
+    return result
+
+
+def _action_suggestions_from_findings(
+    *,
+    evidence: RuntimeEvidence,
+    seed: str,
+    limit: int = 6,
+    findings_override: list[Any] | None = None,
+) -> list[str]:
+    suggestions: list[str] = []
+    source_findings = findings_override if findings_override is not None else (evidence.findings or [])
+    for finding in source_findings[:4]:
+        cid = str(finding.component_id or "").strip()
+        pin = str(finding.pin_name or "").strip()
+        code = str(finding.error_code or "").strip()
+        expected = str(getattr(finding, "expected", "") or "").strip()
+        actual = str(getattr(finding, "actual", "") or "").strip()
+
+        subject = cid
+        if cid and pin:
+            subject = f"{cid}.{pin}"
+        elif pin:
+            subject = pin
+
+        if code == "FLOATING_PIN":
+            suggestions.append(
+                _choose(
+                    seed + f"|fp|{subject}|1",
+                    (
+                        f"断电后确认 {subject} 真实插入孔位，并与导通排/跳线可靠接触（避免只插半格或插在松孔）。",
+                        f"先处理悬空：断电重新插紧 {subject}，并确认引脚没有插偏到隔壁孔。",
+                    ),
+                )
+            )
+            if expected:
+                suggestions.append(
+                    _choose(
+                        seed + f"|fp|{subject}|2|{expected}",
+                        (
+                            f"用万用表蜂鸣档核对 {subject} 是否应与 {expected} 连通；不连通就重插/更换跳线。",
+                            f"通断档验证 {subject}→{expected}：应当导通；若不导通，优先换一根跳线再测。",
+                        ),
+                    )
+                )
+            else:
+                suggestions.append(
+                    _choose(
+                        seed + f"|fp|{subject}|3",
+                        (
+                            f"用万用表蜂鸣档从 {subject} 往外测连通性，确认它是否连到目标节点（电源/地/信号节点）。",
+                            f"从 {subject} 起点做连通性追踪：先确认是否接到地/电源轨，再确认信号节点是否正确。",
+                        ),
+                    )
+                )
+        elif code in {"COMPONENT_SHORTED_SAME_NET", "POWER_RAIL_SHORT", "SHORT_CIRCUIT"}:
+            culprit = cid or "相关元件"
+            suggestions.append(
+                _choose(
+                    seed + f"|sc|{culprit}|1",
+                    (
+                        f"断电后检查 {culprit} 两端是否落在同一导通排/同一电源轨；必要时把两端跨到不同导通组。",
+                        f"先排查同网：确认 {culprit} 两端没有插在同一排（否则等效短接/不起作用）。",
+                    ),
+                )
+            )
+            suggestions.append(
+                _choose(
+                    seed + f"|sc|{culprit}|2",
+                    (
+                        "先把最可疑的跳线拔掉再测短路是否消失，然后逐根加回去定位是哪一根造成短接。",
+                        "用“减法”定位：断电后先移除新增跳线/器件，再逐步恢复，找出把两点短到一起的那一步。",
+                    ),
+                )
+            )
+            suggestions.append(
+                _choose(
+                    seed + f"|sc|{culprit}|3",
+                    (
+                        "断电用万用表测电源正负/电源与地之间的电阻，确认是否存在明显短路（阻值很低）。",
+                        "断电后测 VCC-GND 阻值/通断：若接近短路，优先检查电源轨跨接与地夹位置。",
+                    ),
+                )
+            )
+        elif code == "POLARITY_REVERSED":
+            device = cid or "极性器件"
+            suggestions.append(
+                _choose(
+                    seed + f"|pr|{device}|1",
+                    (
+                        f"核对 {device} 的方向标记（丝印/缺口/长短脚），按参考电路把方向调回正确。",
+                        f"先校对极性：把 {device} 的正负/阴阳极与参考一致后再上电。",
+                    ),
+                )
+            )
+            suggestions.append(
+                _choose(
+                    seed + f"|pr|{device}|2",
+                    (
+                        "如果是 LED/二极管/电解电容，确认正负极或阴阳极后再上电，避免反接损坏。",
+                        "极性器件先确认方向再上电；若不确定，先断电对照 datasheet/丝印。",
+                    ),
+                )
+            )
+        elif code in {"NODE_MISMATCH", "WRONG_CONNECTION"}:
+            if expected and actual:
+                suggestions.append(
+                    _choose(
+                        seed + f"|nm|{subject}|{actual}->{expected}",
+                        (
+                            f"对照参考电路把 {subject} 从 {actual} 调整到 {expected}（先断电再改线）。",
+                            f"按参考把 {subject} 迁回目标节点：从 {actual} 改到 {expected}，改完再复测连通性。",
+                        ),
+                    )
+                )
+            suggestions.append(
+                _choose(
+                    seed + f"|nm|{cid}|pins",
+                    (
+                        f"按“元件引脚→电气节点”逐项核对 {cid or '相关元件'} 的每个引脚，确保与参考一致。",
+                        f"把 {cid or '相关元件'} 的每个引脚都对应到一个明确节点，再与参考电路逐项对齐。",
+                    ),
+                )
+            )
+        elif code in {"REFERENCE_NOT_SET", "REFERENCE_MISSING"}:
+            suggestions.append(
+                _choose(
+                    seed + "|ref|missing",
+                    (
+                        "先确认系统里选择/加载的参考电路是否正确，否则所有对比结论都会偏差。",
+                        "检查参考电路是否选对/加载成功，再看错接与缺件结论是否仍然存在。",
+                    ),
+                )
+            )
+        elif code in {"MISSING_COMPONENT", "COMPONENT_MISSING"}:
+            suggestions.append(
+                _choose(
+                    seed + f"|mc|{cid}",
+                    (
+                        f"确认 {cid or '相关元件'} 是否缺失/未入镜/未插稳；必要时重新插紧并复拍全景图。",
+                        f"先确认器件到位：{cid or '相关元件'} 是否真的插上且两脚都插牢，必要时换孔重插。",
+                    ),
+                )
+            )
+        elif code:
+            if expected and actual:
+                suggestions.append(
+                    _choose(
+                        seed + f"|gen|{code}|{subject}|{actual}->{expected}",
+                        (
+                            f"针对 {code}：把 {subject} 从 {actual} 调整到 {expected}（按参考电路逐项核对）。",
+                            f"按 {code} 的提示把 {subject} 迁到目标连接（{expected}），调整后再复跑一次诊断验证。",
+                        ),
+                    )
+                )
+            else:
+                suggestions.append(
+                    _choose(
+                        seed + f"|gen|{code}|{subject}|nocmp",
+                        (
+                            f"针对 {code}：优先核对 {subject} 的孔位与跳线连通性，再对照参考电路确认目标节点。",
+                            f"{code} 先从连通性排查：确认 {subject} 插孔正确、跳线可靠，再对照参考定位目标节点。",
+                        ),
+                    )
+                )
+
+        if len(suggestions) >= limit:
+            break
+
+    if evidence.risk_level == "danger":
+        suggestions.append(
+            _choose(
+                seed + "|danger|1",
+                (
+                    "在确认短路排除前不要上电；上电前先断电检查一遍电源轨、极性器件和可能发热元件。",
+                    "风险较高：先断电排除短路/反接，再上电；必要时从电源轨开始逐段排查。",
+                ),
+            )
+        )
+
+    return _dedupe_texts(suggestions)[:limit]
+
+
+def _action_suggestions_from_error_codes(
+    *,
+    evidence: RuntimeEvidence,
+    context_pack: ContextPack,
+    seed: str,
+    limit: int = 4,
+) -> list[str]:
+    codes = list(evidence.error_codes or [])
+    if not codes:
+        return []
+    ref = _reference_label(evidence)
+    components = _component_labels(evidence)
+    comp_text = "、".join(components[:3]) if components else ""
+    out: list[str] = []
+    for code in codes[:3]:
+        if code in {"NODE_MISMATCH", "WRONG_CONNECTION", "HOLE_MISMATCH"}:
+            out.append(
+                _choose(
+                    seed + f"|ec|{code}|1",
+                    (
+                        f"先处理 {code}：对照参考电路 {ref}，按“元件引脚→节点/孔位”逐项核对（优先检查 {comp_text or '输出节点附近'}）。",
+                        f"{code} 通常是错接：对照参考 {ref}，先从最关键节点（输入/输出/地）开始核对连通性。",
+                    ),
+                )
+            )
+        elif code in {"COMPONENT_MISSING", "COMPONENT_INSTANCE_MISSING", "MISSING_COMPONENT"}:
+            out.append(
+                _choose(
+                    seed + f"|ec|{code}|2",
+                    (
+                        f"{code} 先做清点：把参考 {ref} 需要的器件逐个摆出来并逐个确认插入到位（{comp_text or '电阻/电容/导线'}）。",
+                        f"先排除缺件：按参考 {ref} 逐个核对器件是否都有且插牢，必要时复拍全景。",
+                    ),
+                )
+            )
+        elif code in {"COMPONENT_EXTRA", "PIN_EXTRA"}:
+            out.append(
+                _choose(
+                    seed + f"|ec|{code}|3",
+                    (
+                        f"{code} 表示可能多接了：先移除最近新增的跳线/器件，再逐步加回去定位多余连接来源。",
+                        f"先做减法：暂时拔掉不在参考 {ref} 里的那根跳线/器件，看错误码是否消失。",
+                    ),
+                )
+            )
+        elif code in {"POWER_NODE_MISMATCH"}:
+            out.append(
+                _choose(
+                    seed + f"|ec|{code}|4",
+                    (
+                        f"{code} 优先核对电源轨：VCC/GND 走线是否接到了正确电源轨，地是否与示波器/信号源共地。",
+                        f"先把供电理顺：确认电源正负与地轨一致，再检查输出节点是否被误接到电源轨。",
+                    ),
+                )
+            )
+        elif code in {"POLARITY_REVERSED"}:
+            out.append(
+                _choose(
+                    seed + f"|ec|{code}|5",
+                    (
+                        f"{code}：先暂停上电，逐个核对极性器件方向与参考 {ref} 是否一致。",
+                        f"先处理反接风险：核对极性器件方向，确认无误再上电。",
+                    ),
+                )
+            )
+        else:
+            out.append(
+                _choose(
+                    seed + f"|ec|{code}|x",
+                    (
+                        f"围绕 {code} 做验证：对照参考 {ref} 先核对关键节点，再复测连通性并重新跑一次诊断。",
+                        f"{code}：先核对 {comp_text or '关键连线'} 的孔位与连通性，再对照参考 {ref} 逐项确认。",
+                    ),
+                )
+            )
+        if len(out) >= limit:
+            break
+
+    if context_pack.error_family == "short_circuit":
+        out.append(
+            _choose(
+                seed + "|ec|family|short",
+                (
+                    "如果怀疑短路：断电后先测电源与地是否导通，再逐根拔跳线定位短接点。",
+                    "短路类优先：先断电排除电源轨短接，再去做节点/孔位核对。",
+                ),
+            )
+        )
+
+    return _dedupe_texts(out)[:limit]
+
+
+def _component_label_by_hint(*, evidence: RuntimeEvidence, hints: tuple[str, ...]) -> str:
+    for label in _component_labels(evidence, limit=6):
+        lower = label.lower()
+        if any(h.lower() in lower for h in hints):
+            return label.split("(")[0] if "(" in label else label
+    return ""
 
 
 def _component_label_from_finding(finding) -> str:
@@ -305,7 +1220,23 @@ def build_diagnostic_template_answer(
     tool_results: list[ToolResult],
 ) -> str:
     """基于用户意图生成自然语言回答，不暴露 system prompt / raw JSON。"""
-    intent = _classify_user_intent(user_message or query)
+    message = user_message or query
+    target_component = _extract_target_component(message, evidence)
+    if target_component and _looks_like_fix_or_wiring_question(message):
+        answer = _with_diagnostic_anchors(
+            _build_component_fix_answer(
+                evidence=evidence,
+                context_pack=context_pack,
+                tool_results=tool_results,
+                station_id=station_id,
+                user_message=message,
+                target_component_id=target_component,
+            ),
+            evidence,
+        )
+        return ensure_circuit_opening(answer, evidence)
+
+    intent = _classify_user_intent(message)
 
     if intent == "components":
         answer = _with_diagnostic_anchors(
@@ -318,7 +1249,7 @@ def build_diagnostic_template_answer(
         return ensure_circuit_opening(answer, evidence)
 
     answer = _with_diagnostic_anchors(
-        _build_general_diagnostic_answer(station_id, evidence, context_pack, tool_results),
+        _build_general_diagnostic_answer(station_id, evidence, context_pack, tool_results, message),
         evidence,
     )
     return ensure_circuit_opening(answer, evidence)
@@ -571,11 +1502,23 @@ def _build_follow_up_suggestions(
 
     if evidence.risk_level == "danger":
         suggestions.append("我应该先检查哪些安全事项？")
-    elif not suggestions:
+    if (
+        getattr(evidence, "ambiguous_pin_count", 0)
+        or getattr(evidence, "fallback_pin_count", 0)
+        or getattr(evidence, "snap_conflict_count", 0)
+        or getattr(evidence, "low_confidence_component_count", 0)
+    ):
+        suggestions.append("孔位识别可能不稳定，我需要怎么复拍才能更准确？")
+        suggestions.append("你能指出最可疑的那几个孔位/导通排吗？我该怎么重点核对？")
+
+    if evidence.error_codes:
+        suggestions.append(f"这些错误码里我应该先处理哪一个：{'、'.join(evidence.error_codes[:3])}？")
+
+    if not suggestions:
         suggestions.append("这个电路图中都有什么元件？")
         suggestions.append("当前诊断结果是否存在风险？")
 
-    return suggestions[:3]
+    return _dedupe_texts(suggestions)[:6]
 
 
 def _first_ref_text(evidence: RuntimeEvidence) -> str:
