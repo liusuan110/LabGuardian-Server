@@ -122,6 +122,31 @@ def _is_circuit_related_question(question: str) -> bool:
     return False
 
 
+_AGENT_IDENTITY_PHRASES = (
+    "你是谁",
+    "你是什么",
+    "你叫什么",
+    "你叫啥",
+    "你能做什么",
+    "你会做什么",
+    "介绍一下自己",
+    "自我介绍",
+)
+
+
+def _is_agent_identity_question(question: str) -> bool:
+    msg = (question or "").strip().lower()
+    return any(phrase in msg for phrase in _AGENT_IDENTITY_PHRASES)
+
+
+def _agent_identity_answer() -> str:
+    return (
+        "我是 LabGuardian，电路实验助教。"
+        "我可以结合你上传的电路图、识别到的元件、参考电路和诊断错误码，"
+        "帮你解释问题原因、给出改线建议、说明相关电路概念，也可以回答实验测量和安全操作问题。"
+    )
+
+
 def _contains_ascii_token(msg: str, token: str) -> bool:
     start = 0
     while True:
@@ -376,15 +401,14 @@ class AgentService:
                     intent=intent,
                 )
             if intent == "mixed":
-                # Mixed intent should prefer concept-guidance path so
-                # concept_not_found can trigger local LLM fallback answer.
-                return self._run_concept_or_guidance_job(
+                # Mixed intent should still be grounded in the current circuit;
+                # concept evidence is attached by the diagnostic path.
+                return self._run_diagnostic_agent_job(
                     job_id=job_id,
                     request=request,
                     classroom=classroom,
                     created_at=created_at,
-                    forced_intent="concept_tutor",
-                    pre_evidence=evidence_contract,
+                    intent=intent,
                 )
             return self._run_concept_or_guidance_job(
                 job_id=job_id,
@@ -665,7 +689,10 @@ class AgentService:
             concept = _ConceptPack.model_validate(concept_payload)
 
         actual_provider, actual_model = self._actual_llm_usage()
-        if forced_intent == "lab_guidance":
+        if _is_agent_identity_question(question):
+            draft = _agent_identity_answer()
+            actual_provider, actual_model = "template", "template"
+        elif forced_intent == "lab_guidance":
             draft = build_lab_guidance_answer(
                 question=question,
                 concept=concept,

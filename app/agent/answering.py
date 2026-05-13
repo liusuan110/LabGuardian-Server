@@ -267,14 +267,21 @@ def _reference_label(evidence: RuntimeEvidence) -> str:
 
 def circuit_opening_sentence(evidence: RuntimeEvidence) -> str:
     """Stable first sentence for diagnostic answers after circuit recognition."""
-    codes = "、".join(evidence.error_codes[:4]) if evidence.error_codes else "暂无明确结构化错误码"
+    if evidence.error_codes:
+        issue_text = f"错误码为 {'、'.join(evidence.error_codes[:4])}"
+    elif evidence.diagnostics:
+        issue_text = f"诊断项为 {'、'.join(evidence.diagnostics[:2])}"
+    elif evidence.risk_reasons:
+        issue_text = f"风险原因为 {'、'.join(evidence.risk_reasons[:2])}"
+    else:
+        issue_text = "暂无明确结构化错误码"
     components = _component_labels(evidence)
     component_text = "、".join(components) if components else "暂未识别到明确元件"
     if len(components) >= 4:
         component_text += "等"
     return (
         "先看这个电路本身："
-        f"错误码为 {codes}，"
+        f"{issue_text}，"
         f"参考电路为 {_reference_label(evidence)}，"
         f"涉及元件为 {component_text}。"
     )

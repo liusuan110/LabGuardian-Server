@@ -112,9 +112,16 @@ _DIAGNOSTIC_PHRASES: tuple[str, ...] = (
     "怎么改",
     "怎么修",
     "怎么处理",
+    "怎么做",
+    "怎么办",
+    "咋办",
+    "咋改",
     "如何改",
     "如何修",
     "如何处理",
+    "如何做",
+    "我该怎么",
+    "那我怎么",
 )
 
 _CURRENT_CONTEXT_FOLLOW_UP_PHRASES: tuple[str, ...] = (
@@ -154,6 +161,23 @@ _CURRENT_CONTEXT_FOLLOW_UP_PHRASES: tuple[str, ...] = (
     "怎么改",
     "怎么修",
     "怎么处理",
+    "怎么做",
+    "怎么办",
+    "咋办",
+    "咋改",
+    "如何改",
+    "如何修",
+    "如何处理",
+    "如何做",
+    "我该怎么",
+    "那我怎么",
+    "后续",
+    "完善",
+    "优化",
+    "改进",
+    "继续",
+    "下一步",
+    "后面",
 )
 
 _CIRCUIT_TOPIC_PHRASES: tuple[str, ...] = (
@@ -221,6 +245,56 @@ def _looks_like_current_context_follow_up(msg: str) -> bool:
     return any(phrase in msg for phrase in _CURRENT_CONTEXT_FOLLOW_UP_PHRASES)
 
 
+_UNRELATED_TOPIC_PHRASES: tuple[str, ...] = (
+    "你是谁",
+    "你是什么",
+    "你叫什么",
+    "你叫啥",
+    "你能做什么",
+    "你会做什么",
+    "你有什么用",
+    "介绍一下自己",
+    "自我介绍",
+    "你是哪个模型",
+    "你用的什么模型",
+    "天气",
+    "新闻",
+    "股票",
+    "电影",
+    "音乐",
+    "游戏",
+    "笑话",
+    "故事",
+    "写诗",
+    "翻译",
+    "旅游",
+    "菜谱",
+    "做饭",
+    "吃什么",
+)
+
+
+def _looks_unrelated_to_current_circuit(msg: str) -> bool:
+    return any(phrase in msg for phrase in _UNRELATED_TOPIC_PHRASES)
+
+
+def _has_diagnostic_context(evidence: RuntimeEvidence | None) -> bool:
+    if evidence is None:
+        return False
+    if evidence.findings or evidence.error_codes or evidence.diagnostics or evidence.risk_reasons:
+        return True
+    if evidence.risk_level in {"warning", "danger"}:
+        return True
+    report = evidence.validator_report_v2 or {}
+    if not isinstance(report, dict):
+        return False
+    for key in ("items", "topology_errors", "node_errors", "hole_errors", "polarity_errors", "component_errors"):
+        value = report.get(key)
+        if isinstance(value, list) and value:
+            return True
+    return False
+
+
 def classify_intent(
     user_message: str,
     evidence: RuntimeEvidence | None = None,
@@ -228,15 +302,21 @@ def classify_intent(
     """Map user_message → intent label. evidence is consulted only as tiebreaker."""
 
     msg = (user_message or "").strip().lower()
+    has_diagnostic_context = _has_diagnostic_context(evidence)
     if not msg:
-        return "diagnostic" if (evidence and evidence.findings) else "concept_tutor"
+        return "diagnostic" if has_diagnostic_context else "concept_tutor"
 
     lab_hit = any(phrase in msg for phrase in _LAB_GUIDANCE_PHRASES)
     diag_hit = any(phrase in msg for phrase in _DIAGNOSTIC_PHRASES)
     concept_hit = any(phrase in msg for phrase in _CONCEPT_PHRASES)
 
-    if evidence and evidence.findings and diag_hit:
-        return "mixed" if concept_hit and _looks_like_theory_question(msg) else "diagnostic"
+    if has_diagnostic_context:
+        if _looks_unrelated_to_current_circuit(msg):
+            return "concept_tutor"
+        if concept_hit and _looks_like_theory_question(msg):
+            return "mixed"
+        return "diagnostic"
+
     if lab_hit:
         return "mixed" if diag_hit and concept_hit else "lab_guidance"
     if diag_hit and concept_hit:
@@ -248,15 +328,4 @@ def classify_intent(
             return "mixed"
         return "concept_tutor"
 
-    if evidence and evidence.findings:
-        # Do not force every unrelated or vague follow-up into the diagnostic
-        # template just because the station currently has findings. Only
-        # explicit diagnostic wording above should enter the diagnostic path.
-        if (
-            _looks_like_theory_question(msg)
-            or _looks_like_circuit_topic(msg)
-            or _looks_like_current_context_follow_up(msg)
-        ):
-            return "mixed"
-        return "concept_tutor"
     return "concept_tutor"

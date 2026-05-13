@@ -88,12 +88,12 @@ def test_intent_classifier_does_not_force_off_topic_into_diagnostic_with_finding
     assert classify_intent("今天中午吃什么", evidence=evidence) == "concept_tutor"
 
 
-def test_intent_classifier_routes_vague_diagnostic_follow_up_to_mixed() -> None:
+def test_intent_classifier_routes_vague_diagnostic_follow_up_to_diagnostic() -> None:
     evidence = RuntimeEvidence(station_id="S", findings=[])
     from app.agent.contracts import DiagnosticFinding
 
     evidence.findings.append(DiagnosticFinding(error_code="NODE_MISMATCH"))
-    assert classify_intent("简单点，这是什么意思", evidence=evidence) == "mixed"
+    assert classify_intent("简单点，这是什么意思", evidence=evidence) == "diagnostic"
 
 
 # ---------- teaching_concept_lookup_tool ----------
@@ -491,6 +491,89 @@ def test_agent_auto_repair_followup_uses_existing_diagnostic_context() -> None:
     assert "R1" in result.answer
 
 
+def test_agent_auto_how_to_do_followup_uses_existing_diagnostic_context() -> None:
+    classroom = ClassroomState()
+    classroom.update_station(
+        {
+            "station_id": "S01",
+            "risk_level": "warning",
+            "diagnostics": ["R1 连接节点与参考不符"],
+            "comparison_report": {
+                "items": [
+                    {
+                        "error_code": "WRONG_CONNECTION",
+                        "component_id": "R1",
+                        "severity": "warning",
+                        "suggested_action": "将 R1 改接到参考网络。",
+                    }
+                ],
+            },
+            "netlist_v2": {
+                "components": [{"component_id": "R1", "component_type": "Resistor"}],
+                "nets": [],
+            },
+        }
+    )
+    result = _submit(_service(), classroom, mode="agent_auto", query="那我怎么做")
+
+    evidence_types = {item.evidence_type for item in result.evidence}
+    assert "context_pack" in evidence_types
+    assert "react_trace" in evidence_types
+    assert "WRONG_CONNECTION" in result.answer
+    assert "R1" in result.answer
+
+
+def test_agent_auto_followup_uses_diagnostics_even_without_structured_findings() -> None:
+    classroom = ClassroomState()
+    classroom.update_station(
+        {
+            "station_id": "S01",
+            "risk_level": "warning",
+            "diagnostics": ["reference_circuit: provided 仍无法完成验证"],
+            "risk_reasons": ["参考电路与当前识别结果不匹配"],
+        }
+    )
+    result = _submit(_service(), classroom, mode="agent_auto", query="那我怎么做")
+
+    evidence_types = {item.evidence_type for item in result.evidence}
+    assert "context_pack" in evidence_types
+    assert "react_trace" in evidence_types
+    assert "reference_circuit" in result.answer or "参考电路" in result.answer
+
+
+def test_agent_auto_improvement_followup_defaults_to_current_circuit() -> None:
+    classroom = ClassroomState()
+    classroom.update_station(
+        {
+            "station_id": "S01",
+            "risk_level": "warning",
+            "diagnostics": ["R1 连接节点与参考不符"],
+            "comparison_report": {
+                "items": [
+                    {
+                        "error_code": "WRONG_CONNECTION",
+                        "component_id": "R1",
+                        "severity": "warning",
+                        "suggested_action": "将 R1 改接到参考网络。",
+                    }
+                ],
+            },
+            "netlist_v2": {
+                "components": [{"component_id": "R1", "component_type": "Resistor"}],
+                "nets": [],
+            },
+        }
+    )
+    result = _submit(_service(), classroom, mode="agent_auto", query="后续怎么完善")
+
+    evidence_types = {item.evidence_type for item in result.evidence}
+    assert "context_pack" in evidence_types
+    assert "react_trace" in evidence_types
+    assert "llm_fallback" not in result.answer
+    assert "WRONG_CONNECTION" in result.answer
+    assert "R1" in result.answer
+
+
 def test_agent_auto_mixed_returns_diagnostic_answer_and_attaches_concept() -> None:
     classroom = ClassroomState()
     classroom.update_station(
@@ -517,13 +600,15 @@ def test_agent_auto_mixed_returns_diagnostic_answer_and_attaches_concept() -> No
     )
 
     evidence_types = {item.evidence_type for item in result.evidence}
-    assert "context_pack" not in evidence_types  # mixed theory follow-up avoids diagnostic template
+    assert "context_pack" in evidence_types
+    assert "react_trace" in evidence_types
     assert "tool_results" in evidence_types
     assert "intent" in evidence_types
     intent_item = next(item for item in result.evidence if item.evidence_type == "intent")
-    assert intent_item.payload["intent"] == "concept_tutor"
+    assert intent_item.payload["intent"] == "mixed"
     assert "concept_pack" in evidence_types
-    assert "知识来源" in result.answer
+    assert "NODE_MISMATCH" in result.answer
+    assert "R1" in result.answer
 
 
 # ---------- direct concept_tutor / lab_guidance modes ----------
