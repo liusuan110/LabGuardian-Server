@@ -119,6 +119,48 @@ def test_diagnostic_agent_mode_builds_template_answer_and_verifies() -> None:
     assert all("iteration" in step for step in react_trace.payload["steps"])
 
 
+def test_diagnostic_agent_first_sentence_prioritizes_circuit_facts() -> None:
+    classroom = ClassroomState()
+    classroom.update_station(
+        {
+            "station_id": "S01",
+            "risk_level": "warning",
+            "diagnostics": ["R1 连接节点与参考不符"],
+            "comparison_report": {
+                "summary": {
+                    "reference_id": "rc_first_order_v1",
+                    "reference_name": "一阶 RC 电路",
+                },
+                "items": [
+                    {
+                        "error_code": "WRONG_CONNECTION",
+                        "severity": "warning",
+                        "component_id": "R1",
+                        "suggested_action": "请将 R1 改接到参考电路对应网络。",
+                    }
+                ],
+            },
+            "netlist_v2": {
+                "components": [
+                    {"component_id": "R1", "component_type": "Resistor", "pins": []},
+                    {"component_id": "C1", "component_type": "Capacitor", "pins": []},
+                ],
+                "nets": [],
+            },
+        }
+    )
+    service = AgentService(rag_service=RagService(error_tag_service=ErrorTagService()))
+
+    result = _submit_diagnostic(service, classroom, query="请根据当前诊断结果给出演示用诊断解释和下一步建议。")
+    first_sentence = result.answer.split("。", 1)[0]
+
+    assert first_sentence.startswith("先看这个电路本身")
+    assert "WRONG_CONNECTION" in first_sentence
+    assert "一阶 RC 电路(rc_first_order_v1)" in first_sentence
+    assert "R1(Resistor)" in first_sentence
+    assert "C1(Capacitor)" in first_sentence
+
+
 def test_diagnostic_agent_mode_works_without_station_state() -> None:
     classroom = ClassroomState()
     service = AgentService(rag_service=RagService())

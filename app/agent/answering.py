@@ -206,6 +206,88 @@ def _build_general_diagnostic_answer(
     return "".join(parts)
 
 
+def _component_label_from_finding(finding) -> str:
+    component_id = str(getattr(finding, "component_id", "") or "").strip()
+    if not component_id:
+        payload = getattr(finding, "payload", {}) or {}
+        actual = payload.get("component_actual") if isinstance(payload, dict) else None
+        ref = payload.get("component_ref") if isinstance(payload, dict) else None
+        if isinstance(actual, dict):
+            component_id = str(actual.get("component_id") or "").strip()
+        if not component_id and isinstance(ref, dict):
+            component_id = str(ref.get("ref_id") or "").strip()
+    return component_id
+
+
+def _component_labels(evidence: RuntimeEvidence, limit: int = 4) -> list[str]:
+    labels: list[str] = []
+    components = (evidence.netlist_v2 or {}).get("components", [])
+    if isinstance(components, list):
+        for comp in components:
+            if not isinstance(comp, dict):
+                continue
+            cid = str(comp.get("component_id") or comp.get("id") or "").strip()
+            ctype = str(comp.get("component_type") or comp.get("type") or "").strip()
+            label = f"{cid}({ctype})" if cid and ctype else cid or ctype
+            if label and label not in labels:
+                labels.append(label)
+            if len(labels) >= limit:
+                return labels
+
+    for finding in evidence.findings:
+        label = _component_label_from_finding(finding)
+        if label and label not in labels:
+            labels.append(label)
+        if len(labels) >= limit:
+            break
+    return labels
+
+
+def _reference_label(evidence: RuntimeEvidence) -> str:
+    report = evidence.validator_report_v2 or {}
+    summary = report.get("summary", {}) if isinstance(report, dict) else {}
+    runtime_ref = (evidence.runtime_metadata or {}).get("reference", {})
+    if not isinstance(summary, dict):
+        summary = {}
+    if not isinstance(runtime_ref, dict):
+        runtime_ref = {}
+
+    reference_name = str(summary.get("reference_name") or runtime_ref.get("reference_name") or "").strip()
+    reference_id = str(summary.get("reference_id") or runtime_ref.get("reference_id") or "").strip()
+    if reference_name and reference_id:
+        return f"{reference_name}({reference_id})"
+    if reference_name:
+        return reference_name
+    if reference_id:
+        return reference_id
+    if evidence.error_codes and "REFERENCE_NOT_SET" in evidence.error_codes:
+        return "未设置参考电路"
+    return "未提供参考电路"
+
+
+def circuit_opening_sentence(evidence: RuntimeEvidence) -> str:
+    """Stable first sentence for diagnostic answers after circuit recognition."""
+    codes = "、".join(evidence.error_codes[:4]) if evidence.error_codes else "暂无明确结构化错误码"
+    components = _component_labels(evidence)
+    component_text = "、".join(components) if components else "暂未识别到明确元件"
+    if len(components) >= 4:
+        component_text += "等"
+    return (
+        "先看这个电路本身："
+        f"错误码为 {codes}，"
+        f"参考电路为 {_reference_label(evidence)}，"
+        f"涉及元件为 {component_text}。"
+    )
+
+
+def ensure_circuit_opening(answer: str, evidence: RuntimeEvidence) -> str:
+    opening = circuit_opening_sentence(evidence)
+    stripped = (answer or "").lstrip()
+    if stripped.startswith(opening):
+        return stripped
+    return opening + ("\n" + stripped if stripped else "")
+
+
 def build_diagnostic_template_answer(
     *,
     station_id: str,
@@ -219,17 +301,20 @@ def build_diagnostic_template_answer(
     intent = _classify_user_intent(user_message or query)
 
     if intent == "components":
-        return _with_diagnostic_anchors(
+        answer = _with_diagnostic_anchors(
             _describe_components(evidence, context_pack),
             evidence,
         )
+        return ensure_circuit_opening(answer, evidence)
     if intent == "explain":
-        return _with_diagnostic_anchors(_explain_issue(evidence, context_pack), evidence)
+        answer = _with_diagnostic_anchors(_explain_issue(evidence, context_pack), evidence)
+        return ensure_circuit_opening(answer, evidence)
 
-    return _with_diagnostic_anchors(
+    answer = _with_diagnostic_anchors(
         _build_general_diagnostic_answer(station_id, evidence, context_pack, tool_results),
         evidence,
     )
+    return ensure_circuit_opening(answer, evidence)
 
 
 def _with_diagnostic_anchors(answer: str, evidence: RuntimeEvidence) -> str:

@@ -415,6 +415,82 @@ def test_agent_auto_routes_diagnostic_question_to_diagnostic_path() -> None:
     assert any(w in result.answer for w in ("断电", "断开电源", "电源", "短路"))
 
 
+def test_agent_auto_demo_prompt_with_next_step_keeps_diagnostic_context() -> None:
+    classroom = ClassroomState()
+    classroom.update_station(
+        {
+            "station_id": "S01",
+            "risk_level": "warning",
+            "diagnostics": ["R1 连接节点与参考不符"],
+            "comparison_report": {
+                "summary": {
+                    "reference_id": "rc_first_order_v1",
+                    "reference_name": "一阶 RC 电路",
+                },
+                "items": [
+                    {
+                        "error_code": "WRONG_CONNECTION",
+                        "component_id": "R1",
+                        "severity": "warning",
+                        "suggested_action": "将 R1 改接到参考网络。",
+                    }
+                ],
+            },
+            "netlist_v2": {
+                "components": [{"component_id": "R1", "component_type": "Resistor"}],
+                "nets": [],
+            },
+        }
+    )
+    result = _submit(
+        _service(),
+        classroom,
+        mode="agent_auto",
+        query="请根据当前诊断结果给出演示用诊断解释和下一步建议。",
+    )
+
+    evidence_types = {item.evidence_type for item in result.evidence}
+    assert "context_pack" in evidence_types
+    assert "react_trace" in evidence_types
+    first_sentence = result.answer.split("。", 1)[0]
+    assert first_sentence.startswith("先看这个电路本身")
+    assert "WRONG_CONNECTION" in first_sentence
+    assert "一阶 RC 电路(rc_first_order_v1)" in first_sentence
+    assert "R1(Resistor)" in first_sentence
+
+
+def test_agent_auto_repair_followup_uses_existing_diagnostic_context() -> None:
+    classroom = ClassroomState()
+    classroom.update_station(
+        {
+            "station_id": "S01",
+            "risk_level": "warning",
+            "diagnostics": ["R1 连接节点与参考不符"],
+            "comparison_report": {
+                "items": [
+                    {
+                        "error_code": "WRONG_CONNECTION",
+                        "component_id": "R1",
+                        "severity": "warning",
+                        "suggested_action": "将 R1 改接到参考网络。",
+                    }
+                ],
+            },
+            "netlist_v2": {
+                "components": [{"component_id": "R1", "component_type": "Resistor"}],
+                "nets": [],
+            },
+        }
+    )
+    result = _submit(_service(), classroom, mode="agent_auto", query="那我怎么改")
+
+    evidence_types = {item.evidence_type for item in result.evidence}
+    assert "context_pack" in evidence_types
+    assert "react_trace" in evidence_types
+    assert "WRONG_CONNECTION" in result.answer
+    assert "R1" in result.answer
+
+
 def test_agent_auto_mixed_returns_diagnostic_answer_and_attaches_concept() -> None:
     classroom = ClassroomState()
     classroom.update_station(

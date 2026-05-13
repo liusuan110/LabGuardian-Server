@@ -109,6 +109,12 @@ _DIAGNOSTIC_PHRASES: tuple[str, ...] = (
     "我这个电路",
     "我的电路",
     "当前电路",
+    "怎么改",
+    "怎么修",
+    "怎么处理",
+    "如何改",
+    "如何修",
+    "如何处理",
 )
 
 _CURRENT_CONTEXT_FOLLOW_UP_PHRASES: tuple[str, ...] = (
@@ -229,8 +235,10 @@ def classify_intent(
     diag_hit = any(phrase in msg for phrase in _DIAGNOSTIC_PHRASES)
     concept_hit = any(phrase in msg for phrase in _CONCEPT_PHRASES)
 
+    if evidence and evidence.findings and diag_hit:
+        return "mixed" if concept_hit and _looks_like_theory_question(msg) else "diagnostic"
     if lab_hit:
-        return "lab_guidance"
+        return "mixed" if diag_hit and concept_hit else "lab_guidance"
     if diag_hit and concept_hit:
         return "mixed"
     if diag_hit:

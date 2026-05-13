@@ -23,6 +23,7 @@ from app.agent.answering import (
     build_diagnostic_citations,
     build_diagnostic_evidence,
     build_lab_guidance_answer,
+    ensure_circuit_opening,
 )
 from app.agent.concepts import lookup_concept
 from app.agent.contracts import AgentIntent, ConceptPack
@@ -875,6 +876,8 @@ class AgentService:
             [
                 "你是电路实验故障诊断助教，请对现有答案做自然中文改写。",
                 "关键要求：只能重写表达，不能新增任何事实、孔位、器件、测量值。",
+                "第一句必须直接围绕当前电路的错误码、参考电路和涉及元件展开，不要先寒暄或泛泛说明。",
+                "如果原始答案包含历史对比、上一轮、仍然存在、有所改善或错误码变化，必须保留这些判断。",
                 "必须保留并原样包含：至少 1 个错误码；至少 1 个 evidence_ref 的 component_id/pin_name/hole_id（如果给出）。",
                 f"用户问题：{question}",
                 f"原始答案：{draft_answer}",
@@ -915,12 +918,18 @@ class AgentService:
             text = str(((body or {}).get("message") or {}).get("content") or "").strip()
             if not text:
                 raise RuntimeError("empty llm response")
+            text = ensure_circuit_opening(text, evidence)
+            history_summary = str(getattr(context_pack, "history_summary", "") or "").strip()
+            if history_summary and history_summary not in text:
+                text = f"{text}\n历史对比：{history_summary}。"
             if error_codes and not any(code in text for code in error_codes):
                 text = f"{text}\n补充定位：本轮关键错误码为 {','.join(error_codes[:3])}。"
             if getattr(evidence, "risk_level", "unknown") in {"danger", "warning"} and not any(
                 token in text for token in ("断电", "安全", "电源")
             ):
                 text = f"{text}\n安全提醒：调整接线前请先断电并复查电源轨是否短接。"
+            if getattr(evidence, "risk_level", "unknown") == "danger" and "断电" not in text:
+                text = f"{text}\n安全提醒：当前风险较高，请先断电再调整接线。"
 
             report = verify_draft_answer(
                 evidence=evidence,
