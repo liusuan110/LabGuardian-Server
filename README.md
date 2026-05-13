@@ -44,9 +44,8 @@ LabGuardian 的服务器端负责把视觉识别结果转换成可验证、可�
 
 - [README.md](README.md)
 - [docs/README.md](docs/README.md)
-- [current-status.md](docs/current-status.md)
+- [comparison-architecture.md](docs/comparison-architecture.md)
 - [development-roadmap.md](docs/development-roadmap.md)
-- [backend-architecture.md](docs/backend-architecture.md)
 - [vision-model-inventory.md](docs/vision-model-inventory.md)
 - [board-schema-format.md](docs/board-schema-format.md)
 - [edge-deployment.md](docs/edge-deployment.md)
@@ -203,13 +202,13 @@ component_id + pin_name + hole_id
 对应文件:
 
 - [app/pipeline/stages/s4_validate.py](app/pipeline/stages/s4_validate.py)
-- [app/domain/validator.py](app/domain/validator.py)
+- [app/domain/compare/](app/domain/compare)
 - [app/domain/risk.py](app/domain/risk.py)
 
 职责:
 
 - 与 `logical_reference_v1` 参考电路做逻辑图比较
-- 旧 `labguardian_ref_v4` / 直接 `netlist_v2` 参考文件已不作为主链路输入
+- 从参考电路和当前 netlist 构建逻辑图, 通过 `compare_logical_graphs` 输出比较结论
 - 输出 `validator_report_v2`
 - 生成:
   - `error_code`
@@ -328,7 +327,7 @@ component_id + pin_name + hole_id
 | 修改 pin schema / 封装默认规则 | [app/pipeline/vision/pin_schema.py](app/pipeline/vision/pin_schema.py) |
 | 修改孔位映射 / ambiguity / calibration 输出 | [app/pipeline/stages/s2_mapping.py](app/pipeline/stages/s2_mapping.py), [app/pipeline/vision/calibrator.py](app/pipeline/vision/calibrator.py) |
 | 修改 netlist / topology / board schema | [app/pipeline/topology_input.py](app/pipeline/topology_input.py), [app/domain/circuit.py](app/domain/circuit.py), [app/domain/board_schema.py](app/domain/board_schema.py) |
-| 修改 compare / diagnose / error code | [app/domain/validator.py](app/domain/validator.py), [app/pipeline/stages/s4_validate.py](app/pipeline/stages/s4_validate.py) |
+| 修改 compare / diagnose / error code | [app/domain/compare/](app/domain/compare), [app/domain/logical_reference.py](app/domain/logical_reference.py), [app/pipeline/stages/s4_validate.py](app/pipeline/stages/s4_validate.py) |
 | 修改 API / worker / 结果封装 | [app/api/v1/pipeline.py](app/api/v1/pipeline.py), [app/services/pipeline_service.py](app/services/pipeline_service.py), [app/worker/tasks.py](app/worker/tasks.py) |
 
 ## 目录结构
@@ -359,7 +358,8 @@ app/
 │   ├── netlist_models.py
 │   ├── polarity.py
 │   ├── risk.py
-│   ├── validator.py
+│   ├── compare/
+│   ├── dsl/
 │   └── data/board_schemas/
 ├── pipeline/
 │   ├── orchestrator.py
@@ -371,13 +371,13 @@ app/
 └── worker/
 
 docs/
-├── backend-architecture.md
 ├── board-schema-format.md
-├── current-status.md
+├── comparison-architecture.md
 ├── development-roadmap.md
 ├── edge-deployment.md
 ├── pcm-agent-architecture.md
 ├── rag-teaching-kb-design.md
+├── telemetry-protocol.md
 ├── vision-model-inventory.md
 ├── vision-stage-contracts.md
 └── validator-error-codes.md
@@ -417,11 +417,11 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 # board schema 默认映射冒烟
 python3 tests/manual/smoke/test_board_schema_default.py
 
-# reference v4 读写与 compare 冒烟
-python3 tests/manual/smoke/test_reference_v4_roundtrip.py
+# 逻辑图比较与 S4 回归
+python3 -m pytest tests/domain/test_graph_compare*.py tests/pipeline/test_s4_validate_logical.py -v
 
-# validator error code regression
-python3 tests/manual/smoke/test_validator_error_codes.py
+# DSL 参考电路加载与编译
+python3 -m pytest tests/domain/dsl tests/domain/test_reference_service.py -q
 
 # pipeline 合同与阶段级回归
 python3 -m pytest tests/pipeline
