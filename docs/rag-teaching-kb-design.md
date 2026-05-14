@@ -287,6 +287,53 @@ CLI 示例:
 - 板上 runtime 永远不装 MinerU/Magic-PDF/PaddleOCR/PDF 解析库。`pyproject.toml` 的 `ingest` extras 只在开发机/CI 装,镜像打包必须排除。
 - `document_id` 是稳定主键,重新解析时同名覆盖即可,板上代码契约不变。
 
+### 混合检索（Phase 3 已落地）
+
+板上 retrieval 现在支持"关键词 + 余弦"融合,模型权重和编码成本严格分两侧:
+
+- **板上**:只用 `openvino` runtime(与 `vlm_service` 同源,无新加速栈)加载一个 INT8 IR 嵌入模型(推荐 `bge-small-zh-v1.5`, ~50–100MB)。`OpenVINOEmbeddingBackend` 懒加载,模型目录缺失/损坏时静默回退到关键词,板子永远不因缺模型而崩。**chunk 向量永远不在板上重新计算**——只编码用户 query(每次 1 句话)。
+- **开发机/CI**:跑 `scripts/build_datasheet_embeddings.py` 一次,把每个 `DatasheetDocument` 的所有 chunk 文本批量编码,写出 `knowledge/datasheets/embeddings/<document_id>.npz`(两列:`chunk_ids` + L2-normalized `vectors`)。这些 `.npz` 跟 JSON / assets 一起进固件。
+
+融合公式:把关键词得分 `k` 经 `k/(1+k)` 压到 [0,1),与 cosine `c ∈ [0,1]` 加权:
+```
+fused = (1 - w) * k/(1+k) + w * c           # w = DATASHEET_EMBEDDING_FUSION_WEIGHT, 默认 0.55
+```
+不在意 part 的 doc 仍然被乘以 0.35 derank,跟 Phase 2 行为一致;cosine 负值钉到 0。
+
+启用步骤(开发机):
+1. 装依赖:`pip install -e '.[embedding-build]'`(只在开发机,板子不需要)
+2. 把 HF Sentence-Transformers 模型转 OpenVINO INT8 IR:
+   ```bash
+   optimum-cli export openvino \
+     --model BAAI/bge-small-zh-v1.5 \
+     --weight-format int8 \
+     models/bge-small-zh-v1.5-int8-ov
+   ```
+   产物含 `openvino_model.xml` + `openvino_model.bin` + `tokenizer.json`,~50MB。
+3. 预计算 chunk 向量:
+   ```bash
+   .venv/bin/python scripts/build_datasheet_embeddings.py \
+     --backend openvino \
+     --model-dir models/bge-small-zh-v1.5-int8-ov \
+     --device CPU
+   ```
+   产物落到 `knowledge/datasheets/embeddings/<doc_id>.npz`,提交进仓库。
+
+启用步骤(板上):
+1. 板上 runtime 已带 `openvino`(VLM 在用),不需要装 `embedding-build` extras。
+2. `.env` 配置:
+   ```
+   DATASHEET_EMBEDDING_BACKEND=openvino
+   DATASHEET_EMBEDDING_MODEL_DIR=/models/bge-small-zh-v1.5-int8-ov
+   DATASHEET_EMBEDDING_DEVICE=CPU   # 或 GPU,跟随 VLM 设置
+   ```
+3. 重启;`DatasheetKbService.has_embeddings` 为 True 时自动启用融合,否则保持 Phase 1/2 关键词路径。
+
+回退保证:
+- 模型目录不存在 → backend `is_active=False`,纯关键词
+- `.npz` 缓存不存在 → cosine 路径跳过,纯关键词
+- 配置 `DATASHEET_EMBEDDING_BACKEND=null`(默认)→ 关键词,板上零额外资源
+
 ### 路由
 
 Phase 1 不改 `ContextPack._looks_like_datasheet_query`。`app/agent/routes/datasheet.yaml` 是占位文件，Phase 4 用 semantic-router 思路（utterances + 阈值）落地后再消费。

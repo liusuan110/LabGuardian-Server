@@ -165,6 +165,24 @@ class Settings(BaseSettings):
     TEACHING_KB_DIR: str = str(PROJECT_ROOT / "knowledge" / "teaching_scenes")
     FAULT_CASE_KB_DIR: str = str(PROJECT_ROOT / "knowledge" / "fault_cases")
 
+    # ---- Datasheet KB v2 — Phase 3 hybrid retrieval ----
+    # `null` (default) keeps the board zero-extra-resource: keyword-only.
+    # `openvino` loads a local INT8 IR embedding model (~50–100MB) and fuses
+    # cosine similarity with the deterministic keyword score. Chunk vectors
+    # are pre-computed offline by `scripts/build_datasheet_embeddings.py`
+    # and written to DATASHEET_EMBEDDINGS_DIR — the board only ever encodes
+    # the user query.
+    DATASHEET_EMBEDDING_BACKEND: str = "null"  # null | openvino
+    DATASHEET_EMBEDDING_MODEL_DIR: str | None = None
+    DATASHEET_EMBEDDING_DEVICE: str = "CPU"
+    DATASHEET_EMBEDDINGS_DIR: str = str(
+        PROJECT_ROOT / "knowledge" / "datasheets" / "embeddings"
+    )
+    # Weight of cosine signal in fused score; deterministic keyword score
+    # gets (1 - this). 0.0 → keyword only, 1.0 → semantic only.
+    DATASHEET_EMBEDDING_FUSION_WEIGHT: float = 0.55
+    DATASHEET_EMBEDDING_MAX_LEN: int = 256
+
     # ---- Local VLM (optional, edge deployment) ----
     VLM_PROVIDER: str = "template"
     VLM_BASE_URL: str | None = None

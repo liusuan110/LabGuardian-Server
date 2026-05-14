@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from typing import Iterable
 
+import numpy as np
+
 from app.schemas.kb import (
     DatasheetChunk,
     DatasheetChunkModality,
@@ -18,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 _DEFAULT_BASE_DIR = Path(__file__).resolve().parents[2] / "knowledge" / "datasheets"
+_DEFAULT_EMBED_DIR = _DEFAULT_BASE_DIR / "embeddings"
 
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9]+|[一-鿿]")
 
@@ -55,12 +58,24 @@ class DatasheetKbService:
         self,
         base_dir: str | Path | None = None,
         embedding: EmbeddingBackend | None = None,
+        *,
+        embeddings_dir: str | Path | None = None,
+        fusion_weight: float = 0.55,
     ) -> None:
         self._base_dir = Path(base_dir) if base_dir else _DEFAULT_BASE_DIR
         self._embedding = embedding or NullEmbeddingBackend()
+        self._embeddings_dir = (
+            Path(embeddings_dir) if embeddings_dir else _DEFAULT_EMBED_DIR
+        )
+        self._fusion_weight = max(0.0, min(1.0, fusion_weight))
         self._documents: dict[str, DatasheetDocument] = {}
         self._chunk_index: dict[str, tuple[DatasheetDocument, DatasheetChunk]] = {}
+        # chunk_id -> 1-D unit-norm vector loaded from the offline .npz cache.
+        # Empty when no cache exists or backend is Null; hybrid scoring skips
+        # cosine in that case and behaves identically to Phase 1.
+        self._chunk_vectors: dict[str, np.ndarray] = {}
         self._load()
+        self._load_chunk_embeddings()
 
     def _load(self) -> None:
         if not self._base_dir.exists():
@@ -77,9 +92,49 @@ class DatasheetKbService:
             for chunk in document.chunks:
                 self._chunk_index[chunk.chunk_id] = (document, chunk)
 
+    def _load_chunk_embeddings(self) -> None:
+        if not self._embeddings_dir.exists():
+            return
+        for npz_path in sorted(self._embeddings_dir.glob("*.npz")):
+            try:
+                payload = np.load(npz_path, allow_pickle=False)
+                ids = payload["chunk_ids"]
+                vectors = payload["vectors"].astype(np.float32, copy=False)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("failed to load embeddings %s: %s", npz_path, exc)
+                continue
+            if vectors.shape[0] != len(ids):
+                logger.warning(
+                    "embeddings %s mismatched: %s ids vs %s vectors",
+                    npz_path,
+                    len(ids),
+                    vectors.shape[0],
+                )
+                continue
+            for chunk_id, vector in zip(ids, vectors, strict=True):
+                cid = str(chunk_id)
+                if cid in self._chunk_index:
+                    self._chunk_vectors[cid] = vector
+        if self._chunk_vectors:
+            logger.info(
+                "loaded %d datasheet chunk embeddings from %s",
+                len(self._chunk_vectors),
+                self._embeddings_dir,
+            )
+
     @property
     def is_empty(self) -> bool:
         return not self._documents
+
+    @property
+    def has_embeddings(self) -> bool:
+        """True when both an active backend and at least one cached vector exist.
+
+        ``DatasheetKbService.search`` uses this to decide whether to encode
+        the query and fuse cosine into the score. Either piece missing → pure
+        keyword path (Phase 1 behavior).
+        """
+        return bool(self._chunk_vectors) and self._embedding.is_active
 
     def list_documents(self) -> list[DatasheetDocument]:
         return list(self._documents.values())
@@ -127,6 +182,16 @@ class DatasheetKbService:
             if matched:
                 has_part_signal = True
 
+        # Optional semantic side: encode the query once when both an active
+        # backend and a non-empty .npz cache exist. Cosine is computed only
+        # against chunks we'll actually score (lazy), so the cost is O(1) per
+        # candidate chunk lookup. The board never re-encodes the corpus.
+        query_vec: np.ndarray | None = None
+        if self.has_embeddings:
+            encoded = self._embedding.encode([query])
+            if encoded.size:
+                query_vec = encoded[0]
+
         results: list[tuple[float, DatasheetDocument, DatasheetChunk]] = []
         for document in self._documents.values():
             doc_matches_part = per_doc_part_match[document.document_id]
@@ -138,7 +203,11 @@ class DatasheetKbService:
             for chunk in document.chunks:
                 if modality_filter and chunk.modality not in modality_filter:
                     continue
-                score = self._score_chunk(chunk, query_tokens, part_boost) * doc_score_scale
+                keyword_score = (
+                    self._score_chunk(chunk, query_tokens, part_boost) * doc_score_scale
+                )
+                cosine = self._cosine_against(chunk.chunk_id, query_vec)
+                score = self._fuse(keyword_score, cosine, doc_score_scale)
                 if score <= 0:
                     continue
                 results.append((score, document, chunk))
@@ -179,6 +248,42 @@ class DatasheetKbService:
                 score = part_boost
 
         return score
+
+    def _cosine_against(
+        self,
+        chunk_id: str,
+        query_vec: np.ndarray | None,
+    ) -> float | None:
+        if query_vec is None:
+            return None
+        chunk_vec = self._chunk_vectors.get(chunk_id)
+        if chunk_vec is None:
+            return None
+        # Vectors are pre-normalized at build time and at encode time, so cosine
+        # is just the dot product. Negative values are clipped to 0 — they
+        # carry no useful signal for re-ranking.
+        return float(max(0.0, np.dot(chunk_vec, query_vec)))
+
+    def _fuse(
+        self,
+        keyword_score: float,
+        cosine: float | None,
+        doc_score_scale: float,
+    ) -> float:
+        """Combine keyword and cosine signals.
+
+        Keyword is unbounded (0..~10), cosine is in [0, 1] after the dot
+        product. We squash keyword to (0, 1) via a saturating curve so the
+        two terms live on the same scale, then weighted-sum.
+        """
+        if cosine is None or self._fusion_weight <= 0.0:
+            return keyword_score
+        keyword_normalized = keyword_score / (1.0 + keyword_score)
+        w = self._fusion_weight
+        fused = (1.0 - w) * keyword_normalized + w * cosine
+        # Apply the same off-doc dampening to the semantic side so a wrong-doc
+        # high cosine can't overpower a right-doc keyword hit.
+        return fused * doc_score_scale
 
     def _to_retrieved(
         self,

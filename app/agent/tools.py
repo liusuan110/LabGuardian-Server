@@ -9,6 +9,7 @@ from app.agent.contracts import RuntimeEvidence
 from app.core.config import settings
 from app.domain.board_schema import BoardSchema
 from app.services.datasheet_kb_service import DatasheetKbService
+from app.services.embedding_backend import create_embedding_backend
 from app.services.kb_service import KbService
 from app.services.teaching_kb_service import TeachingKbService
 
@@ -18,7 +19,19 @@ _DATASHEET_KB_SINGLETON: DatasheetKbService | None = None
 def _get_datasheet_kb() -> DatasheetKbService:
     global _DATASHEET_KB_SINGLETON
     if _DATASHEET_KB_SINGLETON is None:
-        _DATASHEET_KB_SINGLETON = DatasheetKbService()
+        backend = create_embedding_backend(
+            kind=getattr(settings, "DATASHEET_EMBEDDING_BACKEND", "null"),
+            model_dir=getattr(settings, "DATASHEET_EMBEDDING_MODEL_DIR", None),
+            device=getattr(settings, "DATASHEET_EMBEDDING_DEVICE", "CPU"),
+            max_length=getattr(settings, "DATASHEET_EMBEDDING_MAX_LEN", 256),
+        )
+        _DATASHEET_KB_SINGLETON = DatasheetKbService(
+            embedding=backend,
+            embeddings_dir=getattr(settings, "DATASHEET_EMBEDDINGS_DIR", None),
+            fusion_weight=float(
+                getattr(settings, "DATASHEET_EMBEDDING_FUSION_WEIGHT", 0.55)
+            ),
+        )
     return _DATASHEET_KB_SINGLETON
 
 

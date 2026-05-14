@@ -57,6 +57,23 @@ ingest = [
     "mineru[core]>=2.0.0; python_version<'3.13'",
     "pypdf>=4.0",
 ]
+# Datasheet KB v2 — Phase 3 hybrid retrieval. On the board, only `openvino`
+# and `tokenizers` are required at runtime (they already ship for vlm_service
+# and Chroma respectively). Chunk-side embeddings are pre-computed offline
+# by `scripts/build_datasheet_embeddings.py`; nothing here is needed on the
+# board to *re-compute* them.
+embedding = [
+    "openvino>=2024.0",
+    "tokenizers>=0.20",
+    "numpy>=1.26",
+]
+# Build-time only: model conversion (HF Transformers → OpenVINO IR). Run on a
+# developer machine to produce the `models/bge-small-zh-v1.5-int8-ov/` IR.
+embedding-build = [
+    "optimum[openvino]>=1.20",
+    "transformers>=4.40",
+    "huggingface_hub>=0.23",
+]
 
 [build-system]
 requires = ["hatchling"]
