@@ -14,14 +14,14 @@ services:
   server:
     build:
       context: .
-      dockerfile: Dockerfile          # GPU 版；改为 Dockerfile.cpu 即切 CPU
+      dockerfile: Dockerfile
     restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
       LABGUARDIAN_MODEL_ROOT: /app/models
       YOLO_MODEL_PATH: /app/models/component/best.pt
-      YOLO_DEVICE: cuda               # CPU 版改为 cpu
+      YOLO_DEVICE: cuda
       PIN_MODEL_DEVICE: cuda
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0

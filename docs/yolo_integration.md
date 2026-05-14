@@ -189,23 +189,14 @@ python scripts/verify_yolo.py
 mkdir -p models/component
 cp /path/to/best.pt models/component/best.pt
 
-# 2. 一键启动（GPU 版）
-docker compose up --build
-
-# 3. CPU 版（修改 compose 使用 Dockerfile.cpu）
-# 在 docker-compose.yml 中将 dockerfile: Dockerfile 改为 dockerfile: Dockerfile.cpu
-# 并将 YOLO_DEVICE: cuda 改为 YOLO_DEVICE: cpu
+# 2. 一键启动
 docker compose up --build
 ```
 
 ### 方式三：仅构建镜像
 
 ```bash
-# GPU 版
 docker build . -t labguardian:latest
-
-# CPU 版
-docker build -f Dockerfile.cpu . -t labguardian:cpu
 
 # 运行（需挂载 models 目录）
 docker run --rm -p 8000:8000 \
