@@ -1,22 +1,76 @@
-# Phase 4 placeholder: semantic-router style datasheet route.
-# Not yet consumed by ContextPack — kept here so the file layout and naming
-# stabilize before we wire utterance-based routing in.
+# Datasheet route — fires when the user is asking about a chip's intrinsic
+# specs (pinout / supply / electrical / packaging), NOT about how the chip is
+# wired on the current breadboard.
 #
-# When implemented, the router will pick `datasheet` when the user query is
-# clearly about chip pinout / electrical / packaging specs, and stay off it
-# when the question is about *this* board's wiring (which belongs to
-# netlist_trace_tool / board_schema_lookup_tool).
+# Consumed by app.agent.router.SemanticRouter at build_context_pack time:
+# - When DATASHEET_EMBEDDING_BACKEND=openvino, utterances are encoded with
+#   bge-small-zh and the query routes to `datasheet` only if
+#   max-positive-cosine - max-negative-cosine > threshold.
+# - When embeddings are off (NullEmbeddingBackend, board with no model),
+#   the router falls back to deterministic keyword matching:
+#   at least `min_keyword_hits` of `keywords` must appear in the query.
 route: datasheet
 description: chip-level pinout, supply, electrical, packaging questions
-threshold: 0.55
+threshold: 0.30
 utterances:
-  - NE555 引脚怎么排
-  - LM324 的供电范围是多少
+  - NE555 的引脚怎么排
+  - LM324 的供电电压范围是多少
   - 这颗芯片的 datasheet 怎么说
-  - 555 的 pinout
+  - 555 的 pinout 图
+  - 电解电容的极性怎么识别
+  - 74LS74 的真值表是什么
+  - 运放的共模输入电压范围
+  - 这个芯片最大额定电流是多少
+  - what is the supply voltage range of LM324
+  - NE555 timing capacitor sizing
   - electrolytic capacitor polarity rules
-  - 电解电容的极性
+  - SN74LS74A truth table
+  - what package does the chip come in
 negative_utterances:
   - 我电路里这根线接哪
   - 为什么这个 LED 没亮
-  - 给我看一下当前 netlist
+  - 帮我看一下当前 netlist
+  - 这个孔位电气连通吗
+  - 这两个元件之间应该怎么连
+  - 电路的输出节点在哪个孔
+  - 示波器探头应该夹在哪
+  - 当前面包板布线有什么问题
+  - 重新接一下电源
+  - 当前波形为什么不对
+# Deterministic fallback used when the embedding backend is inactive. The
+# router requires at least `min_keyword_hits` of these tokens to appear in
+# the query (case-insensitive substring match). Tokens chosen to be
+# distinctive of "asking about the chip itself" — not just any electronics
+# vocabulary.
+keywords:
+  - datasheet
+  - 数据手册
+  - 器件手册
+  - 规格书
+  - pinout
+  - 引脚
+  - 脚位
+  - 管脚
+  - 电气特性
+  - 推荐工作条件
+  - 绝对最大
+  - maximum ratings
+  - electrical characteristics
+  - 真值表
+  - truth table
+  - 共模
+  - 额定
+  - 封装
+  - package
+min_keyword_hits: 1
+# When the query mentions any of these literal part numbers / model strings
+# (case-insensitive), the route auto-fires regardless of cosine / keyword
+# score. Lets us guarantee that "tell me about NE555" hits the datasheet
+# path even if utterance encoding is weak.
+auto_fire_part_numbers:
+  - ne555
+  - "555"
+  - lm324
+  - 74ls74
+  - sn74ls74a
+  - 54ls74

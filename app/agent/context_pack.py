@@ -72,41 +72,46 @@ def build_context_pack(evidence: RuntimeEvidence, *, query: str = "", user_messa
 
 
 def _looks_like_datasheet_query(msg: str, evidence: RuntimeEvidence) -> bool:
-    tokens = (
-        "datasheet",
-        "数据手册",
-        "器件手册",
-        "规格书",
-        "pdf",
-        ".pdf",
-        "检索",
-        "查找",
-        "pinout",
-        "引脚",
-        "脚位",
-        "管脚",
-        "电气特性",
-        "推荐工作条件",
-        "绝对最大",
-        "maximum ratings",
-        "electrical characteristics",
-    )
-    if not any(token in msg for token in tokens):
-        return False
-    if any(part in msg for part in ("ne555", "lm324", "74ls74", "54ls74", "xd74ls74")):
-        return True
+    """Phase 4: defer to the YAML-defined ``datasheet`` route.
+
+    The router combines:
+    - auto-fire on known part numbers,
+    - embedding-based pos/neg utterance scoring (when DATASHEET_EMBEDDING_BACKEND
+      is active and bge has encoded the utterances), and
+    - deterministic keyword overlap as a fallback / safety net.
+
+    If the router's ``datasheet`` route fires, we surface the tool. Otherwise,
+    as a last-resort path that the old keyword-only check used to cover, we
+    let an explicit part_subtype / part_number / chip / ic mention in
+    ``netlist_v2.components`` re-enable the tool — this preserves the case
+    where a user names a chip currently on the board without using any of
+    the datasheet keywords.
+    """
+
+    from app.agent.router import get_router  # local import: avoid cycles
+
+    router = get_router()
+    if router.has_route("datasheet"):
+        decision = router.decide("datasheet", msg)
+        if decision.fired:
+            return True
+        if decision.matched_via == "embedding":
+            # Embedding said no with negative-utterance veto; trust it.
+            return False
+        # No router signal yet — fall through to the netlist-mention path.
+
     for comp in (evidence.netlist_v2 or {}).get("components", []) or []:
         if not isinstance(comp, dict):
             continue
         subtype = str(comp.get("part_subtype") or "").strip().lower()
-        if subtype and subtype in msg:
+        if subtype and len(subtype) >= 3 and subtype in msg:
             return True
         meta = comp.get("metadata", {}) if isinstance(comp.get("metadata"), dict) else {}
         for key in ("part_number", "model", "chip", "ic", "label", "name"):
             value = str(meta.get(key) or "").strip().lower()
-            if value and value in msg:
+            if value and len(value) >= 3 and value in msg:
                 return True
-    return True
+    return False
 
 
 def estimate_context_pack_metrics(pack: ContextPack) -> ContextPackMetrics:

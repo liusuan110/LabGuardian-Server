@@ -31,3 +31,12 @@ htmlcov/
 *.egg-info/
 dist/
 build/
+
+# Phase 3 — local model weights (OpenVINO IR). Converted offline via
+# `optimum-cli export openvino ...`; shipped via the device image, not git.
+models/
+
+# Generated chunk embedding caches. Re-built on the dev machine after every
+# datasheet ingest or model change with scripts/build_datasheet_embeddings.py.
+# Keep them out of git so we don't bloat the repo with binary blobs.
+knowledge/datasheets/embeddings/*.npz

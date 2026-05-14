@@ -334,9 +334,24 @@ fused = (1 - w) * k/(1+k) + w * c           # w = DATASHEET_EMBEDDING_FUSION_WEI
 - `.npz` 缓存不存在 → cosine 路径跳过,纯关键词
 - 配置 `DATASHEET_EMBEDDING_BACKEND=null`(默认)→ 关键词,板上零额外资源
 
-### 路由
+### 路由（Phase 4 已落地）
 
-Phase 1 不改 `ContextPack._looks_like_datasheet_query`。`app/agent/routes/datasheet.yaml` 是占位文件，Phase 4 用 semantic-router 思路（utterances + 阈值）落地后再消费。
+`ContextPack` 不再用宽口袋的关键词集决定是否调 `datasheet_lookup_tool`,改成由 `app/agent/router.py:SemanticRouter` 读 `app/agent/routes/*.yaml`,按"utterances + 阈值"决策。三级回退:
+
+1. **auto_fire**:query 命中 YAML 的 `auto_fire_part_numbers`(如 `ne555`/`555`/`lm324`/`74ls74`)→ 直接 fire。处理"随便讲讲 ne555"这种无datasheet 关键词但显然在问芯片的场景。
+2. **embedding(可选)**:`DATASHEET_EMBEDDING_BACKEND=openvino` 时,bge-small-zh 启动期把 `utterances` 和 `negative_utterances` 各编码一次。query 编码后:
+   ```
+   score = max_cosine(query, positives) − max_cosine(query, negatives)
+   fire 当 score > threshold(默认 0.30)
+   ```
+   负样本(`我电路里这根线接哪`、`示波器探头要夹哪个节点` 等)拥有真实否决权,把"问当前布线"的 query 排除掉。
+3. **keyword 回退**:`NullEmbeddingBackend` 或 cosine 不足时,query 必须包含至少 `min_keyword_hits` 个 YAML 的 `keywords`(`datasheet`/`pinout`/`引脚`/`电气特性`等)才 fire。比之前的"任一关键词就 fire 再加一个 `return True` 兜底"严得多。
+
+实测准确率(13 条真实风格 query,bge-small-zh INT8,threshold=0.30):**13/13**。
+- 正例命中 auto_fire 5 个、embedding 2 个,覆盖中英文混杂问法。
+- 反例包括"为什么这个电容方向反了"——表面上有"电容/方向",但语义偏布线 debug,被负样本余弦否决,不再误触 datasheet 工具。
+
+`SemanticRouter` 共享 `DatasheetKbService` 的 OpenVINO embedding 后端(单进程一次 load),启用零额外资源。文件 `app/agent/routes/datasheet.yaml` 即唯一可调旋钮:`threshold` / `utterances` / `negative_utterances` / `keywords` / `auto_fire_part_numbers` 全可热替换、无需改代码。
 
 ## Future Plan
 
