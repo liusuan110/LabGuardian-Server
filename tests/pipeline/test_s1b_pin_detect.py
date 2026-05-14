@@ -235,6 +235,181 @@ class TestPinDetectionMock:
         for pin in pins:
             assert pin["metadata"]["notch_direction"] == "right"
 
+    def test_t4_3d_dip8_board_logic_locks_to_ef_rows(self, blank_image_b64):
+        """calibrator 就绪时, DIP8 8 个槽位必须是 4 个连续数字列 × (e, f) 两行。
+
+        关键: pin board_2d_point 应等于 calibrator.logic_to_board_point((col, 'e'/'f'))。
+        不允许沿 a-j 字母行方向展开 (那是旧实现的 bug, 会把 IC 旋转 90 度).
+        """
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
+        from app.pipeline.stages.s1_detect import run_detect
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        # synthetic grid: row_coords 沿 Y 轴 (数字列), col_coords 沿 X 轴 (字母行).
+        # 把 bbox 摆成"数字列 3..6 × e/f 行"对应的 board 区域.
+        row_coords = calibrator.row_coords
+        col_coords = calibrator.col_coords
+        e_x = float(col_coords[4])  # 'e' 字母行 X
+        f_x = float(col_coords[5])  # 'f' 字母行 X
+        y_top = float(row_coords[2]) - 1.0  # 数字列 3 (1-indexed)
+        y_bot = float(row_coords[5]) + 1.0  # 数字列 6
+
+        ic_det = MockComponentDetector([
+            {
+                "class_name": "IC",
+                "package_type": "dip8",
+                "bbox": (e_x - 4.0, y_top, f_x + 4.0, y_bot),
+                "confidence": 0.9,
+            }
+        ])
+        ic_pin = MockPinDetector([])
+        s1 = run_detect(images_b64=[blank_image_b64], detector=ic_det)
+        result = run_pin_detect(
+            detections=s1["detections"],
+            images_b64=[blank_image_b64],
+            pin_detector=ic_pin,
+            calibrator=calibrator,
+        )
+
+        pins = result["components"][0]["pins"]
+        assert len(pins) == 8
+        for pin in pins:
+            assert pin["metadata"]["column_source"] == "board_logic"
+            assert pin["metadata"]["digit_column_label"] is not None
+            assert "board_2d_point" in pin["metadata"]
+
+        # 必须是 4 个**连续**数字列, 不允许跨字母行.
+        e_cols = sorted(int(p["metadata"]["digit_column_label"]) for p in pins if p["metadata"]["row_lock"] == "e")
+        f_cols = sorted(int(p["metadata"]["digit_column_label"]) for p in pins if p["metadata"]["row_lock"] == "f")
+        assert len(e_cols) == 4
+        assert e_cols == [e_cols[0] + i for i in range(4)]  # 4 个连续
+        assert e_cols == f_cols  # e 与 f 行覆盖同 4 列
+        # bbox 中点对应数字列 3..6 的中点 ≈ 4.5, 期望窗口落在 3..6.
+        assert e_cols == [3, 4, 5, 6]
+
+        # board_2d_point 与 logic_to_board_point 完全一致.
+        for pin in pins:
+            col_label = pin["metadata"]["digit_column_label"]
+            row_letter = pin["metadata"]["row_lock"]
+            expected = calibrator.logic_to_board_point((col_label, row_letter))
+            actual = pin["metadata"]["board_2d_point"]
+            assert abs(actual[0] - expected[0]) < 1e-3
+            assert abs(actual[1] - expected[1]) < 1e-3
+
+        # notch=left + 4 连续数字列: pin1..pin4 沿 e 行(数字列 3..6), pin5..pin8 沿 f 行(数字列 6..3 逆序).
+        pin_by_id = {p["pin_id"]: p for p in pins}
+        assert pin_by_id[1]["metadata"]["row_lock"] == "e"
+        assert pin_by_id[1]["metadata"]["digit_column_label"] == "3"
+        assert pin_by_id[4]["metadata"]["digit_column_label"] == "6"
+        assert pin_by_id[5]["metadata"]["row_lock"] == "f"
+        assert pin_by_id[5]["metadata"]["digit_column_label"] == "6"
+        assert pin_by_id[8]["metadata"]["digit_column_label"] == "3"
+
+    def test_t4_3e_dip14_board_logic_locks_to_ef_rows(self, blank_image_b64):
+        """DIP14: e/f 行各 7 个连续数字列, 总 14 个 pin, 每个 pin 的 board_2d_point 由 calibrator 决定."""
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
+        from app.pipeline.stages.s1_detect import run_detect
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        row_coords = calibrator.row_coords
+        col_coords = calibrator.col_coords
+        e_x = float(col_coords[4])
+        f_x = float(col_coords[5])
+        # 数字列 10..16 (1-indexed) — 7 连续列.
+        y_top = float(row_coords[9]) - 1.0
+        y_bot = float(row_coords[15]) + 1.0
+
+        ic_det = MockComponentDetector([
+            {
+                "class_name": "IC",
+                "package_type": "dip14",
+                "bbox": (e_x - 5.0, y_top, f_x + 5.0, y_bot),
+                "confidence": 0.85,
+            }
+        ])
+        ic_pin = MockPinDetector([])
+        s1 = run_detect(images_b64=[blank_image_b64], detector=ic_det)
+        for det in s1["detections"]:
+            det["package_type"] = "dip14"
+        result = run_pin_detect(
+            detections=s1["detections"],
+            images_b64=[blank_image_b64],
+            pin_detector=ic_pin,
+            calibrator=calibrator,
+        )
+
+        pins = result["components"][0]["pins"]
+        assert len(pins) == 14
+        e_cols = sorted(int(p["metadata"]["digit_column_label"]) for p in pins if p["metadata"]["row_lock"] == "e")
+        f_cols = sorted(int(p["metadata"]["digit_column_label"]) for p in pins if p["metadata"]["row_lock"] == "f")
+        assert len(e_cols) == 7
+        assert e_cols == [e_cols[0] + i for i in range(7)]
+        assert e_cols == f_cols
+        for pin in pins:
+            assert pin["metadata"]["column_source"] == "board_logic"
+            expected = calibrator.logic_to_board_point(
+                (pin["metadata"]["digit_column_label"], pin["metadata"]["row_lock"])
+            )
+            actual = pin["metadata"]["board_2d_point"]
+            assert abs(actual[0] - expected[0]) < 1e-3
+            assert abs(actual[1] - expected[1]) < 1e-3
+
+    def test_t4_3f_board_logic_ignores_bbox_aspect(self, blank_image_b64):
+        """即使 bbox 是 image-frame 'horizontal' (宽 > 高), 只要 board plane 上覆盖
+        的是 4 个连续数字列, board_logic 路径就必须沿数字列方向出 pin, 不沿字母行.
+
+        这条用例直接锁死"不再用 bbox 长短轴决定 IC 朝向"的物理要求.
+        """
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
+        from app.pipeline.stages.s1_detect import run_detect
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        col_coords = calibrator.col_coords
+        row_coords = calibrator.row_coords
+        e_x = float(col_coords[4])
+        f_x = float(col_coords[5])
+        y_top = float(row_coords[2]) - 1.0
+        y_bot = float(row_coords[5]) + 1.0
+
+        # bbox 宽 = e/f 字母行间距 (~77px), 高 = 4 数字列间距 (~28px) -> image-frame 是 "横向".
+        bbox = (e_x - 4.0, y_top, f_x + 4.0, y_bot)
+        assert (bbox[2] - bbox[0]) > (bbox[3] - bbox[1]), "测试前提: bbox 横向"
+
+        ic_det = MockComponentDetector([
+            {"class_name": "IC", "package_type": "dip8", "bbox": bbox, "confidence": 0.9}
+        ])
+        s1 = run_detect(images_b64=[blank_image_b64], detector=ic_det)
+        result = run_pin_detect(
+            detections=s1["detections"],
+            images_b64=[blank_image_b64],
+            pin_detector=MockPinDetector([]),
+            calibrator=calibrator,
+        )
+
+        pins = result["components"][0]["pins"]
+        # e 行的 4 个 pin: board_2d_point 的 X 都应该等于 e_x (字母行 X),
+        # Y 在 4 个连续数字列的 Y 坐标上变化.
+        e_points = [p["metadata"]["board_2d_point"] for p in pins if p["metadata"]["row_lock"] == "e"]
+        f_points = [p["metadata"]["board_2d_point"] for p in pins if p["metadata"]["row_lock"] == "f"]
+        assert len(e_points) == 4
+        assert len(f_points) == 4
+        for pt in e_points:
+            assert abs(pt[0] - e_x) < 1e-3, f"e-row pin X 应等于字母行 e 的 X={e_x}, 实际 {pt[0]}"
+        for pt in f_points:
+            assert abs(pt[0] - f_x) < 1e-3, f"f-row pin X 应等于字母行 f 的 X={f_x}, 实际 {pt[0]}"
+        # e 行 4 pin 的 Y 必须沿数字列方向变化 (不是常数), 即 spread > 0.
+        e_y_spread = max(p[1] for p in e_points) - min(p[1] for p in e_points)
+        assert e_y_spread > 5.0, "e 行 pin 应沿数字列 (Y 轴) 展开, 不是聚成一点"
+
     def test_t4_4_pin_source_field(self, blank_image_b64):
         """T9.4: 每个 pin 有 source 字段"""
         from app.pipeline.stages.s1b_pin_detect import run_pin_detect

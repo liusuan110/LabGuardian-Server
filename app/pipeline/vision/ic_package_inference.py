@@ -32,8 +32,10 @@ SOURCE_MODEL_CLASS = "model_class"
 SOURCE_BBOX_COLUMN = "bbox_column_inference"
 SOURCE_UNKNOWN = "unknown"
 
-# 包名匹配: 大小写不敏感, 既兼容 ic_dip8 这种带前缀的, 也兼容裸 dip8.
-_DIP_TAG_RE = re.compile(r"dip[\s_\-]*(\d+)", re.IGNORECASE)
+# 包名匹配: 大小写不敏感. 同时兼容:
+#   - ic_dip8 / dip_8 / DIP 14 (训练数据里 dip 风格)
+#   - IC-8 / IC-14 / ic-8 (detect_components_v2 真实标签, 不含 dip 字样)
+_DIP_TAG_RE = re.compile(r"(?:dip|ic)[\s_\-]*(\d+)", re.IGNORECASE)
 
 # bbox 列覆盖判别区间, 略宽于 4 / 7 给一点容差.
 _DIP8_COLUMN_SOFT = {3, 5}

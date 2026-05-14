@@ -175,7 +175,23 @@ def _detect_components_for_view(
         # 在 normalize 之前留下原始类别名, 让 IC 封装识别可以利用 ic_dip8 / ic_dip14 等子类信息.
         setattr(det, "raw_class_name", det.class_name)
         det.class_name = normalize_component_type(det.class_name)
-    return [det for det in detections if is_supported_component_type(det.class_name) and det.class_name not in IGNORED_CLASSES]
+    kept: List[Detection] = []
+    for det in detections:
+        if det.class_name in IGNORED_CLASSES:
+            continue
+        if not is_supported_component_type(det.class_name):
+            # 静默丢弃曾经掩盖过 v2 模型 IC-8 / IC-14 标签未映射的 bug —
+            # 此处显式提示, 让"raw 有 / 输出无"的错位以后能在日志里被看到.
+            logger.warning(
+                "S1 dropped unsupported detection: raw=%r normalized=%r conf=%.3f bbox=%s",
+                getattr(det, "raw_class_name", det.class_name),
+                det.class_name,
+                float(det.confidence),
+                tuple(det.bbox),
+            )
+            continue
+        kept.append(det)
+    return kept
 
 
 def _detection_to_dict(

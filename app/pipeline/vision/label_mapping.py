@@ -28,6 +28,12 @@ MODEL_CLASS_TO_COMPONENT_TYPE = {
     "ic_dip14": "IC",
     "dip8": "IC",
     "dip14": "IC",
+    # detect_components_v2 真实标签格式 (大写 IC + 连字符 + 引脚数).
+    # 不加这几条, v2 输出的 IC-8 / IC-14 会在 is_supported_component_type 处被静默过滤.
+    "IC-8": "IC",
+    "IC-14": "IC",
+    "ic-8": "IC",
+    "ic-14": "IC",
     "potentiometer": "Potentiometer",
 }
 

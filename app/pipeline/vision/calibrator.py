@@ -315,6 +315,18 @@ class BreadboardCalibrator:
             px, py = transformed[0, 0]
         return (float(px), float(py))
 
+    def board_point_to_frame_pixel(self, board_x: float, board_y: float) -> Tuple[float, float]:
+        """Inverse of frame_pixel_to_board_point.
+
+        Detected-hole-map 模式下用 _inv_perspective 反变换回 frame pixel.
+        Synthetic grid / 未做透视校准时 board 与 frame 坐标系等价, 直接返回.
+        """
+        if self._inv_perspective is not None:
+            pt = np.array([[[float(board_x), float(board_y)]]], dtype=np.float32)
+            transformed = cv2.perspectiveTransform(pt, self._inv_perspective)
+            return (float(transformed[0, 0, 0]), float(transformed[0, 0, 1]))
+        return (float(board_x), float(board_y))
+
     def board_point_to_logic_candidates(
         self, board_x: float, board_y: float, k: int = 5,
     ) -> List[Tuple[str, str]]:

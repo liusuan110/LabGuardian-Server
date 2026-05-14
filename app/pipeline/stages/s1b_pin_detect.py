@@ -170,7 +170,8 @@ def _run_pin_detect_legacy(
     t0 = time.time()
     roi_resolver = SideViewRoiResolver()
     top_decoded = next((item for item in decoded if item["view_id"] == "top" and item.get("decoded")), None)
-    top_image_shape = top_decoded["image"].shape[:2] if top_decoded and top_decoded.get("image") is not None else (0, 0)
+    top_image = top_decoded["image"] if top_decoded and top_decoded.get("image") is not None else None
+    top_image_shape = top_image.shape[:2] if top_image is not None else (0, 0)
 
     counters: Dict[str, int] = {}
     components: List[dict] = []
@@ -189,6 +190,7 @@ def _run_pin_detect_legacy(
                     pin_detector=pin_detector,
                     calibrator=calibrator,
                     backend_mode=getattr(pin_detector, "backend_mode", ""),
+                    top_image=top_image,
                 )
             )
             continue
@@ -531,6 +533,7 @@ def _build_components_from_full_pose(
                     pin_detector=pin_detector,
                     calibrator=calibrator,
                     backend_mode="full_image_model",
+                    top_image=top_image,
                 )
             )
             continue
@@ -973,136 +976,253 @@ def _build_ic_geometry_pins(
     package_type: str,
     view_ids: List[str],
     calibrator: Any | None = None,
+    top_image: np.ndarray | None = None,
 ) -> List[dict]:
-    """根据 IC bbox 在面包板 e/f 行上推断 DIP8/DIP14 引脚槽位。
+    """根据 IC bbox + 面包板 e/f 行约束推断 DIP8/DIP14 引脚槽位。
 
-    规则:
-    - DIP8: e/f 行各 4 个引脚; DIP14: e/f 行各 7 个引脚.
-    - 引脚沿 IC 长轴均匀分布, 一行落 bbox 短轴的 "靠 e 行" 一侧, 另一行靠 f 行.
-    - notch_direction 决定 pin1 起点 (从 notch 端起逆时针绕一圈).
-    - source 强制为 ic_ef_bridge_geometry; metadata 中记录 row_lock / estimated_column /
-      notch_direction / numbering_rule / package_type, 便于 S2 / 调试链路核对.
-    - 若提供了已就绪的 calibrator, 额外在 per_view metadata 里写 board_2d_point,
-      让 S2 的 resolve_pin_board_projection 直接吃用; 否则只产出 bbox 几何 frame pixel.
+    物理模型:
+    - 两排引脚永远锁在面包板 e 行 / f 行 (字母行轴).
+    - 引脚沿"数字列"方向展开: DIP8 占 4 个连续数字列, DIP14 占 7 个.
+    - **绝对不**用 image-frame 的 bbox horizontal/vertical 来决定 pin 排布方向 ——
+      否则 IC 在面包板上会被"旋转 90 度". image-frame 的轴向只是相机视角, 与
+      面包板物理轴向无关.
+    - notch_direction 只决定 pin_id 编号绕向 (notch 端起逆时针), 不影响 e/f
+      行的几何槽位.
+
+    优先级:
+    1) calibrator 就绪 / 能 ensure_calibrated 成功 -> 用 logic_to_board_point 选
+       4 / 7 个连续数字列, board_2d_point 直接来自面包板逻辑坐标, 反变换回 frame
+       pixel 得到 keypoint.
+    2) 完全拿不到 calibrator -> 退化到 image-frame 兜底, 假设标准俯拍
+       (数字列 ≈ image-X, 字母行 ≈ image-Y), 兜底也固定 e 在 image-Y 小一侧,
+       f 在大一侧, 不再因 bbox 长短轴翻转.
     """
     pkg = _normalize_ic_package_type(package_type)
     pin_count = _ic_pin_count(pkg)
     half = pin_count // 2
 
-    bbox = list(det.get("bbox") or [0.0, 0.0, 0.0, 0.0])
+    bbox = _parse_ic_bbox(det.get("bbox"))
+    notch_direction = str(
+        det.get("notch_direction")
+        or (det.get("metadata") or {}).get("notch_direction")
+        or "left"
+    ).lower()
+
+    layout = _try_board_logic_layout(
+        bbox=bbox,
+        half=half,
+        calibrator=calibrator,
+        top_image=top_image,
+    )
+    if layout is None:
+        layout = _image_frame_fallback_layout(bbox=bbox, half=half)
+
+    notch_at_low_index = notch_direction in {"left", "up"}
+    pins_by_id: Dict[int, dict] = {}
+    for slot in range(half):
+        if notch_at_low_index:
+            e_pin_id = slot + 1
+            f_pin_id = 2 * half - slot
+        else:
+            e_pin_id = half - slot
+            f_pin_id = half + 1 + slot
+        pins_by_id[e_pin_id] = _make_ic_pin_entry(
+            pin_id=e_pin_id,
+            keypoint=layout["e_frame_pixels"][slot],
+            board_point=layout["e_board_points"][slot] if layout.get("e_board_points") else None,
+            row_lock="e",
+            estimated_column=slot,
+            digit_column_label=layout["digit_column_labels"][slot] if layout.get("digit_column_labels") else None,
+            package_type=pkg,
+            notch_direction=notch_direction,
+            view_ids=view_ids,
+            column_source=layout["column_source"],
+        )
+        pins_by_id[f_pin_id] = _make_ic_pin_entry(
+            pin_id=f_pin_id,
+            keypoint=layout["f_frame_pixels"][slot],
+            board_point=layout["f_board_points"][slot] if layout.get("f_board_points") else None,
+            row_lock="f",
+            estimated_column=slot,
+            digit_column_label=layout["digit_column_labels"][slot] if layout.get("digit_column_labels") else None,
+            package_type=pkg,
+            notch_direction=notch_direction,
+            view_ids=view_ids,
+            column_source=layout["column_source"],
+        )
+    return [pins_by_id[pid] for pid in range(1, pin_count + 1)]
+
+
+def _parse_ic_bbox(raw_bbox: Any) -> tuple[float, float, float, float]:
     try:
-        x1, y1, x2, y2 = (float(v) for v in bbox[:4])
+        x1, y1, x2, y2 = (float(v) for v in (raw_bbox or [0.0, 0.0, 0.0, 0.0])[:4])
     except (TypeError, ValueError):
-        x1 = y1 = x2 = y2 = 0.0
+        return (0.0, 0.0, 0.0, 0.0)
     if x2 < x1:
         x1, x2 = x2, x1
     if y2 < y1:
         y1, y2 = y2, y1
+    return (x1, y1, x2, y2)
+
+
+def _try_board_logic_layout(
+    *,
+    bbox: tuple[float, float, float, float],
+    half: int,
+    calibrator: Any | None,
+    top_image: np.ndarray | None,
+) -> Dict[str, Any] | None:
+    """尝试用 calibrator 在 board plane 上选 half 个连续数字列。失败返回 None。"""
+    if calibrator is None:
+        return None
+    if not getattr(calibrator, "is_grid_ready", False):
+        if top_image is None or not hasattr(calibrator, "ensure_calibrated"):
+            return None
+        try:
+            calibrator.ensure_calibrated(top_image)
+        except Exception as exc:
+            logger.debug("S1.5 IC geometry: ensure_calibrated failed: %s", exc)
+            return None
+        if not getattr(calibrator, "is_grid_ready", False):
+            return None
+
+    if not hasattr(calibrator, "frame_pixel_to_board_point"):
+        return None
+    if not hasattr(calibrator, "logic_to_board_point"):
+        return None
+    row_coords = getattr(calibrator, "row_coords", None)
+    if row_coords is None or len(row_coords) < half:
+        return None
+
+    x1, y1, x2, y2 = bbox
+    try:
+        bp_tl = calibrator.frame_pixel_to_board_point(x1, y1)
+        bp_tr = calibrator.frame_pixel_to_board_point(x2, y1)
+        bp_bl = calibrator.frame_pixel_to_board_point(x1, y2)
+        bp_br = calibrator.frame_pixel_to_board_point(x2, y2)
+    except Exception as exc:
+        logger.debug("S1.5 IC geometry: bbox board projection failed: %s", exc)
+        return None
+
+    landscape = bool(getattr(calibrator, "landscape", False) or getattr(calibrator, "_landscape", False))
+    if landscape:
+        # 数字列轴在 board X 方向; 字母行 a-j 在 board Y 方向.
+        bxs = [bp_tl[0], bp_tr[0], bp_bl[0], bp_br[0]]
+        lo, hi = min(bxs), max(bxs)
+    else:
+        bxs = [bp_tl[1], bp_tr[1], bp_bl[1], bp_br[1]]
+        lo, hi = min(bxs), max(bxs)
+    center = 0.5 * (lo + hi)
+
+    coords = np.asarray(row_coords, dtype=np.float32)
+    if coords.size < half:
+        return None
+    # 选 half 个相邻数字列 (列号连续), 让窗口中点最贴近 bbox 中点.
+    best_start = 0
+    best_diff = float("inf")
+    for start in range(coords.size - half + 1):
+        window_center = 0.5 * (float(coords[start]) + float(coords[start + half - 1]))
+        diff = abs(window_center - center)
+        if diff < best_diff:
+            best_diff = diff
+            best_start = start
+
+    digit_column_labels = [str(best_start + i + 1) for i in range(half)]
+    e_board_points: list[tuple[float, float]] = []
+    f_board_points: list[tuple[float, float]] = []
+    try:
+        for col_label in digit_column_labels:
+            pe = calibrator.logic_to_board_point((col_label, "e"))
+            pf = calibrator.logic_to_board_point((col_label, "f"))
+            if pe is None or pf is None:
+                return None
+            e_board_points.append((float(pe[0]), float(pe[1])))
+            f_board_points.append((float(pf[0]), float(pf[1])))
+    except Exception as exc:
+        logger.debug("S1.5 IC geometry: logic_to_board_point failed: %s", exc)
+        return None
+
+    if hasattr(calibrator, "board_point_to_frame_pixel"):
+        try:
+            e_frame_pixels = [tuple(calibrator.board_point_to_frame_pixel(*pt)) for pt in e_board_points]
+            f_frame_pixels = [tuple(calibrator.board_point_to_frame_pixel(*pt)) for pt in f_board_points]
+        except Exception as exc:
+            logger.debug("S1.5 IC geometry: board_point_to_frame_pixel failed: %s", exc)
+            e_frame_pixels = [tuple(pt) for pt in e_board_points]
+            f_frame_pixels = [tuple(pt) for pt in f_board_points]
+    else:
+        # 兼容老版 calibrator: 直接把 board point 当 frame pixel 用 (仅 synthetic 模式正确).
+        e_frame_pixels = [tuple(pt) for pt in e_board_points]
+        f_frame_pixels = [tuple(pt) for pt in f_board_points]
+
+    return {
+        "digit_column_labels": digit_column_labels,
+        "e_board_points": e_board_points,
+        "f_board_points": f_board_points,
+        "e_frame_pixels": e_frame_pixels,
+        "f_frame_pixels": f_frame_pixels,
+        "column_source": "board_logic",
+    }
+
+
+def _image_frame_fallback_layout(
+    *,
+    bbox: tuple[float, float, float, float],
+    half: int,
+) -> Dict[str, Any]:
+    """没有 calibrator 时的兜底: 假设标准俯拍 (数字列 ≈ image-X, 字母行 ≈ image-Y)。
+
+    与原实现相比, 这里**强制** e 行在 image-Y 较小一侧, f 行在较大一侧,
+    pin 沿 image-X 均匀展开 —— 不再根据 bbox 长短轴决定排布方向, 避免在
+    竖向 bbox 时把 pin 摆成沿 Y 的一列, 造成 IC 旋转 90 度的错觉.
+    """
+    logger.warning(
+        "S1.5 IC geometry: calibrator not ready, falling back to image-frame layout. "
+        "DIP pin slots may not align with breadboard e/f rows."
+    )
+    x1, y1, x2, y2 = bbox
     bw = max(1.0, x2 - x1)
     bh = max(1.0, y2 - y1)
     cx = (x1 + x2) / 2.0
-    cy = (y1 + y2) / 2.0
-    horizontal = bw >= bh
-
-    notch_direction = str(
-        det.get("notch_direction")
-        or (det.get("metadata") or {}).get("notch_direction")
-        or ("left" if horizontal else "up")
-    ).lower()
-
     pad_ratio = 0.1
-    if horizontal:
-        if half > 1:
-            slot_axis = [
-                x1 + bw * (pad_ratio + (1.0 - 2.0 * pad_ratio) * i / (half - 1))
-                for i in range(half)
-            ]
-        else:
-            slot_axis = [cx]
-        e_axis_value = y1 + bh * 0.3
-        f_axis_value = y2 - bh * 0.3
+    if half > 1:
+        xs = [
+            x1 + bw * (pad_ratio + (1.0 - 2.0 * pad_ratio) * i / (half - 1))
+            for i in range(half)
+        ]
     else:
-        if half > 1:
-            slot_axis = [
-                y1 + bh * (pad_ratio + (1.0 - 2.0 * pad_ratio) * i / (half - 1))
-                for i in range(half)
-            ]
-        else:
-            slot_axis = [cy]
-        e_axis_value = x1 + bw * 0.3
-        f_axis_value = x2 - bw * 0.3
-
-    # slot_axis 始终按物理 L->R (横排) 或 T->B (竖排) 排序, 列号 0..half-1.
-    # pin 编号沿元件外轮廓逆时针绕一圈:
-    #   notch=left  / notch=up   -> pin1 在 e 行靠 notch 一端的 0 号槽; e 行 0..half-1 -> pin1..pin_half
-    #                                f 行从 0 号槽起 pin_(2*half)..pin_(half+1) 递减
-    #   notch=right / notch=down -> pin1 落在 e 行 half-1 号槽 (notch 一端);
-    #                                e 行 half-1..0 -> pin1..pin_half;
-    #                                f 行 half-1..0 -> pin_(half+1)..pin_(2*half)
-    notch_at_low_index = notch_direction in {"left", "up"}
-    e_pin_ids_by_slot: List[int] = [0] * half
-    f_pin_ids_by_slot: List[int] = [0] * half
-    for slot in range(half):
-        if notch_at_low_index:
-            e_pin_ids_by_slot[slot] = slot + 1
-            f_pin_ids_by_slot[slot] = 2 * half - slot
-        else:
-            e_pin_ids_by_slot[slot] = half - slot
-            f_pin_ids_by_slot[slot] = half + 1 + slot
-
-    grid_ready = bool(calibrator is not None and getattr(calibrator, "is_grid_ready", False))
-    pins_by_id: Dict[int, dict] = {}
-    for slot in range(half):
-        if horizontal:
-            e_kp = (slot_axis[slot], e_axis_value)
-            f_kp = (slot_axis[slot], f_axis_value)
-        else:
-            e_kp = (e_axis_value, slot_axis[slot])
-            f_kp = (f_axis_value, slot_axis[slot])
-        pins_by_id[e_pin_ids_by_slot[slot]] = _make_ic_pin_entry(
-            pin_id=e_pin_ids_by_slot[slot],
-            keypoint=e_kp,
-            row_lock="e",
-            estimated_column=slot,
-            package_type=pkg,
-            notch_direction=notch_direction,
-            view_ids=view_ids,
-            calibrator=calibrator if grid_ready else None,
-        )
-        pins_by_id[f_pin_ids_by_slot[slot]] = _make_ic_pin_entry(
-            pin_id=f_pin_ids_by_slot[slot],
-            keypoint=f_kp,
-            row_lock="f",
-            estimated_column=slot,
-            package_type=pkg,
-            notch_direction=notch_direction,
-            view_ids=view_ids,
-            calibrator=calibrator if grid_ready else None,
-        )
-    return [pins_by_id[pid] for pid in range(1, pin_count + 1)]
+        xs = [cx]
+    e_y = y1 + bh * 0.3
+    f_y = y2 - bh * 0.3
+    e_frame_pixels = [(xs[i], e_y) for i in range(half)]
+    f_frame_pixels = [(xs[i], f_y) for i in range(half)]
+    return {
+        "digit_column_labels": None,
+        "e_board_points": None,
+        "f_board_points": None,
+        "e_frame_pixels": e_frame_pixels,
+        "f_frame_pixels": f_frame_pixels,
+        "column_source": "image_frame_fallback",
+    }
 
 
 def _make_ic_pin_entry(
     *,
     pin_id: int,
     keypoint: tuple[float, float],
+    board_point: tuple[float, float] | None,
     row_lock: str,
     estimated_column: int,
+    digit_column_label: str | None,
     package_type: str,
     notch_direction: str,
     view_ids: List[str],
-    calibrator: Any | None,
+    column_source: str,
 ) -> dict:
     kx, ky = float(keypoint[0]), float(keypoint[1])
-    board_point: list[float] | None = None
-    if calibrator is not None and hasattr(calibrator, "frame_pixel_to_board_point"):
-        try:
-            bp = calibrator.frame_pixel_to_board_point(kx, ky)
-            if bp is not None and len(bp) >= 2:
-                board_point = [float(bp[0]), float(bp[1])]
-        except Exception as exc:
-            logger.debug("S1.5 IC geometry board projection failed: %s", exc)
-            board_point = None
+    board_point_list: list[float] | None = None
+    if board_point is not None and len(board_point) >= 2:
+        board_point_list = [float(board_point[0]), float(board_point[1])]
 
     keypoints_by_view = {vid: None for vid in view_ids}
     visibility_by_view = {vid: 0 for vid in view_ids}
@@ -1119,12 +1239,14 @@ def _make_ic_pin_entry(
         "roi_source": IC_GEOMETRY_SOURCE,
         "row_lock": row_lock,
         "estimated_column": estimated_column,
+        "digit_column_label": digit_column_label,
+        "column_source": column_source,
         "package_type": package_type,
         "notch_direction": notch_direction,
         "numbering_rule": "counterclockwise",
     }
-    if board_point is not None:
-        top_per_view["board_2d_point"] = board_point
+    if board_point_list is not None:
+        top_per_view["board_2d_point"] = board_point_list
     per_view["top"] = top_per_view
 
     pin_name = f"pin{pin_id}"
@@ -1133,11 +1255,13 @@ def _make_ic_pin_entry(
         "package_type": package_type,
         "row_lock": row_lock,
         "estimated_column": estimated_column,
+        "digit_column_label": digit_column_label,
+        "column_source": column_source,
         "notch_direction": notch_direction,
         "numbering_rule": "counterclockwise",
     }
-    if board_point is not None:
-        metadata["board_2d_point"] = board_point
+    if board_point_list is not None:
+        metadata["board_2d_point"] = board_point_list
 
     return {
         "pin_id": pin_id,
@@ -1165,6 +1289,7 @@ def _build_ic_component_full_pose_shell(
     pin_detector: PinRoiDetector,
     calibrator: Any | None,
     backend_mode: str,
+    top_image: np.ndarray | None = None,
 ) -> dict:
     """统一封装 IC 组件外壳, 让两条 S1.5 主路径走同一份 IC 输出契约。"""
     pkg = _normalize_ic_package_type(package_type)
@@ -1173,6 +1298,7 @@ def _build_ic_component_full_pose_shell(
         package_type=pkg,
         view_ids=view_ids,
         calibrator=calibrator,
+        top_image=top_image,
     )
     bbox = list(det.get("bbox") or [0, 0, 0, 0])
     h = int(image_shape[0]) if image_shape and len(image_shape) >= 1 else 0
