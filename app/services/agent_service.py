@@ -567,6 +567,7 @@ class AgentService:
             and not _is_agent_identity_question(question)
             and not _looks_like_current_context_follow_up(question)
             and not _is_circuit_related_question(question)
+            and not (evidence_contract.error_codes or evidence_contract.diagnostics)
         ):
             answer, actual_provider, actual_model = self._llm_concept_not_found_answer(
                 question=question,
@@ -657,6 +658,7 @@ class AgentService:
             context_pack=context_pack,
             tool_results=tool_results,
         )
+        rewritten_answer = ensure_circuit_opening(rewritten_answer, evidence_contract)
 
         result = AngntJobResult(
             job_id=job_id,

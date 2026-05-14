@@ -65,3 +65,16 @@ def test_fallback_pdf_retrieval_skips_unreadable_encrypted_pdf(monkeypatch) -> N
     monkeypatch.setattr("app.services.kb_service.PdfReader", lambda _: _Reader())
 
     assert service._fallback_retrieve_from_pdfs(query="NE555 引脚", top_k=3) == []
+
+
+def test_74ls74_pinout_has_builtin_fallback_when_pdf_search_misses(monkeypatch) -> None:
+    service = KbService()
+    monkeypatch.setattr(service, "retrieve", lambda *, query, top_k: [])
+
+    answer, citations, evidence, used = service.answer(query="SN74LS74A 引脚有哪些", top_k=3)
+
+    assert used
+    assert "1=/CLR1" in answer
+    assert "14=VCC" in answer
+    assert citations[0].source_type == "builtin_datasheet_fallback"
+    assert evidence[0].evidence_type == "datasheet_builtin_fallback"

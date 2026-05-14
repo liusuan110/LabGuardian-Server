@@ -699,6 +699,9 @@ class KbService:
         )
 
     def answer(self, *, query: str, top_k: int) -> tuple[str, list[AngntCitation], list[AngntEvidence], bool]:
+        builtin = self._answer_from_builtin_datasheet(query=query)
+        if builtin is not None:
+            return builtin
         hits = self.retrieve(query=query, top_k=top_k)
         if not hits:
             return "知识库未命中相关内容。", [], [], False
@@ -762,6 +765,41 @@ class KbService:
             answer_text = self._answer_with_ollama(query=query, context_blocks=context_blocks)
 
         return answer_text, citations, evidence, True
+
+    def _answer_from_builtin_datasheet(
+        self,
+        *,
+        query: str,
+    ) -> tuple[str, list[AngntCitation], list[AngntEvidence], bool] | None:
+        chip_hints = self._chip_hints_from_query(query)
+        query_l = str(query or "").lower()
+        pin_query = any(token in query_l for token in ("引脚", "脚位", "管脚", "pinout", "pin ", "pin:"))
+        if "74ls74" not in chip_hints or not pin_query:
+            return None
+        text = (
+            "74LS74 / SN74LS74A 常见 DIP-14 引脚为："
+            "1=/CLR1（清零，低有效），2=1D，3=CLK1，4=/PRE1（置位，低有效），"
+            "5=1Q，6=/1Q，7=GND，8=/2Q，9=2Q，10=/PRE2，11=CLK2，"
+            "12=2D，13=/CLR2，14=VCC。"
+            "不同厂商/封装的管脚图仍以对应 datasheet 和实物丝印方向为准。"
+        )
+        citation = AngntCitation(
+            source_type="builtin_datasheet_fallback",
+            source_id="builtin:74ls74:dip14-pinout",
+            title="74LS74 / SN74LS74A DIP-14 pinout fallback",
+            snippet=text,
+        )
+        evidence = AngntEvidence(
+            evidence_type="datasheet_builtin_fallback",
+            source_id=citation.source_id,
+            summary=citation.title,
+            payload={
+                "part": "74LS74/SN74LS74A",
+                "package": "DIP-14",
+                "text": text,
+            },
+        )
+        return f"{text}\n引用：[builtin:74ls74:dip14-pinout]", [citation], [evidence], True
 
     def _answer_with_ollama(self, *, query: str, context_blocks: list[str]) -> str:
         if not context_blocks:
