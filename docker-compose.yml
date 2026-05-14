@@ -1,6 +1,8 @@
 services:
+
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     healthcheck:
@@ -10,30 +12,64 @@ services:
       retries: 5
 
   server:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile          # GPU 版；改为 Dockerfile.cpu 即切 CPU
+    restart: unless-stopped
     ports:
       - "8000:8000"
-    env_file: .env
     environment:
       LABGUARDIAN_MODEL_ROOT: /app/models
       YOLO_MODEL_PATH: /app/models/component/best.pt
-      PIN_MODEL_PATH: /app/models/pin/best.pt
+      YOLO_DEVICE: cuda               # CPU 版改为 cpu
+      PIN_MODEL_DEVICE: cuda
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    env_file:
+      - path: .env
+        required: false               # .env 不存在时不报错（用上方 environment 兜底）
+    volumes:
+      - ./models:/app/models:ro
     depends_on:
       redis:
         condition: service_healthy
-    volumes:
-      - ./models:/app/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   worker:
-    build: .
-    command: celery -A app.core.celery_app:celery_app worker -Q pipeline -c 1 --loglevel=info
-    env_file: .env
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: >
+      celery -A app.core.celery_app:celery_app worker
+      -Q pipeline -c 1 --loglevel=info
     environment:
       LABGUARDIAN_MODEL_ROOT: /app/models
       YOLO_MODEL_PATH: /app/models/component/best.pt
-      PIN_MODEL_PATH: /app/models/pin/best.pt
+      YOLO_DEVICE: cuda
+      PIN_MODEL_DEVICE: cuda
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./models:/app/models:ro
     depends_on:
       redis:
         condition: service_healthy
-    volumes:
-      - ./models:/app/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

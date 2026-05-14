@@ -1,0 +1,29 @@
+# ── CPU 版 ────────────────────────────────────────────────────────────────
+# 适用于无 GPU 的开发机、CI 或边缘节点
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# OpenCV 运行时系统库
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1-mesa-glx libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ── 依赖层 ────────────────────────────────────────────────────────────────
+RUN pip install --no-cache-dir --upgrade pip
+
+COPY pyproject.toml README.md ./
+RUN mkdir -p app && touch app/__init__.py && \
+    pip install --no-cache-dir . && \
+    rm -f app/__init__.py
+
+# ── 应用层 ────────────────────────────────────────────────────────────────
+COPY app/ app/
+
+EXPOSE 8000
+
+CMD ["python", "-m", "uvicorn", "app.main:app", \
+     "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
