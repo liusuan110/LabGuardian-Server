@@ -17,6 +17,13 @@ venv/
 .env
 !.env.example
 
+# Model weights (manage separately, not via git)
+models/
+runs/
+
+# Logs
+*.log
+
 # Generated demo / experiment outputs
 demo_output/
 detect_results/

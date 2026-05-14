@@ -20,6 +20,9 @@ MODEL_CLASS_TO_COMPONENT_TYPE = {
     "led": "LED",
     "resistor": "Resistor",
     "transistor_3pin": "Transistor",
+    # IC by pin count (IC-8 / IC-14 detector)
+    "IC-8": "IC8",
+    "IC-14": "IC14",
     # Backward-compatible aliases kept during migration
     "capacitor": "Capacitor",
     "wire": "Wire",
@@ -38,6 +41,8 @@ COMPONENT_TYPE_TO_PACKAGE_TYPE = {
     "CapacitorElectrolytic": "capacitor_electrolytic_2pin",
     "Transistor": "transistor_3pin",
     "IC": "dip8",
+    "IC8": "dip8",
+    "IC14": "dip14",
     "Potentiometer": "potentiometer_3pin",
 }
 
@@ -46,6 +51,8 @@ COMPONENT_TYPE_TO_PIN_SCHEMA_ID = {
     "CapacitorElectrolytic": "polarized_2pin",
     "Transistor": "fixed_3pins",
     "IC": "dip8_anchor_pair",
+    "IC8": "dip8_anchor_pair",
+    "IC14": "dip14_anchor_pair",
 }
 
 
@@ -59,6 +66,8 @@ COMPONENT_TYPE_TO_PIN_COUNT = {
     "CapacitorElectrolytic": 2,
     "Transistor": 3,
     "IC": 2,  # current backend still uses anchor-pair semantics for dip8
+    "IC8": 2,
+    "IC14": 2,
     "Potentiometer": 3,
 }
 
@@ -81,6 +90,8 @@ COMPONENT_TYPE_TO_PREFIX = {
     "Diode": "D",
     "Transistor": "Q",
     "IC": "IC",
+    "IC8": "IC8",
+    "IC14": "IC14",
     "Potentiometer": "POT",
 }
 
@@ -113,7 +124,7 @@ def default_symmetry_group(component_type: str) -> list[list[str]]:
 
 
 def default_pin_names(component_type: str, pin_count: int) -> list[str]:
-    if component_type == "IC":
+    if component_type in {"IC", "IC8", "IC14"}:
         return [f"anchor_pin{i}" for i in range(1, pin_count + 1)]
     if component_type == "LED" and pin_count >= 2:
         names = ["anode", "cathode"]

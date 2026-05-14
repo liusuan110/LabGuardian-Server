@@ -41,6 +41,8 @@ KNOWN_MODEL_LABELS = (
     "wire",
     "potentiometer",
     "ic",
+    "ic-8",
+    "ic-14",
     "breadboard",
     "line_area",
     "pinned",
@@ -91,7 +93,7 @@ def inspect_yolo_weight(path: str | Path) -> dict[str, object]:
         meta["task"] = "detect"
         meta["model_class"] = "DetectionModel"
 
-    tokens = re.findall(r"[A-Za-z][A-Za-z0-9_]{2,40}", text)
+    tokens = re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,40}", text)
     names: list[str] = []
     seen = set()
     for tok in tokens:

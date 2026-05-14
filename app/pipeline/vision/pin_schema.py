@@ -190,7 +190,7 @@ def roi_crop_profile(
                 "min_roi_h": 40,
             }
         )
-    elif p in {"dip8"} or c == "ic":
+    elif p in {"dip8", "dip14"} or c in {"ic", "ic8", "ic14"}:
         profile.update(
             {
                 "profile_name": "dip_body_with_side_pins",
