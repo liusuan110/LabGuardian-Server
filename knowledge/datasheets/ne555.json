@@ -1,0 +1,40 @@
+{
+  "document_id": "ne555",
+  "title": "NE555 单路定时器",
+  "part_numbers": ["NE555", "NE555DR", "555"],
+  "source_path": "knowledge_base/C695838_555定时器-计时器_NE555DR_规格书_WJ1799212.PDF",
+  "chunks": [
+    {
+      "chunk_id": "ne555.pinout.text.1",
+      "modality": "text",
+      "title": "NE555 引脚说明",
+      "text": "NE555 为 8 引脚封装。引脚 1 为 GND，引脚 2 为 TRIG（触发输入，低电平触发），引脚 3 为 OUT（输出），引脚 4 为 RESET（低电平复位，未用时接 VCC），引脚 5 为 CONTROL（控制电压，未用时通过 10nF 电容接地），引脚 6 为 THRESHOLD（阈值输入），引脚 7 为 DISCHARGE（放电），引脚 8 为 VCC（推荐 4.5V~16V）。",
+      "page": 2,
+      "section": "Pin Configuration",
+      "keywords": ["NE555", "555", "引脚", "pinout", "TRIG", "THRESHOLD", "DISCHARGE", "RESET", "VCC", "GND"],
+      "source_ref": {"page": 2}
+    },
+    {
+      "chunk_id": "ne555.pinout.figure.1",
+      "modality": "figure",
+      "title": "NE555 DIP-8 引脚图（占位）",
+      "text": "图示展示 NE555 DIP-8 顶视引脚位置；以芯片缺口或圆点为参考，逆时针 1→8 排布。",
+      "page": 2,
+      "section": "Pin Configuration",
+      "keywords": ["NE555", "DIP-8", "pinout", "引脚图"],
+      "asset_path": "knowledge/datasheets/assets/ne555/pinout.png",
+      "source_ref": {"page": 2, "figure_id": "fig_pinout"}
+    },
+    {
+      "chunk_id": "ne555.timing.table.1",
+      "modality": "table",
+      "title": "NE555 单稳态时间常数",
+      "text": "单稳态模式下输出脉宽 T = 1.1 × R × C；R 推荐 1kΩ~1MΩ，C 推荐 10nF 以上电解或薄膜电容。",
+      "page": 5,
+      "section": "Monostable Operation",
+      "keywords": ["NE555", "单稳态", "monostable", "时间常数", "RC"],
+      "table_html": "<table><tr><th>模式</th><th>公式</th><th>典型 R</th><th>典型 C</th></tr><tr><td>单稳态</td><td>T = 1.1·R·C</td><td>1k~1M</td><td>10nF~100uF</td></tr><tr><td>多谐振荡</td><td>T = 0.693·(R1+2·R2)·C</td><td>1k~1M</td><td>10nF~100uF</td></tr></table>",
+      "source_ref": {"page": 5, "table_id": "tbl_timing"}
+    }
+  ]
+}

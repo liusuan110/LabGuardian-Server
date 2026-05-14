@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any, Sequence
 
 from app.agent.contracts import (
     AgentIntent,
@@ -28,6 +29,7 @@ def verify_draft_answer(
     draft_answer: str,
     intent: AgentIntent = "diagnostic",
     concept: ConceptPack | None = None,
+    tool_results: Sequence[Any] | None = None,
 ) -> VerificationReport:
     """Rule-based reflection node.
 
@@ -62,6 +64,8 @@ def verify_draft_answer(
     # answer; concept content is appended as evidence, not into the text.
     elif intent == "mixed":
         issues.extend(_diagnostic_rules(evidence, text))
+
+    issues.extend(_datasheet_rules(text, tool_results))
 
     passed = not issues
     hint = ""
@@ -148,6 +152,82 @@ def _concept_rules(
         if not any(w in text for w in _SAFETY_WORDS):
             issues.append("涉及 LED / 电源 / 短路相关概念时必须包含安全提醒。")
     return issues
+
+
+_DATASHEET_CHUNK_PROVIDERS = {"local_datasheet_v2", "kb_retrieval"}
+_DATASHEET_RULE_PROVIDERS = {"local_fallback"}
+
+
+def _datasheet_rules(
+    text: str,
+    tool_results: Sequence[Any] | None,
+) -> list[str]:
+    """Enforce datasheet citation contract when the tool was invoked.
+
+    Triggered only if `datasheet_lookup_tool` actually produced hits or rules
+    in this turn. Chunked providers must surface a `chunk_id`; pure rule-based
+    fallback must surface a `rule_id`. Both forms can also be satisfied by the
+    raw token appearing in the answer text (a model can cite either way).
+    """
+
+    if not tool_results:
+        return []
+
+    needs_chunk_id = False
+    needs_rule_id = False
+    expected_chunk_ids: set[str] = set()
+    expected_rule_ids: set[str] = set()
+
+    for result in tool_results:
+        payload = _result_payload(result)
+        if not payload:
+            continue
+        if _result_tool_name(result) != "datasheet_lookup_tool":
+            continue
+        provider = str(payload.get("provider") or "")
+        if provider in _DATASHEET_CHUNK_PROVIDERS:
+            hits = payload.get("hits") or []
+            for hit in hits if isinstance(hits, list) else []:
+                if isinstance(hit, dict):
+                    cid = hit.get("chunk_id") or hit.get("source_id")
+                    if cid:
+                        expected_chunk_ids.add(str(cid))
+            if expected_chunk_ids:
+                needs_chunk_id = True
+        elif provider in _DATASHEET_RULE_PROVIDERS:
+            structured = payload.get("structured_rules") or []
+            for rule in structured if isinstance(structured, list) else []:
+                if isinstance(rule, dict) and rule.get("rule_id"):
+                    expected_rule_ids.add(str(rule["rule_id"]))
+            if expected_rule_ids:
+                needs_rule_id = True
+
+    issues: list[str] = []
+    if needs_chunk_id and not any(cid in text for cid in expected_chunk_ids):
+        issues.append("datasheet 检索命中后，回答必须引用至少一个 datasheet chunk_id。")
+    if needs_rule_id and not any(rid in text for rid in expected_rule_ids):
+        issues.append("datasheet 回退到本地规则时，回答必须引用至少一个 rule_id。")
+    return issues
+
+
+def _result_payload(result: Any) -> dict[str, Any] | None:
+    payload = getattr(result, "payload", None)
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(result, dict):
+        nested = result.get("payload")
+        if isinstance(nested, dict):
+            return nested
+    return None
+
+
+def _result_tool_name(result: Any) -> str:
+    name = getattr(result, "tool_name", None)
+    if isinstance(name, str):
+        return name
+    if isinstance(result, dict):
+        return str(result.get("tool_name") or "")
+    return ""
 
 
 def _lab_guidance_rules(text: str, concept: ConceptPack | None) -> list[str]:

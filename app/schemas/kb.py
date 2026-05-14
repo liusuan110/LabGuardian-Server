@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import time
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from app.schemas.angnt import AngntCitation, AngntEvidence
+
+DatasheetChunkModality = Literal["text", "table", "figure", "schematic", "waveform"]
 
 
 class KbDocumentInfo(BaseModel):
@@ -35,4 +38,45 @@ class KbQueryResponse(BaseModel):
     citations: list[AngntCitation] = Field(default_factory=list)
     evidence: list[AngntEvidence] = Field(default_factory=list)
     used_retrieval: bool = False
+
+
+class DatasheetChunk(BaseModel):
+    """Single multimodal evidence unit produced by build-time PDF parsing."""
+
+    chunk_id: str
+    modality: DatasheetChunkModality = "text"
+    title: str = ""
+    text: str | None = None
+    page: int | None = None
+    section: str | None = None
+    keywords: list[str] = Field(default_factory=list)
+    asset_path: str | None = None
+    table_html: str | None = None
+    bbox: list[float] | None = None
+    source_ref: dict[str, Any] = Field(default_factory=dict)
+
+
+class DatasheetDocument(BaseModel):
+    """A parsed datasheet: stable identifier + ordered chunks."""
+
+    document_id: str
+    title: str = ""
+    part_numbers: list[str] = Field(default_factory=list)
+    source_path: str | None = None
+    chunks: list[DatasheetChunk] = Field(default_factory=list)
+
+
+class RetrievedChunk(BaseModel):
+    """Uniform retrieval result for both DatasheetKbService and legacy KbService."""
+
+    chunk_id: str
+    modality: DatasheetChunkModality = "text"
+    title: str = ""
+    snippet: str = ""
+    score: float = 0.0
+    document_id: str = ""
+    page: int | None = None
+    asset_path: str | None = None
+    table_html: str | None = None
+    source_ref: dict[str, Any] = Field(default_factory=dict)
 

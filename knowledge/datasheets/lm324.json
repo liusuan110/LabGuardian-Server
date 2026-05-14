@@ -1,0 +1,29 @@
+{
+  "document_id": "lm324",
+  "title": "LM324 四运算放大器",
+  "part_numbers": ["LM324", "LM324N", "LM324A"],
+  "source_path": "knowledge_base/C351427_运算放大器_LM324_规格书_WJ253014.PDF",
+  "chunks": [
+    {
+      "chunk_id": "lm324.supply.text.1",
+      "modality": "text",
+      "title": "LM324 电源与共模输入范围",
+      "text": "LM324 支持单电源 3V~32V 或双电源 ±1.5V~±16V。输入共模电压范围包括负电源轨（V- 至 V+-1.5V），因此可用于单电源、信号靠近地的应用。最大输出摆幅在轻载下约为 V- 到 V+-1.5V。",
+      "page": 3,
+      "section": "Electrical Characteristics",
+      "keywords": ["LM324", "运放", "op-amp", "供电", "电源", "共模", "单电源"],
+      "source_ref": {"page": 3}
+    },
+    {
+      "chunk_id": "lm324.pinout.schematic.1",
+      "modality": "schematic",
+      "title": "LM324 内部四路运放结构（占位）",
+      "text": "LM324 内部集成 4 个独立运算放大器，共用 VCC（引脚 4）和 GND（引脚 11）。引脚 1/2/3、5/6/7、8/9/10、12/13/14 分别为四路运放的 OUT/IN-/IN+。",
+      "page": 2,
+      "section": "Pin Configuration",
+      "keywords": ["LM324", "运放", "引脚", "schematic", "四运放"],
+      "asset_path": "knowledge/datasheets/assets/lm324/internal.png",
+      "source_ref": {"page": 2, "figure_id": "fig_internal"}
+    }
+  ]
+}

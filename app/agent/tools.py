@@ -8,8 +8,18 @@ from app.agent.concepts import CONCEPT_LIBRARY, lookup_concept
 from app.agent.contracts import RuntimeEvidence
 from app.core.config import settings
 from app.domain.board_schema import BoardSchema
+from app.services.datasheet_kb_service import DatasheetKbService
 from app.services.kb_service import KbService
 from app.services.teaching_kb_service import TeachingKbService
+
+_DATASHEET_KB_SINGLETON: DatasheetKbService | None = None
+
+
+def _get_datasheet_kb() -> DatasheetKbService:
+    global _DATASHEET_KB_SINGLETON
+    if _DATASHEET_KB_SINGLETON is None:
+        _DATASHEET_KB_SINGLETON = DatasheetKbService()
+    return _DATASHEET_KB_SINGLETON
 
 
 class ToolResult(BaseModel):
@@ -216,6 +226,62 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
     if not query:
         query = args.query or args.component_id or args.component_type
 
+    # Phase 1: try the offline, structured local datasheet KB first. It returns
+    # uniform RetrievedChunk dicts with `chunk_id` + `modality` (the contract the
+    # verifier enforces). Falls through to legacy Chroma/PDF retrieval and then
+    # to rule-based fallback to preserve existing behavior.
+    v2_hits: list[dict[str, Any]] = []
+    try:
+        retrieved = _get_datasheet_kb().search(
+            query=query,
+            part_numbers=[args.part_number] if args.part_number else None,
+            top_k=4,
+        )
+        for chunk in retrieved:
+            v2_hits.append(
+                {
+                    "chunk_id": chunk.chunk_id,
+                    "modality": chunk.modality,
+                    "title": chunk.title,
+                    "snippet": chunk.snippet,
+                    "score": chunk.score,
+                    "document_id": chunk.document_id,
+                    "page": chunk.page,
+                    "asset_path": chunk.asset_path,
+                    "table_html": chunk.table_html,
+                    "source_ref": chunk.source_ref,
+                    "source_id": chunk.chunk_id,
+                    "filename": (chunk.source_ref or {}).get("source_path") or chunk.document_id,
+                }
+            )
+    except Exception:
+        v2_hits = []
+
+    if v2_hits:
+        rules = [
+            f"参考资料：{item.get('title') or item.get('document_id') or 'datasheet'}：{str(item.get('snippet') or '').strip()}"
+            for item in v2_hits[:3]
+            if item.get("snippet")
+        ]
+        return ToolResult(
+            tool_name="datasheet_lookup_tool",
+            summary=(
+                f"datasheet 本地检索命中 {len(v2_hits)} 段"
+                f"（{v2_hits[0].get('document_id') or 'local'}）。"
+            ),
+            payload={
+                "provider": "local_datasheet_v2",
+                "component_id": args.component_id,
+                "component_type": args.component_type,
+                "part_number": args.part_number,
+                "package_type": args.package_type,
+                "query": query,
+                "error_family": args.error_family,
+                "hits": v2_hits,
+                "rules": rules[:4],
+            },
+        )
+
     hits: list[dict[str, Any]] = []
     kb_query_allowed = True
     if key in LOCAL_DATASHEET_FALLBACKS and not args.part_number:
@@ -226,14 +292,22 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
             raw_hits = kb.retrieve(query=query, top_k=min(4, max(1, int(getattr(settings, "KB_DEFAULT_TOP_K", 6)))))
             for hit, _ in raw_hits[:4]:
                 meta = hit.get("metadata", {}) or {}
+                doc_id = meta.get("doc_id", "")
+                chunk_index = meta.get("chunk_index", "")
+                chunk_id = f"{doc_id}:{chunk_index}" if doc_id else ""
                 hits.append(
                     {
+                        "chunk_id": chunk_id,
+                        "modality": "text",
+                        "document_id": doc_id,
                         "title": hit.get("title") or "",
                         "snippet": hit.get("snippet") or "",
                         "filename": meta.get("filename") or meta.get("source") or "",
                         "page": meta.get("page"),
                         "score": hit.get("score", 0.0),
-                        "source_id": f'{meta.get("doc_id", "")}:{meta.get("chunk_index", "")}',
+                        # `source_id` retained as alias for downstream citation
+                        # builders that haven't migrated to `chunk_id` yet.
+                        "source_id": chunk_id,
                     }
                 )
         except Exception:
@@ -262,6 +336,7 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
         )
 
     fallback = LOCAL_DATASHEET_FALLBACKS.get(key)
+    matched_key = key if key in LOCAL_DATASHEET_FALLBACKS else ""
     if fallback is None:
         fallback = {
             "component_type": args.component_type or "unknown",
@@ -271,9 +346,18 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
             "notes": "未命中本地 PDF；返回保守规则。",
         }
 
-    rules: list[str] = []
-    rules.extend(fallback.get("pin_rules", []))
-    rules.extend(fallback.get("safety_rules", []))
+    rule_namespace = matched_key or "unknown"
+    structured_rules: list[dict[str, Any]] = []
+    flat_rules: list[str] = []
+    for idx, rule in enumerate(fallback.get("pin_rules", [])):
+        rid = f"fallback.{rule_namespace}.pin.{idx + 1}"
+        structured_rules.append({"rule_id": rid, "category": "pin", "text": rule})
+        flat_rules.append(rule)
+    for idx, rule in enumerate(fallback.get("safety_rules", [])):
+        rid = f"fallback.{rule_namespace}.safety.{idx + 1}"
+        structured_rules.append({"rule_id": rid, "category": "safety", "text": rule})
+        flat_rules.append(rule)
+
     return ToolResult(
         tool_name="datasheet_lookup_tool",
         summary=f"datasheet 未命中 PDF，回退到本地规则：{fallback['component_type']} / {fallback['package']}。",
@@ -287,10 +371,11 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
             "pin_rules": fallback["pin_rules"],
             "safety_rules": fallback["safety_rules"],
             "notes": fallback["notes"],
-            "matched_key": key if key in LOCAL_DATASHEET_FALLBACKS else "",
+            "matched_key": matched_key,
             "query": query,
             "error_family": args.error_family,
-            "rules": rules[:6],
+            "rules": flat_rules[:6],
+            "structured_rules": structured_rules[:6],
             "hits": [],
         },
     )

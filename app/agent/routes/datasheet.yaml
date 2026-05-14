@@ -1,0 +1,22 @@
+# Phase 4 placeholder: semantic-router style datasheet route.
+# Not yet consumed by ContextPack — kept here so the file layout and naming
+# stabilize before we wire utterance-based routing in.
+#
+# When implemented, the router will pick `datasheet` when the user query is
+# clearly about chip pinout / electrical / packaging specs, and stay off it
+# when the question is about *this* board's wiring (which belongs to
+# netlist_trace_tool / board_schema_lookup_tool).
+route: datasheet
+description: chip-level pinout, supply, electrical, packaging questions
+threshold: 0.55
+utterances:
+  - NE555 引脚怎么排
+  - LM324 的供电范围是多少
+  - 这颗芯片的 datasheet 怎么说
+  - 555 的 pinout
+  - electrolytic capacitor polarity rules
+  - 电解电容的极性
+negative_utterances:
+  - 我电路里这根线接哪
+  - 为什么这个 LED 没亮
+  - 给我看一下当前 netlist

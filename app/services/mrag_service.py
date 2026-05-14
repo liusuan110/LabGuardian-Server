@@ -22,6 +22,7 @@ class MragService:
         circuit_snapshot: str = "",
         structured_context: dict[str, Any] | None = None,
         top_k: int = 5,
+        retrieved: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         scene = self._teaching_kb_service.get_scene(scene_id) or {}
         context = dict(structured_context or {})
@@ -35,8 +36,12 @@ class MragService:
             top_k=top_k,
         )
         compact_cases = [self._compact_fault_case(case) for case in fault_cases]
-        return {
-            "pack_version": "mrag_pack_v1",
+
+        normalized_retrieved = self._normalize_retrieved(retrieved)
+        pack_version = "mrag_pack_v2" if normalized_retrieved else "mrag_pack_v1"
+
+        pack: dict[str, Any] = {
+            "pack_version": pack_version,
             "scene": {
                 "scene_id": scene_id,
                 "scene_name": scene.get("scene_name", ""),
@@ -51,6 +56,24 @@ class MragService:
             "references": self._collect_references(compact_cases),
             "fix_steps": self._collect_fix_steps(compact_cases),
         }
+        if normalized_retrieved:
+            pack["retrieved"] = normalized_retrieved
+        return pack
+
+    @staticmethod
+    def _normalize_retrieved(retrieved: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not retrieved:
+            return None
+        buckets = ("datasheet_chunks", "figures", "tables")
+        cleaned: dict[str, list[Any]] = {}
+        for key in buckets:
+            values = retrieved.get(key) or []
+            if not isinstance(values, list):
+                continue
+            cleaned_values = [v for v in values if v]
+            if cleaned_values:
+                cleaned[key] = cleaned_values
+        return cleaned or None
 
     def _compact_fault_case(self, fault_case: dict[str, Any]) -> dict[str, Any]:
         return {

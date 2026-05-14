@@ -244,6 +244,30 @@ VLM_MAX_NEW_TOKENS=256
 
 如果输出 `provider=template_fallback` 和 `status=openvino_call_failed`，说明服务层已兜底，但模型目录、OpenVINO 依赖或设备配置仍需检查。
 
+## Datasheet KB v2（Phase 1 已落地）
+
+Datasheet 检索从“PDF 全文 + 本地规则 fallback”升级为“多模态结构化 chunk + 统一引用契约”，目标是为板上离线部署铺路：
+
+- **Schema**：在 `app/schemas/kb.py` 新增 `DatasheetDocument` / `DatasheetChunk` / `RetrievedChunk`。chunk 支持 `text / table / figure / schematic / waveform` 五种 modality，并强制 `chunk_id` 字段。
+- **本地知识库**：`knowledge/datasheets/*.json` 存放手写或离线 parse 出来的结构化产物；图/原理图资产放 `knowledge/datasheets/assets/<doc_id>/`。当前样例:
+  - `ne555.json` — text + figure + table 三种 modality
+  - `lm324.json` — text + schematic
+  - `passive_capacitor_polarity.json` — 纯 text，演示 `source_path=null` 的合法形态
+- **检索服务**：`app/services/datasheet_kb_service.py` 的 `DatasheetKbService`，纯关键词 + part-number 别名打分，离线、确定性、可单测。`EmbeddingBackend` 抽象 (`app/services/embedding_backend.py`) 默认 `NullEmbeddingBackend`，Phase 3 可换成 OpenVINO INT8 实现，但 chunk 向量在开发机预计算成 `.npz`，板上仅做 query 编码。
+- **工具入口**：`datasheet_lookup_tool` 三级回退—— `local_datasheet_v2` → `kb_retrieval`（旧 Chroma/PDF，**新增** `chunk_id = doc_id:chunk_index` 与 `modality="text"` 的回填）→ `local_fallback`（带 `rule_id`）。
+- **mrag_pack 版本契约**：`MragService.build_pack(..., retrieved=...)` 在带 `datasheet_chunks / figures / tables` 时输出 `pack_version="mrag_pack_v2"` + 顶层 `retrieved`；未传或为空仍输出 v1，旧 VLM/前端无感知。
+- **Verifier 强约束**：`verify_draft_answer` 新增 `tool_results` 可选入参；当 `datasheet_lookup_tool` 命中 chunk 路径，回答必须引用至少一个 `chunk_id`；走 `local_fallback` 时必须引用至少一个 `rule_id`。
+
+### 接入未来的 MinerU / Magic-PDF 解析
+
+- 板上 runtime **不解析 PDF**：所有 PDF 由开发者预先上传，在开发机 / CI 用 MinerU 等工具跑一次,产出严格匹配 `DatasheetDocument` schema 的 JSON 与资产文件,提交进 `knowledge/datasheets/`。
+- `pyproject.toml` 通过 optional extras 隔离 build-time（MinerU、PaddleOCR/RapidOCR 等）与 runtime（仅 Pydantic + 可选 OpenVINO embedding）依赖，镜像打包时只装 runtime 集合。
+- `document_id` 是稳定主键，重新解析时同名覆盖即可；板上代码契约不变。
+
+### 路由
+
+Phase 1 不改 `ContextPack._looks_like_datasheet_query`。`app/agent/routes/datasheet.yaml` 是占位文件，Phase 4 用 semantic-router 思路（utterances + 阈值）落地后再消费。
+
 ## Future Plan
 
 近期：

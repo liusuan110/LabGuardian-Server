@@ -1,0 +1,26 @@
+{
+  "document_id": "passive.capacitor_polarity",
+  "title": "电解电容极性使用规范",
+  "part_numbers": ["electrolytic_capacitor", "电解电容"],
+  "source_path": null,
+  "chunks": [
+    {
+      "chunk_id": "passive.capacitor_polarity.text.1",
+      "modality": "text",
+      "title": "电解电容极性识别",
+      "text": "电解电容为极性器件：长引脚一般为正极（+），外壳侧带白色或黑色色带标记的引脚为负极（-）。正极必须接较高电位，负极接较低电位或 GND。反接通常会导致漏电流增大、发热、鼓包甚至破裂，存在安全隐患。",
+      "section": "Polarity Identification",
+      "keywords": ["电解电容", "极性", "正极", "负极", "polarity", "capacitor"],
+      "source_ref": {"origin": "synthetic"}
+    },
+    {
+      "chunk_id": "passive.capacitor_polarity.text.2",
+      "modality": "text",
+      "title": "电解电容上电前安全检查",
+      "text": "上电前务必断电检查：1) 极性方向是否与原理图一致；2) 工作电压是否低于电容额定电压的 70%；3) 是否串联在直流通路中，避免反向电压。一旦发现接反，立即断电更换。",
+      "section": "Safety Checklist",
+      "keywords": ["电解电容", "极性", "安全", "断电", "检查", "polarity"],
+      "source_ref": {"origin": "synthetic"}
+    }
+  ]
+}
