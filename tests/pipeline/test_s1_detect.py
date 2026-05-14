@@ -274,3 +274,170 @@ class TestS1OutputSchema:
         )
         assert "duration_ms" in result
         assert result["duration_ms"] >= 0
+
+
+class TestS1ICPackageInference:
+    """S1 阶段对 IC 元件补 package_type / package_confidence / package_source."""
+
+    def test_ic_dip8_class_name_direct(self, blank_image_b64):
+        """模型类别已经是 ic_dip8 → package_source=model_class, package_type=dip8."""
+        from app.pipeline.stages.s1_detect import run_detect
+        from tests.pipeline.mocks import MockComponentDetector
+
+        detector = MockComponentDetector([
+            {"class_name": "ic_dip8", "bbox": (100, 200, 300, 260), "confidence": 0.9}
+        ])
+        result = run_detect(images_b64=[blank_image_b64], detector=detector)
+
+        det = result["detections"][0]
+        assert det["component_type"] == "IC"
+        assert det["package_type"] == "dip8"
+        assert det["package_source"] == "model_class"
+        assert det["package_confidence"] == 1.0
+        assert det["raw_class_name"] == "ic_dip8"
+
+    def test_ic_dip14_class_name_direct(self, blank_image_b64):
+        """模型类别 IC_DIP14 (大小写不敏感) → package_type=dip14."""
+        from app.pipeline.stages.s1_detect import run_detect
+        from tests.pipeline.mocks import MockComponentDetector
+
+        detector = MockComponentDetector([
+            {"class_name": "IC_DIP14", "bbox": (100, 200, 300, 260), "confidence": 0.85}
+        ])
+        result = run_detect(images_b64=[blank_image_b64], detector=detector)
+
+        det = result["detections"][0]
+        assert det["component_type"] == "IC"
+        assert det["package_type"] == "dip14"
+        assert det["package_source"] == "model_class"
+        assert det["package_confidence"] == 1.0
+
+    def test_ic_without_calibrator_returns_unknown(self, blank_image_b64):
+        """模型只输出 IC, 且没有 calibrator → package_type=unknown."""
+        from app.pipeline.stages.s1_detect import run_detect
+        from tests.pipeline.mocks import MockComponentDetector
+
+        detector = MockComponentDetector([
+            {"class_name": "IC", "bbox": (100, 200, 300, 260), "confidence": 0.9}
+        ])
+        result = run_detect(images_b64=[blank_image_b64], detector=detector)
+
+        det = result["detections"][0]
+        assert det["component_type"] == "IC"
+        assert det["package_type"] == "unknown"
+        assert det["package_source"] == "unknown"
+        assert det["package_confidence"] == 0.0
+
+    def test_ic_bbox_column_inference_dip8(self, blank_image_b64):
+        """模型只输出 IC + calibrator 就绪 → bbox 覆盖 4 个数字列推断为 dip8."""
+        from app.pipeline.stages.s1_detect import run_detect
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.mocks import MockComponentDetector
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        # synthetic grid 中 row_coords 是 numbered-row 的 Y 坐标 (landscape=False).
+        row_coords = calibrator.row_coords
+        col_coords = calibrator.col_coords
+        e_x = float(col_coords[4])
+        f_x = float(col_coords[5])
+        y_lo = float(row_coords[0]) - 1.0
+        y_hi = float(row_coords[3]) + 1.0  # 覆盖 numbered-row 1..4 -> 4 列
+
+        detector = MockComponentDetector([
+            {
+                "class_name": "IC",
+                "bbox": (e_x - 5.0, y_lo, f_x + 5.0, y_hi),
+                "confidence": 0.88,
+            }
+        ])
+        result = run_detect(
+            images_b64=[blank_image_b64],
+            detector=detector,
+            calibrator=calibrator,
+        )
+
+        det = result["detections"][0]
+        assert det["package_type"] == "dip8"
+        assert det["package_source"] == "bbox_column_inference"
+        assert det["package_confidence"] > 0
+        assert det["package_inference_metadata"]["column_count"] == 4
+
+    def test_ic_bbox_column_inference_dip14(self, blank_image_b64):
+        """模型只输出 IC + bbox 覆盖 7 列 → dip14."""
+        from app.pipeline.stages.s1_detect import run_detect
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.mocks import MockComponentDetector
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        row_coords = calibrator.row_coords
+        col_coords = calibrator.col_coords
+        e_x = float(col_coords[4])
+        f_x = float(col_coords[5])
+        y_lo = float(row_coords[0]) - 1.0
+        y_hi = float(row_coords[6]) + 1.0  # 覆盖 numbered-row 1..7 -> 7 列
+
+        detector = MockComponentDetector([
+            {
+                "class_name": "IC",
+                "bbox": (e_x - 5.0, y_lo, f_x + 5.0, y_hi),
+                "confidence": 0.92,
+            }
+        ])
+        result = run_detect(
+            images_b64=[blank_image_b64],
+            detector=detector,
+            calibrator=calibrator,
+        )
+
+        det = result["detections"][0]
+        assert det["package_type"] == "dip14"
+        assert det["package_source"] == "bbox_column_inference"
+        assert det["package_inference_metadata"]["column_count"] == 7
+
+    def test_ic_bbox_column_inference_unknown_out_of_range(self, blank_image_b64):
+        """bbox 覆盖列数远超 DIP14 范围 → package_type=unknown."""
+        from app.pipeline.stages.s1_detect import run_detect
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.mocks import MockComponentDetector
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        row_coords = calibrator.row_coords
+        col_coords = calibrator.col_coords
+        e_x = float(col_coords[4])
+        f_x = float(col_coords[5])
+        # 覆盖 12 个数字列 — 既不像 DIP8 也不像 DIP14.
+        y_lo = float(row_coords[0]) - 1.0
+        y_hi = float(row_coords[11]) + 1.0
+
+        detector = MockComponentDetector([
+            {"class_name": "IC", "bbox": (e_x - 5.0, y_lo, f_x + 5.0, y_hi), "confidence": 0.7}
+        ])
+        result = run_detect(
+            images_b64=[blank_image_b64],
+            detector=detector,
+            calibrator=calibrator,
+        )
+
+        det = result["detections"][0]
+        assert det["package_type"] == "unknown"
+        assert det["package_source"] == "unknown"
+
+    def test_non_ic_components_unaffected(self, blank_image_b64):
+        """非 IC 元件保留 default_component_type 路径, package_type 不被改写."""
+        from app.pipeline.stages.s1_detect import run_detect
+        from tests.pipeline.mocks import MockComponentDetector
+
+        detector = MockComponentDetector([
+            {"class_name": "Resistor", "bbox": (100, 200, 300, 260), "confidence": 0.9},
+            {"class_name": "LED", "bbox": (320, 200, 360, 260), "confidence": 0.88},
+        ])
+        result = run_detect(images_b64=[blank_image_b64], detector=detector)
+
+        by_type = {d["component_type"]: d for d in result["detections"]}
+        assert by_type["Resistor"]["package_type"] == "axial_2pin"
+        assert by_type["Resistor"]["package_source"] == "default_component_type"
+        assert by_type["LED"]["package_type"] == "led_2pin"
+        assert by_type["LED"]["package_source"] == "default_component_type"

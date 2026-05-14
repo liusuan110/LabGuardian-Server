@@ -24,6 +24,10 @@ MODEL_CLASS_TO_COMPONENT_TYPE = {
     "capacitor": "Capacitor",
     "wire": "Wire",
     "ic": "IC",
+    "ic_dip8": "IC",
+    "ic_dip14": "IC",
+    "dip8": "IC",
+    "dip14": "IC",
     "potentiometer": "Potentiometer",
 }
 
@@ -37,7 +41,8 @@ COMPONENT_TYPE_TO_PACKAGE_TYPE = {
     "CapacitorCeramic": "capacitor_ceramic_2pin",
     "CapacitorElectrolytic": "capacitor_electrolytic_2pin",
     "Transistor": "transistor_3pin",
-    "IC": "dip8",
+    # IC 默认不写死, 留给 S1 的封装识别 (ic_package_inference) 决定 dip8 / dip14 / unknown.
+    "IC": "unknown",
     "Potentiometer": "potentiometer_3pin",
 }
 
@@ -45,7 +50,7 @@ COMPONENT_TYPE_TO_PACKAGE_TYPE = {
 COMPONENT_TYPE_TO_PIN_SCHEMA_ID = {
     "CapacitorElectrolytic": "polarized_2pin",
     "Transistor": "fixed_3pins",
-    "IC": "dip8_anchor_pair",
+    "IC": "ic_dip_ef_bridge",
 }
 
 
@@ -58,7 +63,7 @@ COMPONENT_TYPE_TO_PIN_COUNT = {
     "CapacitorCeramic": 2,
     "CapacitorElectrolytic": 2,
     "Transistor": 3,
-    "IC": 2,  # current backend still uses anchor-pair semantics for dip8
+    "IC": 8,
     "Potentiometer": 3,
 }
 
@@ -113,8 +118,6 @@ def default_symmetry_group(component_type: str) -> list[list[str]]:
 
 
 def default_pin_names(component_type: str, pin_count: int) -> list[str]:
-    if component_type == "IC":
-        return [f"anchor_pin{i}" for i in range(1, pin_count + 1)]
     if component_type == "LED" and pin_count >= 2:
         names = ["anode", "cathode"]
         return names[:pin_count] + [f"pin{i}" for i in range(3, pin_count + 1)]
@@ -132,8 +135,11 @@ def component_id_prefix(component_type: str) -> str:
 
 
 def default_pin_count(component_type: str, package_type: str) -> int:
-    if package_type == "dip8":
-        return 2
+    pkg = (package_type or "").lower()
+    if pkg == "dip8":
+        return 8
+    if pkg == "dip14":
+        return 14
     return COMPONENT_TYPE_TO_PIN_COUNT.get(component_type, 2)
 
 

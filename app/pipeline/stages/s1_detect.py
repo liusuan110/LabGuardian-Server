@@ -14,6 +14,11 @@ from typing import Any, Dict, List, Tuple
 
 from app.pipeline.vision.detector import ComponentDetector, Detection
 from app.pipeline.vision.image_io import decode_images_b64, decode_summary
+from app.pipeline.vision.ic_package_inference import (
+    PACKAGE_UNKNOWN,
+    SOURCE_UNKNOWN,
+    infer_ic_package,
+)
 from app.pipeline.vision.label_mapping import (
     component_id_prefix,
     default_package_type,
@@ -34,6 +39,7 @@ def run_detect(
     iou: float = 0.5,
     imgsz: int = 1280,
     roi_rect: tuple | None = None,
+    calibrator: Any | None = None,
 ) -> Dict[str, Any]:
     """执行组件检测 + 多视图补召回。
 
@@ -109,7 +115,12 @@ def run_detect(
         "detector_backend": getattr(detector, "backend_type", "component_detector"),
         "detector_contract": dict(getattr(detector, "model_contract", {}) or {}),
         "detections": [
-            _detection_to_dict(d, source_model_type=getattr(detector, "backend_type", "component_detector"))
+            _detection_to_dict(
+                d,
+                source_model_type=getattr(detector, "backend_type", "component_detector"),
+                calibrator=calibrator,
+                top_image=top_image,
+            )
             for d in component_dets
         ],
         "supplemental_detections": supplemental_detections,
@@ -161,20 +172,40 @@ def _detect_components_for_view(
     for det in detections:
         if det.class_name in IGNORED_CLASSES:
             continue
+        # 在 normalize 之前留下原始类别名, 让 IC 封装识别可以利用 ic_dip8 / ic_dip14 等子类信息.
+        setattr(det, "raw_class_name", det.class_name)
         det.class_name = normalize_component_type(det.class_name)
     return [det for det in detections if is_supported_component_type(det.class_name) and det.class_name not in IGNORED_CLASSES]
 
 
-def _detection_to_dict(det: Detection, *, source_model_type: str = "component_detector") -> dict:
+def _detection_to_dict(
+    det: Detection,
+    *,
+    source_model_type: str = "component_detector",
+    calibrator: Any | None = None,
+    top_image: Any | None = None,
+) -> dict:
     component_type = det.class_name
-    package_type = default_package_type(component_type)
+    raw_class_name = str(getattr(det, "raw_class_name", det.class_name) or det.class_name)
+    package_fields = _resolve_package_fields(
+        component_type=component_type,
+        raw_class_name=raw_class_name,
+        bbox=det.bbox,
+        calibrator=calibrator,
+        top_image=top_image,
+    )
+    package_type = package_fields["package_type"]
     pin_schema_id = default_pin_schema_id(component_type, package_type)
     return {
         "component_id": getattr(det, "component_id", ""),
         "input_detection_interface_version": "component_detect_v1",
         "class_name": det.class_name,
+        "raw_class_name": raw_class_name,
         "component_type": component_type,
         "package_type": package_type,
+        "package_confidence": package_fields["package_confidence"],
+        "package_source": package_fields["package_source"],
+        "package_inference_metadata": package_fields["package_inference_metadata"],
         "pin_schema_id": pin_schema_id,
         "confidence": det.confidence,
         "bbox": list(det.bbox),
@@ -188,6 +219,31 @@ def _detection_to_dict(det: Detection, *, source_model_type: str = "component_de
     }
 
 
+def _resolve_package_fields(
+    *,
+    component_type: str,
+    raw_class_name: str,
+    bbox: Tuple[int, int, int, int],
+    calibrator: Any | None,
+    top_image: Any | None,
+) -> Dict[str, Any]:
+    """对 IC 元件调用封装识别; 其他元件保留 default_package_type 的固定值."""
+    if component_type != "IC":
+        return {
+            "package_type": default_package_type(component_type),
+            "package_confidence": 1.0,
+            "package_source": "default_component_type",
+            "package_inference_metadata": {},
+        }
+    inference = infer_ic_package(
+        class_name=raw_class_name,
+        bbox=bbox,
+        calibrator=calibrator,
+        top_image=top_image,
+    )
+    return inference.as_dict()
+
+
 def _candidate_detection_to_dict(
     det: Detection,
     *,
@@ -196,13 +252,25 @@ def _candidate_detection_to_dict(
     source_model_type: str = "component_detector",
 ) -> dict:
     component_type = det.class_name
-    package_type = default_package_type(component_type)
+    raw_class_name = str(getattr(det, "raw_class_name", det.class_name) or det.class_name)
+    # side view 没有面包板列网格, IC 封装识别只走类别名匹配 (拿不到 dip8/dip14 也无所谓).
+    package_fields = _resolve_package_fields(
+        component_type=component_type,
+        raw_class_name=raw_class_name,
+        bbox=det.bbox,
+        calibrator=None,
+        top_image=None,
+    )
+    package_type = package_fields["package_type"]
     pin_schema_id = default_pin_schema_id(component_type, package_type)
     return {
         "candidate_id": f"{view_id}_{component_type.lower()}_{candidate_index}",
         "class_name": det.class_name,
+        "raw_class_name": raw_class_name,
         "component_type": component_type,
         "package_type": package_type,
+        "package_confidence": package_fields["package_confidence"],
+        "package_source": package_fields["package_source"],
         "pin_schema_id": pin_schema_id,
         "confidence": det.confidence,
         "bbox": list(det.bbox),

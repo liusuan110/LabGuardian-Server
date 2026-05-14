@@ -63,6 +63,7 @@ def run_pin_detect(
     images_b64: List[str],
     pin_detector: PinRoiDetector,
     supplemental_detections: List[dict] | None = None,
+    calibrator: Any | None = None,
 ) -> Dict[str, Any]:
     """为每个组件生成 ordered pin predictions.
 
@@ -70,6 +71,10 @@ def run_pin_detect(
     - top 整图 full-image pose
     - 关联回 S1 检测框
     - 产出与旧 S1.5 相同的组件 pin JSON 外壳
+
+    IC 例外: 不依赖引脚模型, 直接按 bbox + e/f 行约束生成 8/14 个引脚
+    (参见 _build_ic_geometry_pins). 可选 calibrator 仅用于补 board_2d_point,
+    最终 hole_id 仍交给 S2 映射。
     """
     decoded = decode_images_b64(images_b64, logger=logger, stage_name="S1.5")
     summary = decode_summary(decoded)
@@ -83,6 +88,7 @@ def run_pin_detect(
             summary=summary,
             view_ids=view_ids,
             pin_detector=pin_detector,
+            calibrator=calibrator,
         )
 
     return _run_pin_detect_legacy(
@@ -92,6 +98,7 @@ def run_pin_detect(
         view_ids=view_ids,
         pin_detector=pin_detector,
         supplemental_detections=supplemental_detections,
+        calibrator=calibrator,
     )
 
 
@@ -110,6 +117,7 @@ def _run_pin_detect_full_image_pose(
     summary: dict[str, Any],
     view_ids: List[str],
     pin_detector: PinRoiDetector,
+    calibrator: Any | None = None,
 ) -> Dict[str, Any]:
     t0 = time.time()
     top_item = next((item for item in decoded if item["view_id"] == "top" and item["decoded"]), None)
@@ -134,6 +142,7 @@ def _run_pin_detect_full_image_pose(
         top_image=top_image,
         image_shape=top_image.shape[:2],
         pin_detector=pin_detector,
+        calibrator=calibrator,
     )
 
     return {
@@ -156,9 +165,12 @@ def _run_pin_detect_legacy(
     view_ids: List[str],
     pin_detector: PinRoiDetector,
     supplemental_detections: List[dict] | None = None,
+    calibrator: Any | None = None,
 ) -> Dict[str, Any]:
     t0 = time.time()
     roi_resolver = SideViewRoiResolver()
+    top_decoded = next((item for item in decoded if item["view_id"] == "top" and item.get("decoded")), None)
+    top_image_shape = top_decoded["image"].shape[:2] if top_decoded and top_decoded.get("image") is not None else (0, 0)
 
     counters: Dict[str, int] = {}
     components: List[dict] = []
@@ -166,6 +178,20 @@ def _run_pin_detect_legacy(
         component_type = normalize_component_type(str(det.get("component_type") or det.get("class_name") or "UNKNOWN"))
         component_id = det.get("component_id") or _next_component_id(component_type, counters)
         package_type = str(det.get("package_type") or default_package_type(component_type))
+        if component_type == "IC":
+            components.append(
+                _build_ic_component_full_pose_shell(
+                    det=det,
+                    component_id=component_id,
+                    package_type=package_type,
+                    view_ids=view_ids,
+                    image_shape=top_image_shape,
+                    pin_detector=pin_detector,
+                    calibrator=calibrator,
+                    backend_mode=getattr(pin_detector, "backend_mode", ""),
+                )
+            )
+            continue
         bbox = tuple(det.get("bbox") or (0, 0, 0, 0))
         orientation = float(det.get("orientation", 0.0))
         obb_corners = det.get("obb_corners")
@@ -487,12 +513,27 @@ def _build_components_from_full_pose(
     top_image: np.ndarray,
     image_shape: tuple[int, int],
     pin_detector: PinRoiDetector,
+    calibrator: Any | None = None,
 ) -> list[dict]:
     components: list[dict] = []
     unavailable_views = [vid for vid in view_ids if vid != "top"]
     for det in detections:
         component_type = normalize_component_type(str(det.get("component_type") or det.get("class_name") or "UNKNOWN"))
         package_type = str(det.get("package_type") or default_package_type(component_type))
+        if component_type == "IC":
+            components.append(
+                _build_ic_component_full_pose_shell(
+                    det=det,
+                    component_id=det.get("component_id") or "",
+                    package_type=package_type,
+                    view_ids=view_ids,
+                    image_shape=image_shape,
+                    pin_detector=pin_detector,
+                    calibrator=calibrator,
+                    backend_mode="full_image_model",
+                )
+            )
+            continue
         pin_schema_id = default_pin_schema_id(component_type, package_type)
         pin_count = default_pin_count(component_type, package_type)
         pin_names = default_pin_names(component_type, pin_count)
@@ -901,3 +942,302 @@ def _next_component_id(component_type: str, counters: Dict[str, int]) -> str:
     prefix = component_id_prefix(normalized)
     counters[normalized] = counters.get(normalized, 0) + 1
     return f"{prefix}{counters[normalized]}"
+
+
+# ---------------------------------------------------------------------------
+# IC e/f-bridge geometry path
+#
+# 引脚检测模型对 DIP 封装识别不稳, 且 IC 在标准面包板上一定跨接 e/f 两行。
+# 这里直接按 bbox + e/f 行约束铺出 8 (DIP8) 或 14 (DIP14) 个引脚槽位,
+# 不再依赖任何引脚模型或旧的 anchor_pair 逻辑。hole_id 仍交给 S2 映射。
+# ---------------------------------------------------------------------------
+
+IC_GEOMETRY_SOURCE = "ic_ef_bridge_geometry"
+IC_DEFAULT_PACKAGE = "dip8"
+IC_PIN_SCHEMA_ID = "ic_dip_ef_bridge"
+_IC_PACKAGE_PIN_COUNT = {"dip8": 8, "dip14": 14}
+
+
+def _normalize_ic_package_type(package_type: str | None) -> str:
+    pkg = (package_type or "").lower()
+    return pkg if pkg in _IC_PACKAGE_PIN_COUNT else IC_DEFAULT_PACKAGE
+
+
+def _ic_pin_count(package_type: str) -> int:
+    return _IC_PACKAGE_PIN_COUNT[_normalize_ic_package_type(package_type)]
+
+
+def _build_ic_geometry_pins(
+    *,
+    det: dict,
+    package_type: str,
+    view_ids: List[str],
+    calibrator: Any | None = None,
+) -> List[dict]:
+    """根据 IC bbox 在面包板 e/f 行上推断 DIP8/DIP14 引脚槽位。
+
+    规则:
+    - DIP8: e/f 行各 4 个引脚; DIP14: e/f 行各 7 个引脚.
+    - 引脚沿 IC 长轴均匀分布, 一行落 bbox 短轴的 "靠 e 行" 一侧, 另一行靠 f 行.
+    - notch_direction 决定 pin1 起点 (从 notch 端起逆时针绕一圈).
+    - source 强制为 ic_ef_bridge_geometry; metadata 中记录 row_lock / estimated_column /
+      notch_direction / numbering_rule / package_type, 便于 S2 / 调试链路核对.
+    - 若提供了已就绪的 calibrator, 额外在 per_view metadata 里写 board_2d_point,
+      让 S2 的 resolve_pin_board_projection 直接吃用; 否则只产出 bbox 几何 frame pixel.
+    """
+    pkg = _normalize_ic_package_type(package_type)
+    pin_count = _ic_pin_count(pkg)
+    half = pin_count // 2
+
+    bbox = list(det.get("bbox") or [0.0, 0.0, 0.0, 0.0])
+    try:
+        x1, y1, x2, y2 = (float(v) for v in bbox[:4])
+    except (TypeError, ValueError):
+        x1 = y1 = x2 = y2 = 0.0
+    if x2 < x1:
+        x1, x2 = x2, x1
+    if y2 < y1:
+        y1, y2 = y2, y1
+    bw = max(1.0, x2 - x1)
+    bh = max(1.0, y2 - y1)
+    cx = (x1 + x2) / 2.0
+    cy = (y1 + y2) / 2.0
+    horizontal = bw >= bh
+
+    notch_direction = str(
+        det.get("notch_direction")
+        or (det.get("metadata") or {}).get("notch_direction")
+        or ("left" if horizontal else "up")
+    ).lower()
+
+    pad_ratio = 0.1
+    if horizontal:
+        if half > 1:
+            slot_axis = [
+                x1 + bw * (pad_ratio + (1.0 - 2.0 * pad_ratio) * i / (half - 1))
+                for i in range(half)
+            ]
+        else:
+            slot_axis = [cx]
+        e_axis_value = y1 + bh * 0.3
+        f_axis_value = y2 - bh * 0.3
+    else:
+        if half > 1:
+            slot_axis = [
+                y1 + bh * (pad_ratio + (1.0 - 2.0 * pad_ratio) * i / (half - 1))
+                for i in range(half)
+            ]
+        else:
+            slot_axis = [cy]
+        e_axis_value = x1 + bw * 0.3
+        f_axis_value = x2 - bw * 0.3
+
+    # slot_axis 始终按物理 L->R (横排) 或 T->B (竖排) 排序, 列号 0..half-1.
+    # pin 编号沿元件外轮廓逆时针绕一圈:
+    #   notch=left  / notch=up   -> pin1 在 e 行靠 notch 一端的 0 号槽; e 行 0..half-1 -> pin1..pin_half
+    #                                f 行从 0 号槽起 pin_(2*half)..pin_(half+1) 递减
+    #   notch=right / notch=down -> pin1 落在 e 行 half-1 号槽 (notch 一端);
+    #                                e 行 half-1..0 -> pin1..pin_half;
+    #                                f 行 half-1..0 -> pin_(half+1)..pin_(2*half)
+    notch_at_low_index = notch_direction in {"left", "up"}
+    e_pin_ids_by_slot: List[int] = [0] * half
+    f_pin_ids_by_slot: List[int] = [0] * half
+    for slot in range(half):
+        if notch_at_low_index:
+            e_pin_ids_by_slot[slot] = slot + 1
+            f_pin_ids_by_slot[slot] = 2 * half - slot
+        else:
+            e_pin_ids_by_slot[slot] = half - slot
+            f_pin_ids_by_slot[slot] = half + 1 + slot
+
+    grid_ready = bool(calibrator is not None and getattr(calibrator, "is_grid_ready", False))
+    pins_by_id: Dict[int, dict] = {}
+    for slot in range(half):
+        if horizontal:
+            e_kp = (slot_axis[slot], e_axis_value)
+            f_kp = (slot_axis[slot], f_axis_value)
+        else:
+            e_kp = (e_axis_value, slot_axis[slot])
+            f_kp = (f_axis_value, slot_axis[slot])
+        pins_by_id[e_pin_ids_by_slot[slot]] = _make_ic_pin_entry(
+            pin_id=e_pin_ids_by_slot[slot],
+            keypoint=e_kp,
+            row_lock="e",
+            estimated_column=slot,
+            package_type=pkg,
+            notch_direction=notch_direction,
+            view_ids=view_ids,
+            calibrator=calibrator if grid_ready else None,
+        )
+        pins_by_id[f_pin_ids_by_slot[slot]] = _make_ic_pin_entry(
+            pin_id=f_pin_ids_by_slot[slot],
+            keypoint=f_kp,
+            row_lock="f",
+            estimated_column=slot,
+            package_type=pkg,
+            notch_direction=notch_direction,
+            view_ids=view_ids,
+            calibrator=calibrator if grid_ready else None,
+        )
+    return [pins_by_id[pid] for pid in range(1, pin_count + 1)]
+
+
+def _make_ic_pin_entry(
+    *,
+    pin_id: int,
+    keypoint: tuple[float, float],
+    row_lock: str,
+    estimated_column: int,
+    package_type: str,
+    notch_direction: str,
+    view_ids: List[str],
+    calibrator: Any | None,
+) -> dict:
+    kx, ky = float(keypoint[0]), float(keypoint[1])
+    board_point: list[float] | None = None
+    if calibrator is not None and hasattr(calibrator, "frame_pixel_to_board_point"):
+        try:
+            bp = calibrator.frame_pixel_to_board_point(kx, ky)
+            if bp is not None and len(bp) >= 2:
+                board_point = [float(bp[0]), float(bp[1])]
+        except Exception as exc:
+            logger.debug("S1.5 IC geometry board projection failed: %s", exc)
+            board_point = None
+
+    keypoints_by_view = {vid: None for vid in view_ids}
+    visibility_by_view = {vid: 0 for vid in view_ids}
+    score_by_view = {vid: 0.0 for vid in view_ids}
+    source_by_view = {vid: "unavailable" for vid in view_ids}
+    per_view: Dict[str, Dict[str, Any]] = {vid: {} for vid in view_ids}
+
+    keypoints_by_view["top"] = [kx, ky]
+    visibility_by_view["top"] = 2
+    score_by_view["top"] = 1.0
+    source_by_view["top"] = IC_GEOMETRY_SOURCE
+
+    top_per_view: Dict[str, Any] = {
+        "roi_source": IC_GEOMETRY_SOURCE,
+        "row_lock": row_lock,
+        "estimated_column": estimated_column,
+        "package_type": package_type,
+        "notch_direction": notch_direction,
+        "numbering_rule": "counterclockwise",
+    }
+    if board_point is not None:
+        top_per_view["board_2d_point"] = board_point
+    per_view["top"] = top_per_view
+
+    pin_name = f"pin{pin_id}"
+    metadata: Dict[str, Any] = {
+        "per_view": per_view,
+        "package_type": package_type,
+        "row_lock": row_lock,
+        "estimated_column": estimated_column,
+        "notch_direction": notch_direction,
+        "numbering_rule": "counterclockwise",
+    }
+    if board_point is not None:
+        metadata["board_2d_point"] = board_point
+
+    return {
+        "pin_id": pin_id,
+        "pin_name": pin_name,
+        "pin_display_name": pin_name,
+        "polarity_role": "UNKNOWN",
+        "polarity_candidate_role": "UNKNOWN",
+        "keypoints_by_view": keypoints_by_view,
+        "visibility_by_view": visibility_by_view,
+        "score_by_view": score_by_view,
+        "source_by_view": source_by_view,
+        "confidence": 1.0,
+        "source": IC_GEOMETRY_SOURCE,
+        "metadata": metadata,
+    }
+
+
+def _build_ic_component_full_pose_shell(
+    *,
+    det: dict,
+    component_id: str,
+    package_type: str,
+    view_ids: List[str],
+    image_shape: tuple[int, int],
+    pin_detector: PinRoiDetector,
+    calibrator: Any | None,
+    backend_mode: str,
+) -> dict:
+    """统一封装 IC 组件外壳, 让两条 S1.5 主路径走同一份 IC 输出契约。"""
+    pkg = _normalize_ic_package_type(package_type)
+    pins = _build_ic_geometry_pins(
+        det=det,
+        package_type=pkg,
+        view_ids=view_ids,
+        calibrator=calibrator,
+    )
+    bbox = list(det.get("bbox") or [0, 0, 0, 0])
+    h = int(image_shape[0]) if image_shape and len(image_shape) >= 1 else 0
+    w = int(image_shape[1]) if image_shape and len(image_shape) >= 2 else 0
+    unavailable_views = [vid for vid in view_ids if vid != "top"]
+    roi_by_view: Dict[str, Dict[str, Any]] = {
+        "top": {
+            "offset": [0, 0],
+            "shape": [h, w],
+            "source": IC_GEOMETRY_SOURCE,
+            "crop_source": IC_GEOMETRY_SOURCE,
+            "crop_profile": "ic_ef_bridge",
+            "crop_bounds": None,
+            "body_bbox": list(bbox),
+            "body_size": None,
+            "roi_size": [w, h],
+            "scale_multiplier": 1.0,
+            "retry_attempts": 0,
+            "association": {},
+            "available": True,
+        }
+    }
+    for vid in unavailable_views:
+        roi_by_view[vid] = {
+            "offset": [0, 0],
+            "shape": [0, 0],
+            "source": "unavailable",
+            "crop_source": "unavailable",
+            "crop_profile": "none",
+            "crop_bounds": None,
+            "body_bbox": None,
+            "body_size": None,
+            "roi_size": [0, 0],
+            "scale_multiplier": 1.0,
+            "retry_attempts": 0,
+            "association": {},
+            "available": False,
+        }
+
+    return {
+        "component_id": component_id or det.get("component_id") or "",
+        "component_type": "IC",
+        "class_name": "IC",
+        "package_type": pkg,
+        "pin_schema_id": IC_PIN_SCHEMA_ID,
+        "input_pin_detect_interface_version": "component_pin_detect_v1",
+        "input_detection_interface_version": det.get("input_detection_interface_version") or "component_detect_v1",
+        "part_subtype": det.get("part_subtype") or "",
+        "symmetry_group": det.get("symmetry_group") or default_symmetry_group("IC"),
+        "bbox": list(bbox),
+        "confidence": float(det.get("confidence", 1.0)),
+        "orientation": float(det.get("orientation", 0.0)),
+        "pins": pins,
+        "roi": roi_by_view["top"],
+        "roi_by_view": roi_by_view,
+        "pin_detector": {
+            "interface_version": getattr(pin_detector, "interface_version", "pin_detector_v1"),
+            "backend_type": getattr(pin_detector, "backend_type", "ic_ef_bridge_geometry"),
+            "backend_mode": backend_mode or IC_GEOMETRY_SOURCE,
+        },
+        "ic_geometry": {
+            "package_type": pkg,
+            "pin_count": _ic_pin_count(pkg),
+            "notch_direction": pins[0]["metadata"]["notch_direction"] if pins else "left",
+            "numbering_rule": "counterclockwise",
+            "calibrator_used": bool(calibrator is not None and getattr(calibrator, "is_grid_ready", False)),
+        },
+    }

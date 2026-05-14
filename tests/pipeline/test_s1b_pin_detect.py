@@ -116,7 +116,7 @@ class TestPinDetectionMock:
         assert pin_names == ["positive", "negative"]
 
     def test_t4_3_mock_ic_dip8(self, blank_image_b64):
-        """T4.5: Mock IC DIP-8 → len(pins)=2 (anchor pair)"""
+        """IC DIP-8 走 e/f-bridge 几何路径, 不再走 anchor pair."""
         from app.pipeline.stages.s1b_pin_detect import run_pin_detect
         from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
         from app.pipeline.stages.s1_detect import run_detect
@@ -124,9 +124,9 @@ class TestPinDetectionMock:
         ic_det = MockComponentDetector([
             {"class_name": "IC", "package_type": "dip8", "bbox": (100, 200, 300, 260), "confidence": 0.9}
         ])
+        # Pin detector intentionally returns wrong data — IC path must ignore it.
         ic_pin = MockPinDetector([
-            {"pin_id": 1, "pin_name": "pin1", "keypoint": (120.0, 220.0), "confidence": 0.9, "visibility": 2},
-            {"pin_id": 2, "pin_name": "pin2", "keypoint": (280.0, 220.0), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 1, "pin_name": "ignored", "keypoint": (0.0, 0.0), "confidence": 0.0, "visibility": 0},
         ])
 
         s1 = run_detect(images_b64=[blank_image_b64], detector=ic_det)
@@ -136,7 +136,104 @@ class TestPinDetectionMock:
             pin_detector=ic_pin,
         )
 
-        assert len(result["components"][0]["pins"]) == 2
+        comp = result["components"][0]
+        pins = comp["pins"]
+        assert len(pins) == 8
+        assert comp["package_type"] == "dip8"
+        assert comp["pin_schema_id"] == "ic_dip_ef_bridge"
+        # Every pin lives on row e or f and is sourced from the bridge-geometry path.
+        for pin in pins:
+            assert pin["source"] == "ic_ef_bridge_geometry"
+            assert pin["source_by_view"]["top"] == "ic_ef_bridge_geometry"
+            assert pin["metadata"]["row_lock"] in {"e", "f"}
+            assert pin["metadata"]["package_type"] == "dip8"
+            assert pin["metadata"]["notch_direction"] == "left"
+            assert pin["metadata"]["numbering_rule"] == "counterclockwise"
+            assert "estimated_column" in pin["metadata"]
+        # DIP8 with notch=left: pin1..pin4 on e row, pin5..pin8 on f row.
+        e_pin_ids = sorted(p["pin_id"] for p in pins if p["metadata"]["row_lock"] == "e")
+        f_pin_ids = sorted(p["pin_id"] for p in pins if p["metadata"]["row_lock"] == "f")
+        assert e_pin_ids == [1, 2, 3, 4]
+        assert f_pin_ids == [5, 6, 7, 8]
+        # pin1 (notch-left side) should sit at the smaller X than pin4 on the e row.
+        e_row = {p["pin_id"]: p["keypoints_by_view"]["top"] for p in pins if p["metadata"]["row_lock"] == "e"}
+        assert e_row[1][0] < e_row[4][0]
+        # pin5 is the f-row pin opposite pin4 → both should share the same X slot.
+        f_row = {p["pin_id"]: p["keypoints_by_view"]["top"] for p in pins if p["metadata"]["row_lock"] == "f"}
+        assert abs(e_row[4][0] - f_row[5][0]) < 1e-6
+        assert abs(e_row[1][0] - f_row[8][0]) < 1e-6
+        # e row Y is above f row Y (smaller pixel Y is higher in image).
+        assert e_row[1][1] < f_row[8][1]
+
+    def test_t4_3b_mock_ic_dip14(self, blank_image_b64):
+        """DIP-14 应该输出 14 个引脚, e/f 行各 7 个."""
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
+        from app.pipeline.stages.s1_detect import run_detect
+
+        ic_det = MockComponentDetector([
+            {"class_name": "IC", "package_type": "dip14", "bbox": (80, 200, 400, 260), "confidence": 0.85}
+        ])
+        ic_pin = MockPinDetector([])
+
+        s1 = run_detect(images_b64=[blank_image_b64], detector=ic_det)
+        # S1's component-detect contract always emits dip8 for IC; tests that
+        # exercise the DIP14 branch override the package_type after S1.
+        for det in s1["detections"]:
+            det["package_type"] = "dip14"
+        result = run_pin_detect(
+            detections=s1["detections"],
+            images_b64=[blank_image_b64],
+            pin_detector=ic_pin,
+        )
+
+        comp = result["components"][0]
+        pins = comp["pins"]
+        assert len(pins) == 14
+        assert comp["package_type"] == "dip14"
+        for pin in pins:
+            assert pin["source"] == "ic_ef_bridge_geometry"
+            assert pin["metadata"]["package_type"] == "dip14"
+            assert pin["metadata"]["row_lock"] in {"e", "f"}
+        e_pin_ids = sorted(p["pin_id"] for p in pins if p["metadata"]["row_lock"] == "e")
+        f_pin_ids = sorted(p["pin_id"] for p in pins if p["metadata"]["row_lock"] == "f")
+        assert e_pin_ids == list(range(1, 8))
+        assert f_pin_ids == list(range(8, 15))
+
+    def test_t4_3c_mock_ic_dip8_notch_right(self, blank_image_b64):
+        """notch=right 时 pin1 应该落在 e 行靠右一端."""
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
+        from app.pipeline.stages.s1_detect import run_detect
+
+        ic_det = MockComponentDetector([
+            {
+                "class_name": "IC",
+                "package_type": "dip8",
+                "bbox": (100, 200, 300, 260),
+                "confidence": 0.9,
+                "notch_direction": "right",
+            }
+        ])
+        ic_pin = MockPinDetector([])
+
+        s1 = run_detect(images_b64=[blank_image_b64], detector=ic_det)
+        # ``notch_direction`` is not part of the standard detection contract; we
+        # patch it onto the dict so the IC helper sees it.
+        for det in s1["detections"]:
+            det["notch_direction"] = "right"
+        result = run_pin_detect(
+            detections=s1["detections"],
+            images_b64=[blank_image_b64],
+            pin_detector=ic_pin,
+        )
+
+        pins = result["components"][0]["pins"]
+        e_row = {p["pin_id"]: p["keypoints_by_view"]["top"] for p in pins if p["metadata"]["row_lock"] == "e"}
+        # notch=right → pin1 is rightmost on e row.
+        assert e_row[1][0] > e_row[4][0]
+        for pin in pins:
+            assert pin["metadata"]["notch_direction"] == "right"
 
     def test_t4_4_pin_source_field(self, blank_image_b64):
         """T9.4: 每个 pin 有 source 字段"""

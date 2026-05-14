@@ -142,6 +142,7 @@ def run_pipeline(
         iou=eff_iou,
         imgsz=eff_imgsz,
         roi_rect=ctx.roi_rect,
+        calibrator=calibrator,
     )
     stages["detect"] = s1
     logger.info("S1 detect: %d components (%.0fms)",
@@ -155,6 +156,7 @@ def run_pipeline(
         images_b64=images_b64,
         pin_detector=ctx.pin_detector,
         supplemental_detections=s1.get("supplemental_detections"),
+        calibrator=calibrator,
     )
     stages["pin_detect"] = s15
     logger.info(
