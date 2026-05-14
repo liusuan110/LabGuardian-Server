@@ -206,6 +206,39 @@ def _looks_like_current_context_follow_up(question: str) -> bool:
     return any(phrase in msg for phrase in follow_up_phrases)
 
 
+def _looks_like_datasheet_question(question: str) -> bool:
+    msg = (question or "").strip().lower()
+    if not msg:
+        return False
+    tokens = (
+        "datasheet",
+        "数据手册",
+        "器件手册",
+        "手册",
+        "规格书",
+        "pdf",
+        ".pdf",
+        "检索",
+        "查找",
+        "pinout",
+        "引脚",
+        "脚位",
+        "pin ",
+        "pin:",
+        "管脚",
+        "电气特性",
+        "推荐工作条件",
+        "绝对最大",
+        "absolute maximum",
+        "typical",
+        "maximum ratings",
+        "electrical characteristics",
+    )
+    has_token = any(token in msg for token in tokens)
+    has_known_part = any(part in msg for part in ("ne555", "lm324", "74ls74", "54ls74", "xd74ls74"))
+    return has_token and (has_known_part or _is_circuit_related_question(question))
+
+
 def _build_concept_not_found_prompt(*, question: str, evidence: Any) -> str:
     risk = str(getattr(evidence, "risk_level", "unknown") or "unknown")
     error_codes = list(getattr(evidence, "error_codes", []) or [])
@@ -383,13 +416,21 @@ class AgentService:
             )
 
         if request.mode == "agent_auto":
+            question = request.user_message or request.query
             evidence_contract = build_runtime_evidence_from_classroom(
                 station_id=request.station_id,
                 stations={request.station_id: self._station_payload(classroom, request)},
                 error_tag_service=ErrorTagService(),
             )
+            if _looks_like_datasheet_question(question):
+                return self._run_datasheet_kb_job(
+                    job_id=job_id,
+                    request=request,
+                    evidence_contract=evidence_contract,
+                    created_at=created_at,
+                )
             intent = classify_intent(
-                request.user_message or request.query,
+                question,
                 evidence=evidence_contract,
             )
             if intent == "diagnostic":
@@ -514,6 +555,13 @@ class AgentService:
         evidence_contract.history_summary = history_summary
 
         question = request.user_message or request.query
+        if question and _looks_like_datasheet_question(question):
+            return self._run_datasheet_kb_job(
+                job_id=job_id,
+                request=request,
+                evidence_contract=evidence_contract,
+                created_at=created_at,
+            )
         if (
             question
             and not _is_agent_identity_question(question)
@@ -683,6 +731,54 @@ class AgentService:
         if not station_data:
             station_data = {"station_id": request.station_id}
         return station_data
+
+    def _run_datasheet_kb_job(
+        self,
+        *,
+        job_id: str,
+        request: AngntAskRequest,
+        evidence_contract: Any,
+        created_at: float,
+    ) -> AngntJobResult:
+        question = request.user_message or request.query
+        top_k = min(int(request.top_k or getattr(settings, "KB_DEFAULT_TOP_K", 6)), 8)
+        question_l = question.lower()
+        if any(token in question_l for token in ("引脚", "脚位", "管脚", "pinout", "pin ", "pin:")):
+            top_k = min(top_k, 3)
+        answer, citations, evidence_items, used = self._rag_service.answer_with_kb(
+            query=question,
+            top_k=top_k,
+        )
+        actions = self._build_actions(
+            risk_level=evidence_contract.risk_level,
+            diagnostics=evidence_contract.diagnostics,
+        )
+        actual_provider, actual_model = self._actual_llm_usage()
+        if used:
+            actual_provider = "kb_retrieval"
+            actual_model = "local_datasheet_pdf"
+        return AngntJobResult(
+            job_id=job_id,
+            station_id=request.station_id,
+            mode=request.mode,
+            answer=answer,
+            actual_llm_provider=actual_provider,
+            actual_llm_model=actual_model,
+            follow_up_suggestions=[
+                "你要我继续查 NE555 的哪个引脚功能，比如 RESET、TRIG、THRES 或 DISCH？",
+                "如果你手上是 DIP-8 或 SOIC-8，我可以按封装方向帮你对照每个脚。",
+                "把你当前电路里 NE555 接到哪些元件说一下，我可以结合连接检查有没有接反或漏接。",
+            ],
+            citations=citations,
+            evidence=evidence_items,
+            actions=actions,
+            used_retrieval=used,
+            created_at=created_at,
+            debug=AngntChatDebug(
+                job_id=job_id,
+                used_context_refs=[c.source_id for c in citations],
+            ),
+        )
 
     def _augment_diagnostic_evidence_with_intent(
         self,
