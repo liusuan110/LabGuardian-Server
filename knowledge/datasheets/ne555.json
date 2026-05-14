@@ -1,19 +1,13 @@
 {
   "document_id": "ne555",
   "title": "NE555 单路定时器",
-  "part_numbers": ["NE555", "NE555DR", "555"],
+  "part_numbers": [
+    "NE555",
+    "NE555DR",
+    "555"
+  ],
   "source_path": "knowledge_base/C695838_555定时器-计时器_NE555DR_规格书_WJ1799212.PDF",
   "chunks": [
-    {
-      "chunk_id": "ne555.pinout.text.1",
-      "modality": "text",
-      "title": "NE555 引脚说明",
-      "text": "NE555 为 8 引脚封装。引脚 1 为 GND，引脚 2 为 TRIG（触发输入，低电平触发），引脚 3 为 OUT（输出），引脚 4 为 RESET（低电平复位，未用时接 VCC），引脚 5 为 CONTROL（控制电压，未用时通过 10nF 电容接地），引脚 6 为 THRESHOLD（阈值输入），引脚 7 为 DISCHARGE（放电），引脚 8 为 VCC（推荐 4.5V~16V）。",
-      "page": 2,
-      "section": "Pin Configuration",
-      "keywords": ["NE555", "555", "引脚", "pinout", "TRIG", "THRESHOLD", "DISCHARGE", "RESET", "VCC", "GND"],
-      "source_ref": {"page": 2}
-    },
     {
       "chunk_id": "ne555.pinout.figure.1",
       "modality": "figure",
@@ -21,9 +15,19 @@
       "text": "图示展示 NE555 DIP-8 顶视引脚位置；以芯片缺口或圆点为参考，逆时针 1→8 排布。",
       "page": 2,
       "section": "Pin Configuration",
-      "keywords": ["NE555", "DIP-8", "pinout", "引脚图"],
+      "keywords": [
+        "NE555",
+        "DIP-8",
+        "pinout",
+        "引脚图"
+      ],
       "asset_path": "knowledge/datasheets/assets/ne555/pinout.png",
-      "source_ref": {"page": 2, "figure_id": "fig_pinout"}
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 2,
+        "figure_id": "fig_pinout"
+      }
     },
     {
       "chunk_id": "ne555.timing.table.1",
@@ -32,9 +36,620 @@
       "text": "单稳态模式下输出脉宽 T = 1.1 × R × C；R 推荐 1kΩ~1MΩ，C 推荐 10nF 以上电解或薄膜电容。",
       "page": 5,
       "section": "Monostable Operation",
-      "keywords": ["NE555", "单稳态", "monostable", "时间常数", "RC"],
+      "keywords": [
+        "NE555",
+        "单稳态",
+        "monostable",
+        "时间常数",
+        "RC"
+      ],
+      "asset_path": null,
       "table_html": "<table><tr><th>模式</th><th>公式</th><th>典型 R</th><th>典型 C</th></tr><tr><td>单稳态</td><td>T = 1.1·R·C</td><td>1k~1M</td><td>10nF~100uF</td></tr><tr><td>多谐振荡</td><td>T = 0.693·(R1+2·R2)·C</td><td>1k~1M</td><td>10nF~100uF</td></tr></table>",
-      "source_ref": {"page": 5, "table_id": "tbl_timing"}
+      "bbox": null,
+      "source_ref": {
+        "page": 5,
+        "table_id": "tbl_timing"
+      }
+    },
+    {
+      "chunk_id": "ne555.p001.text",
+      "modality": "text",
+      "title": "UTD Semiconductor Co",
+      "text": "UTD Semiconductor Co.,Limited Apr.2025 1 of 24www.umw-ic.com These devices are precision timing circuits capable of producing accurate time delays or oscillation. In the time-delay or mono-stable mode of operation, the timed interval is controlled by a single external resistor and capacitor network. In the a-stable mode of operation, the frequency and duty cycle can be controlled independently with two external resistors and a single external capacitor. 1.Description 2.Features Timing From Microseconds to Hours Astable or Monostable Operation Adjustable Duty Cycle TTL-Compatible Output Can Sink or Source Up to 200 mA 3.Applications Fingerprint Biometrics Iris Biometrics 4.Simplified Schematic RFID Reader UMW NE/SA555 1 S R R1 TRIG THRES VCC CONT RESET OUT DISCH GND 48 5 6 2 1 7 3",
+      "page": 1,
+      "section": null,
+      "keywords": [
+        "operation",
+        "external",
+        "umw",
+        "timing",
+        "time",
+        "stable",
+        "mode",
+        "controlled"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 1,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p002.text",
+      "modality": "text",
+      "title": "2 of 24 UTD Semiconductor Co",
+      "text": "2 of 24 UTD Semiconductor Co.,Limited Apr.2025 6.Pinning Information NE555... DR PACKAGE SA555...P PACKAGE GND TRIG OUT RESET 1 2 3 4 8 7 6 5 VCC DISCH THRES CONT I/O Controls comparator thresholds, Outputs 2/3 VCC, allows bypass capacitor connection Open collector output to discharge timing capacitor Ground High current timer output signal Active low reset input forces output and discharge low End of timing input. THRES > CONT sets output low and discharge low Start of timing input. TRlG< ½CONT sets output high and discharge open Input supply voltage, 4.5V to 16V.(SA555 maximum is 18V) Pin Functions Pin Name DR/P CONT DISCH GND OUT RESET THRES TRIG VCC I/O O - O I I I - 5 7 1 3 4 6 2 8 Description 5.Device Information Device Model NE555 SA555 Working Temperature TA=0°C to 70°C TA=-40°C to 85°C Package DR (SOP-8) P (DIP-8) DR (SOP-8) P (DIP-8) www.umw-ic.com UMW NE/SA555",
+      "page": 2,
+      "section": null,
+      "keywords": [
+        "output",
+        "dr",
+        "sa555",
+        "cont",
+        "discharge",
+        "low",
+        "input",
+        "package"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 2,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p003.text",
+      "modality": "text",
+      "title": "UTD Semiconductor Co",
+      "text": "UTD Semiconductor Co.,Limited Apr.2025 3 of 24 MinSymbol 7.Absolute Maximum Ratings UnitCondition Supply voltage (2) Input voltage (CONT, RESET, THRES, TRIG) Output current Operating virtual junction temperature Package thermal impedance (3)(4) Over operating free-air temperature range (unless otherwise noted) 18 VCC ±225 97 85 150 VCC VI IO TJ θJA DR package P package V V mA °C °C °C (1) Stresses beyond those listed under Absolute Maximum Ratings may cause permanent damage to the device. These are stress ratings only, and functional operation of the device at these or any other conditions beyond those indicated under Recommended Operating Conditions is not implied. Exposure to absolute-maximum-rated conditions for extended periods may affect device reliability. (2) All voltage values are with respect to GND. (3) Maximum power dissipation is a function of TJ(max), θJA, and TA. The maximum allowable power dissipation at any allowable ambient temperature is PD = (TJ(max) - TA) / θJA. Operating at the absolute maximum TJ of 150°C can affect reliability. (4) The package thermal impedance is calculated in accordance with JESD 51-7. (5) Maximum power dissipation is a function of TJ(max), θJC, and TC. The maximum allowable power dissipation at any allowable case temperature is PD = (TJ(max) - TC) / θJC. Operating at the absolute maximum TJ of 150°C can affect reliability. (6) The package thermal impedance is calculated in accordance with MIL-STD-883. Max www.umw-ic.com UMW NE/SA555",
+      "page": 3,
+      "section": null,
+      "keywords": [
+        "maximum",
+        "tj",
+        "absolute",
+        "operating",
+        "package",
+        "max",
+        "temperature",
+        "power"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 3,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p004.text",
+      "modality": "text",
+      "title": "4 of 24 UTD Semiconductor Co",
+      "text": "4 of 24 UTD Semiconductor Co.,Limited Apr.2025 8.Handling Ratings MaxSymbol UnitsParameter Storage temperature range 150 Min -65TSTG °C MinSymbol 9.Recommended Operating Conditions UnitCondition Supply voltage Input voltage Output current Operating free-air temperature Over operating free-air temperature range (unless otherwise noted) 16 VCC ±200 70 85 4.5 0 -40 VCC VI IO TA NE555, SA555 CONT, RESET, THRES, and TRIG NE555 SA555 V V mA °C °C Max www.umw-ic.com UMW NE/SA555",
+      "page": 4,
+      "section": null,
+      "keywords": [
+        "temperature",
+        "operating",
+        "sa555",
+        "range",
+        "voltage",
+        "free",
+        "air",
+        "vcc"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 4,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p005.text",
+      "modality": "text",
+      "title": "UTD Semiconductor Co",
+      "text": "UTD Semiconductor Co.,Limited Apr.2025 5 of 24 Min Typ NE/SA555 11.2 4.2 250 5.6 2.2 2 1 0.4 -1.5 100 0.4 11 4 0.25 0.75 2.5 0.35 0.4 10 3.3 30 5 1.67 0.5 0.7 0.1 -0.4 20 0.15 10 3.3 13.3 12.5 3.3 0.1 0.4 2 2.5 0.1 0.15 8.8 2.4 4.5 1.1 0.3 9 2.6 12.75 2.75 V V nA V V µA V V mA mA nA V V V V V V V V V V V V V 10.Electrical Characteristics THRES voltage level TRIG voltage level RESET voltage level RESET current CONT voltage (open circuit) THRES current (1) TRIG current DISCH switch off-state current DISCH switch on-state voltage High-level output voltage Low-level output voltage VCC=5V to 15V, TA=25°C (unless otherwise noted) Max UnitsParameter VCC=15V VCC=5V VCC=15V VCC=5V TRIG at 0V TA=-55°C to 125°C RESET at VCC RESET at 0 V VCC=5V, IO=8mA VCC=15V VCC=5V VCC=15V, IOH=-100mA VCC=15V, IOH=-200mA VCC=15V, IOH=-100mA VCC=15V, IOL=10mA VCC=15V, IOL=50mA VCC=15V, IOL=100mA VCC=15V, IOL=200mA VCC=5V, IOL=3.5mA VCC=5V, IOL=5mA VCC=5V, IOL=8mA Conditions www.umw-ic.com UMW NE/SA555",
+      "page": 5,
+      "section": null,
+      "keywords": [
+        "vcc",
+        "15v",
+        "5v",
+        "voltage",
+        "iol",
+        "level",
+        "reset",
+        "current"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 5,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p006.text",
+      "modality": "text",
+      "title": "6 of 24 UTD Semiconductor Co",
+      "text": "6 of 24 UTD Semiconductor Co.,Limited Apr.2025 (1) This parameter influences the maximum value of the timing resistors RA and RB in the circuit of Figure 12. For example, when VCC=5V, the maximum value is R = RA + RA 3.4MΩ, and for VCC=15V, the maximum value is 10MΩ. www.umw-ic.com UMW NE/SA555 Min Typ NE/SA555 15 6 13 5 10 3 9 2 mA mA mA mA Supply current Max UnitsParameter Output low, No load Output high, No load VCC=15V VCC=5V VCC=15V VCC=5V Conditions",
+      "page": 6,
+      "section": null,
+      "keywords": [
+        "vcc",
+        "ma",
+        "maximum",
+        "value",
+        "ra",
+        "5v",
+        "15v",
+        "umw"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 6,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p007.text",
+      "modality": "text",
+      "title": "UTD Semiconductor Co",
+      "text": "UTD Semiconductor Co.,Limited Apr.2025 7 of 24 NE/SA555 Min Typ 1 2.25 50 150 0.1 0.3 100 100 3 0.5 300 300 % % ppm/ °C %/V %/V ns ns 11.Operating Characteristics Initial error of timing interval (2) Temperature coefficient of timing interval Supply-voltage sensitivity of timing interval Output-pulse rise time Output-pulse fall time VCC=5V to 15V, TA=25°C (unless otherwise noted) Max UnitsParameter Each timer, monostable (3) Each timer, astable (5) Each timer, monostable (3) Each timer, astable (5) Each timer, monostable (3) Each timer, astable (5) TA=25°C TA=MIN to MAX TA=25°C CL=15pF, TA=25°C CL=15pF, TA=25°C Conditions (1) (1) For conditions shown as MIN or MAX, use the appropriate value specified under recommended operating conditions. (2) Timing interval error is defined as the difference between the measured value and the average value of a random sample from each process run. (3) Values specified are for a device in a monostable circuit similar to Figure 9, with the following component values: RA=2kΩ to 100 kΩ, C=0.1μF. (4) On products compliant to MIL-PRF-38535, this parameter is not production tested. (5) Values specified are for a device in an astable circuit similar to Figure 12, with the following component values: RA=1kΩ to 100 kΩ, C=0.1μF. www.umw-ic.com UMW NE/SA555",
+      "page": 7,
+      "section": null,
+      "keywords": [
+        "each",
+        "25",
+        "ta",
+        "timer",
+        "100",
+        "timing",
+        "interval",
+        "monostable"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 7,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p008.text",
+      "modality": "text",
+      "title": "8 of 24 UTD Semiconductor Co",
+      "text": "8 of 24 UTD Semiconductor Co.,Limited Apr.2025 VOL, Low-Level OutputVoltage (V) VOL, Low-Level OutputVoltage (V) VOL, Low-Level OutputVoltage (V) (VCC-VOH) Voltage Drop (V) ICC, Supply Current (mA) Pulse Duration Relative to Value at VCC=10V IOL, Low-Level Output Current (mA) Figure 1: Low-Level Output Voltage vs Low-Level Output Current Figure 2: Low-Level Output Voltage vs Low-Level Output Current IOL, Low-Level Output Current (mA) IOL, Low-Level Output Current (mA) Figure 3: Low-Level Output Voltage vs Low-Level Output Current IOH, High-Level Output Current (mA) Figure 4: Drop Between Supply Voltage and Output vs High-Level Output Current VCC, Supply Voltage (V) Figure 5: Supply Current vs Supply Voltage VCC, Supply Voltage (V) Figure 6: Normalized Output Pulse Duration (Monostable Operation) vs Supply Voltage 12.1 Typical Characteristic 5 4 2 1 0 9 3 5 6 7 8 9 10 11 7 6 8 10 12 13 14 15 TA = 25°C TA = 125°C TA = −55°C Output Low, No Load 1 0.995 0.990 0.985 0 5 10 1.005 1.010 1.015 15 20 8 TA = 125°C TA = 25°C TA = −55°C VCC = 15 V 0.1 0.04 0.01 1 2 4 7 10 20 40 70 100 0.07 1 0.4 0.7 10 4 7 0.02 0.2 2 1 0.6 0.2 0 1.4 1.8 2.0 0.4 1.6 0.8 1.2 TA = 125°C TA = 25°C 100704020107421 VCC = 5 V to 15 V TA = −55°C TA = 125°C TA = 25°C VCC = 5 V TA = −55°C 0.1 0.04 0.01 1 2 4 7 10 20 40 70 100 0.07 1 0.4 0.7 10 4 7 0.02 0.2 2 VCC = 10 V 0.1 0.04 0.01 1 2 4 7 10 20 40 70 100 0.07 1 0.4 0.7 10 4 7 0.02 0.2 2 TA = 125°C TA = 25°C TA= −55°C www.umw-ic.com UMW NE/SA555",
+      "page": 8,
+      "section": null,
+      "keywords": [
+        "ta",
+        "level",
+        "output",
+        "low",
+        "current",
+        "10",
+        "voltage",
+        "vcc"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 8,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p009.text",
+      "modality": "text",
+      "title": "UTD Semiconductor Co",
+      "text": "UTD Semiconductor Co.,Limited Apr.2025 9 of 24 Pulse Duration Relative to Value at TA=25°C tPD, Propagation Delay Time (ns) TA, Free-Air Temperature (°C) Figure 7: Normalized Output Pulse Duration (Monostable Operation) vs Free-Air Temperature Figure 8: Propagation Delay Time vs Lowest Voltage Level of Trigger Pulse Lowest Level of Trigger Pulse (×VCC) 12.2 Typical Characteristic 0 100 200 300 400 500 600 700 800 900 1000 0 0.05 0.1 0.15 0.2 0.25 0.3 0.35 0.4 TA °C521= TA °C07= TA °C52= TA °C0= TA °C55–= 8 1 0.995 0.990 0.985 −75 −25 25 1.005 1.010 1.015 75 125−50 0 50 100 VCC = 10 V 8 www.umw-ic.com UMW NE/SA555",
+      "page": 9,
+      "section": null,
+      "keywords": [
+        "ta",
+        "pulse",
+        "25",
+        "duration",
+        "propagation",
+        "delay",
+        "time",
+        "free"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 9,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p010.text",
+      "modality": "text",
+      "title": "10 of 24 UTD Semiconductor Co",
+      "text": "10 of 24 UTD Semiconductor Co.,Limited Apr.2025 13.Detailed Description Overview The xx555 timer is a popular and easy to use for general purpose timing applications from 10µs to hours or from <1mHz to 100 kHz. In the time-delay or mono-stable mode of operation, the timed interval is controlled by a single external resistor and capacitor network. In the a-stable mode of operation, the frequency and duty cycle can be controlled independently with two external resistors and a single external capacitor. Maximum output sink and discharge sink current is greater for higher VCC and less for lower VCC. Functional Block Diagram 1 S R R1 TRIG THRES VCC CONT RESET OUT DISCH GND 48 5 6 2 1 7 3 A. Pin numbers shown are for the D, JG, P, PS, and PW packages. B. RESET can override TRIG, which can override THRES. www.umw-ic.com UMW NE/SA555",
+      "page": 10,
+      "section": null,
+      "keywords": [
+        "external",
+        "can",
+        "vcc",
+        "10",
+        "stable",
+        "mode",
+        "operation",
+        "controlled"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 10,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p011.text",
+      "modality": "text",
+      "title": "UTD Semiconductor Co",
+      "text": "UTD Semiconductor Co.,Limited Apr.2025 11 of 24 14.Feature Description Figure 9. Circuit for Monostable Operation Mono-stable Operation For mono-stable operation, any of these timers can be connected as shown in Figure 9. If the output is low, applica- tion of a negative-going pulse to the trigger (TRIG) sets the flip-flop (Q goes low), drives the output high, and turns off Q1. Capacitor C then is charged through RA until the voltage across the capacitor reaches the threshold voltage of the threshold (THRES) input. If TRIG has returned to a high level, the output of the threshold comparator resets the flip-flop (Q goes high), drives the output low, and discharges C through Q1. Monostable operation is initiated when TRIG voltage falls below the trigger threshold. Once initiated, the sequence ends only if TRIG is high for at least 10 µs before the end of the timing interval. When the trigger is grounded, the comparator storage time can be as long as 10 µs, which limits the minimum monostable pulse width to 10µs. Because of the threshold level and saturation voltage of Q1, the output pulse duration is approximately tw=1.1RAC. Figure 11 is a plot of the time constant for various values of RA and C. The threshold levels and charge rates both are directly proportional to the supply voltage, VCC. The timing interval is, therefore, independent of the supply voltage, so long as the supply voltage is constant during the time interval. Applying a negative-going trigger pulse simultaneously to RESET and TRIG during the timing interval discharges C and reinitiates the cycle, commencing on the positive edge of the reset pulse. The output is held low as long as the reset pulse is low. To prevent false triggering, when RESET is not used, it should be connected to VCC. VCC (5 V to 15 V) RA RL Output GND OUT VCCCONT RESET DISCH THRES TRIGInput 5 8 4 7 6 2 3 1 Pin numbers shown are for the D, JG, P, PS, and PW packages. www.umw-ic.com UMW NE/SA555",
+      "page": 11,
+      "section": null,
+      "keywords": [
+        "output",
+        "voltage",
+        "pulse",
+        "threshold",
+        "low",
+        "trig",
+        "reset",
+        "operation"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 11,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p012.text",
+      "modality": "text",
+      "title": "12 of 24 UTD Semiconductor Co",
+      "text": "12 of 24 UTD Semiconductor Co.,Limited Apr.2025 tw, Output Pulse Duration (s) Voltage − 2 V/div Figure 11: Output Pulse Duration vs Capacitance Figure 13: Typical Astable WaveformsFigure 12: Circuit for Astable Operation C, Capacitance (μF) Figure 10: Typical Monostable Waveforms Time − 0.1 ms/div Capacitor V oltage Output V oltage Input V oltage RA = 9.1 kΩ CL = 0.01 µF RL = 1 kΩ See Figure 9 10 1 10−1 10−2 10−3 10−4 1001010.10.01 10−5 0.001 RA = 10 MΩ RA = 10 kΩ RA = 1 kΩ RA = 100 kΩ RA = 1 MΩ A-stable Operation As shown in Figure 12, adding a second resistor, RB, to the circuit of Figure 9 and connecting the trigger input to the threshold input causes the timer to self-trigger and run as a multi-vibrator. The capacitor C charges through RA and RB and then discharges through RB only. Therefore, the duty cycle is controlled by the values of RA and RB. This astable connection results in capacitor C charging and discharging between the threshold-voltage level (≈0.67 × VCC) and the trigger-voltage level (≈ 0.33 × VCC). As in the mono-stable circuit, charge and discharge times (and, therefore, the frequency and duty cycle) are independent of the supply voltage. GND OUT VCCCONT RESET DISCH THRES TRIG C RB RA Output RL 0.01 µF VCC (5 V to 15 V) (see Note A) NOTE A: Decoupling CONT voltage to ground with a capacitor can improve operation. This should be evaluated for individual applications. Open 5 8 4 7 6 2 3 1 Pin numbers shown are for the D, JG, P, PS, and PW packages. Time − 0.5 ms/div Voltage − 1 V/div tH Capacitor V oltage Output V oltagetL RA = 5 k RL = 1 k RB = 3 k See Figure 12 C = 0.15 µF www.umw-ic.com UMW NE/SA555",
+      "page": 12,
+      "section": null,
+      "keywords": [
+        "10",
+        "ra",
+        "figure",
+        "voltage",
+        "rb",
+        "output",
+        "capacitor",
+        "12"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 12,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p013.text",
+      "modality": "text",
+      "title": "UTD Semiconductor Co",
+      "text": "UTD Semiconductor Co.,Limited Apr.2025 13 of 24 f, Free-Running Frequency (Hz) Figure 14: Free-Running Frequency C, Capacitance (μF) Figure 12 shows typical waveforms generated during astable operation. The output high-level duration tH and low- level duration tL can be calculated as follows: tH=0.693 (RA + RB) C (1) tL=0.693 (RB) C (2) Other useful relationships are shown below: period tH + tL=0.693 (RA + 2RB) C (3) Output driver duty cycle = = (5) tL tH + tL RB RA + 2RB Output waveform duty cycle = = 1- (6) tH tH + tL RB RA + 2RB Low-to-high ratio = = (7) tL tH RB RA + RB frequency ≈ (4) 1.44 (RA + 2RB)C 100 k 10 k 1 k 100 10 1 1001010.10.01 0.1 0.001 RA + 2 RB = 10 MΩ RA + 2 RB = 1 MΩ RA + 2 RB = 100 kΩ RA + 2 RB = 10 kΩ RA + 2 RB = 1 kΩ www.umw-ic.com UMW NE/SA555",
+      "page": 13,
+      "section": null,
+      "keywords": [
+        "ra",
+        "rb",
+        "th",
+        "tl",
+        "10",
+        "2rb",
+        "frequency",
+        "output"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 13,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p014.text",
+      "modality": "text",
+      "title": "14 of 24 UTD Semiconductor Co",
+      "text": "14 of 24 UTD Semiconductor Co.,Limited Apr.2025 Reset Trigger Voltage(1) Threshold Voltage(1) Output Discharge Switch Voltage − 2 V/div Figure 15: Divide-by-Three Circuit Waveforms Time − 0.1 ms/div Low High High High Irrelevant <1/3 VCC >1/3 VCC >1/3 VCC Irrelevant Irrelevant >1/3 VCC <1/3 VCC Low High Low As previously established On Off On Frequency Divider By adjusting the length of the timing cycle, the basic circuit of Figure 9 can be made to operate as a frequency divider. Figure 15 shows a divide-by-three circuit that makes use of the fact that re-triggering cannot occur during the timing cycle. Capacitor V oltage Output V oltage Input V oltage VCC = 5 V RA = 1250 Ω C = 0.02 µF See Figure 9 15.Device Functional Modes (1) Voltage levels shown are nominal. Table 1. Function Table www.umw-ic.com UMW NE/SA555",
+      "page": 14,
+      "section": null,
+      "keywords": [
+        "vcc",
+        "voltage",
+        "figure",
+        "high",
+        "15",
+        "circuit",
+        "low",
+        "irrelevant"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 14,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p015.text",
+      "modality": "text",
+      "title": "UTD Semiconductor Co",
+      "text": "UTD Semiconductor Co.,Limited Apr.2025 15 of 24 Figure 16: Circuit for Missing-Pulse Detector Application Information The xx555 timer devices use resistor and capacitor charging delay to provide a programmable time delay or opera- ting frequency. This section presents a simplified discussion of the design process. Missing-Pulse Detector The circuit shown in Figure 16 can be used to detect a missing pulse or abnormally long spacing between consecu- tive pulses in a train of pulses. The timing interval of the monostable circuit is re-triggered continuously by the input pulse train as long as the pulse spacing is less than the timing interval. A longer pulse spacing, missing pulse, or terminated pulse train permits the timing interval to be completed, thereby generating an output pulse as shown in Figure 17. Design Requirements Input fault (missing pulses) must be input high. Input stuck low will not be detected because timing capacitor \"C\" will remain discharged. Detailed Design Procedure Choose RA and C so that RA× C > [maximum normal input high time]. RL improves VOH, but it is not required for TTL compatibility. 16.Typical Applications VCC (5 V to 15 V) DISCH OUT VCCRESET RL RA A5T3644 C THRES GND CONT TRIG Input 0.01 µF Output 4 8 3 7 6 2 5 1 Pin numbers shown are shown for the D, JG, P, PS, and PW packages. www.umw-ic.com UMW NE/SA555",
+      "page": 15,
+      "section": null,
+      "keywords": [
+        "pulse",
+        "input",
+        "missing",
+        "shown",
+        "timing",
+        "figure",
+        "16",
+        "circuit"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 15,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p016.text",
+      "modality": "text",
+      "title": "16 of 24 UTD Semiconductor Co",
+      "text": "16 of 24 UTD Semiconductor Co.,Limited Apr.2025 Voltage − 2 V/div Figure 17: Completed Timing Waveforms for Missing-Pulse Detector Time − 0.1 ms/div Application Curves VCC = 5 V RA = 1 kΩ C = 0.1 µF See Figure 15 Capacitor V oltage Output V oltage Input V oltage Pulse-Width Modulation The operation of the timer can be modified by modulating the internal threshold and trigger voltages, which is accomplished by applying an external voltage (or current) to CONT. Figure 18 shows a circuit for pulse-width modulation. A continuous input pulse train triggers the monostable circuit, and a control signal modulates the threshold voltage. Figure 19 shows the resulting output pulse-width modulation. While a sine-wave modulation signal is shown, any wave shape could be used. www.umw-ic.com UMW NE/SA555",
+      "page": 16,
+      "section": null,
+      "keywords": [
+        "pulse",
+        "figure",
+        "modulation",
+        "voltage",
+        "oltage",
+        "width",
+        "div",
+        "output"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 16,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p017.text",
+      "modality": "text",
+      "title": "UTD Semiconductor Co",
+      "text": "UTD Semiconductor Co.,Limited Apr.2025 17 of 24 Figure 18: Circuit for Pulse-Width Modulation Pin numbers shown are for the D, JG, P, PS, and PW packages. NOTE A: The modulating signal can be direct or capacitively coupled to CONT. For direct coupling, the effects of modulation source voltage and impedance on the bias of the timer should be considered. THRES GND C RARL VCC (5 V to 15 V) Output DISCH OUT VCCRESET TRIG CONT Modulation Input (see Note A) Clock Input 4 8 3 7 6 2 5 1 Design Requirements Clock input must have VOL and VOH levels that are less than and greater than 1/3 VCC. Modulation input can vary from ground to VCC. The application must be tolerant of a nonlinear transfer function; the relationship between modulation input and pulse width is not linear because the capacitor charge is based RC on an negative exponential curve. Detailed Design Procedure Choose RA and C so that RA×C=1/4 [clock input period].RL improves VOH, but it is not required for TTL compatibility. www.umw-ic.com UMW NE/SA555",
+      "page": 17,
+      "section": null,
+      "keywords": [
+        "input",
+        "modulation",
+        "vcc",
+        "clock",
+        "pulse",
+        "width",
+        "note",
+        "can"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 17,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p018.text",
+      "modality": "text",
+      "title": "18 of 24 UTD Semiconductor Co",
+      "text": "18 of 24 UTD Semiconductor Co.,Limited Apr.2025 Voltage − 2 V/div Figure 19: Pulse-Width-Modulation Waveforms Time − 0.5 ms/div Application Curves Pulse-Position Modulation As shown in Figure 20, any of these timers can be used as a pulse-position modulator. This application modulates the threshold voltage and, thereby, the time delay, of a free-running oscillator. Figure 21 shows a triangular-wave modulation signal for such a circuit; however, any wave shape could be used. www.umw-ic.com UMW NE/SA555 Capacitor V oltage Output V oltage Clock Input V oltage RA = 3 kΩ C = 0.02 µF RL = 1 kΩ See Figure 18 Modulation Input V oltage",
+      "page": 18,
+      "section": null,
+      "keywords": [
+        "figure",
+        "modulation",
+        "oltage",
+        "pulse",
+        "18",
+        "voltage",
+        "div",
+        "time"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 18,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p019.text",
+      "modality": "text",
+      "title": "UTD Semiconductor Co",
+      "text": "UTD Semiconductor Co.,Limited Apr.2025 19 of 24 Figure 20: Circuit for Pulse-Position Modulation Pin numbers shown are for the D, JG, P, PS, and PW packages. NOTE A: The modulating signal can be direct or capacitively coupled to CONT. For direct coupling, the effects of modulation source voltage and impedance on the bias of the timer should be considered. RB Modulation Input (see Note A) CONT TRIG RESET VCC OUT DISCH VCC (5 V to 15 V) RL RA C GND THRES 4 8 3 7 6 2 5 Output Design Requirements Both DC and AC coupled modulation input will change the upper and lower voltage thresholds for the timing capacitor. Both frequency and duty cycle will vary with the modulation voltage. Detailed Design Procedure The nominal output frequency and duty cycle can be determined using formulas in A-stable Operation section. RL improves VOH, but it is not required for TTL compatibility. www.umw-ic.com UMW NE/SA555",
+      "page": 19,
+      "section": null,
+      "keywords": [
+        "modulation",
+        "voltage",
+        "note",
+        "can",
+        "direct",
+        "coupled",
+        "cont",
+        "input"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 19,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p020.text",
+      "modality": "text",
+      "title": "20 of 24 UTD Semiconductor Co",
+      "text": "20 of 24 UTD Semiconductor Co.,Limited Apr.2025 Voltage − 2 V/div Figure 21: Pulse-Position-Modulation Waveforms Figure 22: Sequential Timer Circuit Time − 0.1 ms/div Application Curves Sequential Timer Many applications, such as computers, require signals for initializing conditions during start-up. Other applications, such as test equipment, require activation of test signals in sequence. These timing circuits can be connected to provide such sequential control. The timers can be used in various combinations of astable or monostable circuit connections, with or without modulation, for extremely flexible waveform control. Figure 22 shows a sequencer circuit with possible applications in many systems, and Figure 23 shows the output waveforms. S VCC RESET VCC OUT DISCH GND CONT TRIG 4 8 3 7 6 1 5 2 THRES RC CC 0.01 CC = 14.7 µF RC = 100 kΩ Output C RESET VCC OUT DISCH GND CONT TRIG 4 8 3 7 6 1 5 2 THRES RB 33 kΩ 0.001 0.01 µF CB = 4.7 µF RB = 100 kΩ Output BOutput ARA = 100 kΩ CA = 10 µF µF 0.01 µF 0.001 33 kΩRA THRES 2 5 1 6 7 3 84 TRIG CONT GND DISCH OUT VCCRESET µF µF CBCA Pin numbers shown are for the D, JG, P, PS, and PW packages. NOTE A: S closes momentarily at t = 0. www.umw-ic.com UMW NE/SA555 RA = 3 kΩ RB = 500 Ω RL = 1 kΩ See Figure 20 Capacitor V oltage Output V oltage Modulation Input V oltage",
+      "page": 20,
+      "section": null,
+      "keywords": [
+        "figure",
+        "output",
+        "modulation",
+        "sequential",
+        "circuit",
+        "applications",
+        "such",
+        "vcc"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 20,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p021.text",
+      "modality": "text",
+      "title": "UTD Semiconductor Co",
+      "text": "UTD Semiconductor Co.,Limited Apr.2025 21 of 24 Voltage − 5 V/div Figure 23: Sequential Timer Waveforms t − Time − 1 s/div Design Requirements The sequential timer application chains together multiple mono-stable timers. The joining components are the 33kΩ resistors and 0.001-µF capacitors. The output high to low edge passes a 10-µs start pulse to the next monostable. Detailed Design Procedure The timing resistors and capacitors can be chosen using this formula. tw = 1.1 × R × C. Application Curves Power Supply Recommendations The devices are designed to operate from an input voltage supply range between 4.5 V and 16 V. (18 V for SE555). A bypass capacitor is highly recommended from VCC to ground pin; ceramic 0.1 µF capacitor is sufficient. www.umw-ic.com UMW NE/SA555 See Figure 22 Output A Output B Output C t = 0 twC = 1.1 RCCC twC twB = 1.1 RBCB twA = 1.1 RACA twA twB",
+      "page": 21,
+      "section": null,
+      "keywords": [
+        "output",
+        "voltage",
+        "div",
+        "figure",
+        "sequential",
+        "timer",
+        "design",
+        "application"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 21,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p022.text",
+      "modality": "text",
+      "title": "22 of 24 UTD Semiconductor Co",
+      "text": "22 of 24 UTD Semiconductor Co.,Limited Apr.2025 17.SOP-8 Package Outline Dimensions e EE1 D c L θ AA2 A1b DIMENSIONS (mm are the original dimensions) Min Max 1.350 0.000 1.350 0.330 0.170 4.700 3.800 5.800 1.270 0°0.400 1.750 0.100 1.550 0.510 0.250 5.100 4.000 6.200 BSC 8°1.270 Symbol A A1 A2 b c D E E1 e L θ www.umw-ic.com UMW NE/SA555",
+      "page": 22,
+      "section": null,
+      "keywords": [
+        "dimensions",
+        "350",
+        "000",
+        "800",
+        "270",
+        "100",
+        "umw",
+        "22"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 22,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p023.text",
+      "modality": "text",
+      "title": "UTD Semiconductor Co",
+      "text": "UTD Semiconductor Co.,Limited Apr.2025 23 of 24 18.Ordering Information yy: Year Code ww: Week Code Package Base QTY Delivery ModeMarkingOrder Code UMW NE555DR UMW SA555DR NE555 SA555 SOP-8 SOP-8 2500 2500 Tape and reel Tape and reel NE555 UMW yyww www.umw-ic.com UMW NE/SA555",
+      "page": 23,
+      "section": null,
+      "keywords": [
+        "umw",
+        "code",
+        "ne555",
+        "sa555",
+        "sop",
+        "2500",
+        "tape",
+        "reel"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 23,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "ne555.p024.text",
+      "modality": "text",
+      "title": "24 of 24 UTD Semiconductor Co",
+      "text": "24 of 24 UTD Semiconductor Co.,Limited Apr.2025 UMW reserves the right to make changes to all products, specifications. Customers should obtain the latest version of product documentation and verify the completeness and currency of the information before placing an order. This document and any actions by UMW do not grant any intellectual property rights, whether express or implied, by estoppel or otherwise. The product names and marks mentioned herein may be trademarks of their respective owners. When reselling, applying, or exporting, please comply with export control laws and regulations of China, the United States, the United Kingdom, the European Union, and other relevant countries, regions, and international organizations. Unless explicitly stated in writing, UMW products are not intended for use in medical, life-saving, or life-sustaining applications, nor for any other applications where product failure could result in personal injury or death. If customers use or sell the product for such applications without explicit authorization, they assume all associated risks. When applying our products, please do not exceed the maximum rated values, as this may affect the reliability of the entire system. Under certain conditions, any semiconductor product may experience faults or failures. Buyers are responsible for adhering to safety standards and implementing safety measures during system design, prototyping, and manufacturing when using our products to prevent potential failure risks that could lead to personal injury or property damage. 19.Disclaimer www.umw-ic.com UMW NE/SA555",
+      "page": 24,
+      "section": null,
+      "keywords": [
+        "umw",
+        "product",
+        "products",
+        "any",
+        "not",
+        "may",
+        "when",
+        "applications"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 24,
+        "backend": "pypdf"
+      }
     }
   ]
 }

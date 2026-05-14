@@ -19,11 +19,6 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_BASE_DIR = Path(__file__).resolve().parents[2] / "knowledge" / "datasheets"
 
-_PART_NUMBER_ALIASES: dict[str, list[str]] = {
-    "ne555": ["ne555", "555", "ne555dr", "555定时器", "555 timer"],
-    "lm324": ["lm324", "lm324n", "lm324a", "四运放", "四路运放"],
-}
-
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9]+|[一-鿿]")
 
 
@@ -31,6 +26,20 @@ def _tokenize(text: str) -> list[str]:
     if not text:
         return []
     return [tok.lower() for tok in _TOKEN_PATTERN.findall(text)]
+
+
+def _is_cjk(ch: str) -> bool:
+    return bool(ch) and "一" <= ch[0] <= "鿿"
+
+
+def _strong_tokens(tokens: set[str]) -> set[str]:
+    """Drop tokens too weak to act as a part-number signal.
+
+    A single CJK character (e.g. "器") routinely appears across unrelated
+    queries and would otherwise let an unrelated chip's alias capture the
+    query. Multi-char CJK and any alphanumeric token survive.
+    """
+    return {tok for tok in tokens if len(tok) > 1 or not _is_cjk(tok)}
 
 
 class DatasheetKbService:
@@ -90,34 +99,46 @@ class DatasheetKbService:
             return []
 
         query_tokens = set(_tokenize(query))
-        part_number_terms: set[str] = set()
+        explicit_part_terms: set[str] = set()
         for raw in part_numbers or []:
-            part_number_terms.update(_tokenize(raw))
-
-        # Expand part-number aliases — "555" should still match an NE555 doc.
-        expanded_part_terms: set[str] = set(part_number_terms)
-        for canon, aliases in _PART_NUMBER_ALIASES.items():
-            alias_tokens = {tok for alias in aliases for tok in _tokenize(alias)}
-            if alias_tokens & (query_tokens | part_number_terms):
-                expanded_part_terms.update(alias_tokens)
-                expanded_part_terms.add(canon)
+            explicit_part_terms.update(_tokenize(raw))
 
         modality_filter = {m for m in (modalities or [])}
 
-        results: list[tuple[float, DatasheetDocument, DatasheetChunk]] = []
+        # Part-signal detection is per-document: a doc gets the "you meant me"
+        # boost when its own part_numbers / document_id overlap query or
+        # explicit part_numbers. We strip single CJK characters before the
+        # comparison so a token like "器" (from 触发器) cannot accidentally
+        # bind to "定时器" in NE555's alias list.
+        query_strong = _strong_tokens(query_tokens)
+        explicit_strong = _strong_tokens(explicit_part_terms)
+        signal_pool = query_strong | explicit_strong
+        # `has_part_signal` reflects whether ANY document in the corpus was
+        # part-matched; only then do we down-rank non-matching docs.
+        per_doc_part_match: dict[str, bool] = {}
+        has_part_signal = False
         for document in self._documents.values():
             doc_part_tokens = {
                 tok for pn in document.part_numbers for tok in _tokenize(pn)
             }
             doc_part_tokens.update(_tokenize(document.document_id))
-            part_boost = 0.0
-            if expanded_part_terms and (expanded_part_terms & doc_part_tokens):
-                part_boost = 1.5
+            matched = bool(_strong_tokens(doc_part_tokens) & signal_pool)
+            per_doc_part_match[document.document_id] = matched
+            if matched:
+                has_part_signal = True
+
+        results: list[tuple[float, DatasheetDocument, DatasheetChunk]] = []
+        for document in self._documents.values():
+            doc_matches_part = per_doc_part_match[document.document_id]
+            part_boost = 1.5 if doc_matches_part else 0.0
+            doc_score_scale = 1.0
+            if has_part_signal and not doc_matches_part:
+                doc_score_scale = 0.35
 
             for chunk in document.chunks:
                 if modality_filter and chunk.modality not in modality_filter:
                     continue
-                score = self._score_chunk(chunk, query_tokens, part_boost)
+                score = self._score_chunk(chunk, query_tokens, part_boost) * doc_score_scale
                 if score <= 0:
                     continue
                 results.append((score, document, chunk))

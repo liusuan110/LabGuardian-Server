@@ -1,0 +1,512 @@
+{
+  "document_id": "sn74ls74a",
+  "title": "SN74LS74A 双 D 触发器",
+  "part_numbers": [
+    "SN74LS74A",
+    "SN74LS74AN",
+    "74LS74"
+  ],
+  "source_path": "knowledge_base/sn74ls74a.pdf",
+  "chunks": [
+    {
+      "chunk_id": "sn74ls74a.p007.text",
+      "modality": "text",
+      "title": "PACKAGE OPTION ADDENDUM www",
+      "text": "PACKAGE OPTION ADDENDUM www.ti.com 8-Jan-2026 PACKAGING INFORMATION Orderable part number Status (1) Material type (2) Package | Pins Package qty | Carrier RoHS (3) Lead finish/ Ball material (4) MSL rating/ Peak reflow (5) Op temp (°C) Part marking (6) JM38510/07101BCA Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 07101BCA JM38510/07101BCA.A Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 07101BCA JM38510/07101BCA.A Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 07101BCA JM38510/07101BDA Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 07101BDA JM38510/07101BDA Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 07101BDA JM38510/07101BDA.A Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 07101BDA JM38510/07101BDA.A Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 07101BDA JM38510/30102B2A Active Production LCCC (FK) | 20 55 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102B2A JM38510/30102B2A Active Production LCCC (FK) | 20 55 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102B2A JM38510/30102B2A.A Active Production LCCC (FK) | 20 55 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102B2A JM38510/30102B2A.A Active Production LCCC (FK) | 20 55 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102B2A JM38510/30102BCA Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102BCA JM38510/30102BCA Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102BCA JM38510/30102BCA.A Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102BCA JM38510/30102BCA.A Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102BCA JM38510/30102BDA Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102BDA Addendum-Page 1",
+      "page": 7,
+      "section": null,
+      "keywords": [
+        "jm38510",
+        "55",
+        "type",
+        "active",
+        "production",
+        "tube",
+        "no",
+        "snpb"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 7,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p008.text",
+      "modality": "text",
+      "title": "PACKAGE OPTION ADDENDUM www",
+      "text": "PACKAGE OPTION ADDENDUM www.ti.com 8-Jan-2026 Orderable part number Status (1) Material type (2) Package | Pins Package qty | Carrier RoHS (3) Lead finish/ Ball material (4) MSL rating/ Peak reflow (5) Op temp (°C) Part marking (6) JM38510/30102BDA Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102BDA JM38510/30102BDA.A Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102BDA JM38510/30102BDA.A Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102BDA JM38510/30102SCA Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/30102S CA JM38510/30102SCA Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/30102S CA JM38510/30102SCA.A Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/30102S CA JM38510/30102SCA.A Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/30102S CA JM38510/30102SDA Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/30102S DA JM38510/30102SDA Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/30102S DA JM38510/30102SDA.A Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/30102S DA JM38510/30102SDA.A Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/30102S DA M38510/07101BCA Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 07101BCA M38510/07101BCA Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 07101BCA M38510/07101BDA Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 07101BDA M38510/07101BDA Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 07101BDA M38510/30102B2A Active Production LCCC (FK) | 20 55 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102B2A M38510/30102B2A Active Production LCCC (FK) | 20 55 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102B2A Addendum-Page 2",
+      "page": 8,
+      "section": null,
+      "keywords": [
+        "jm38510",
+        "55",
+        "type",
+        "active",
+        "production",
+        "tube",
+        "no",
+        "snpb"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 8,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p009.text",
+      "modality": "text",
+      "title": "PACKAGE OPTION ADDENDUM www",
+      "text": "PACKAGE OPTION ADDENDUM www.ti.com 8-Jan-2026 Orderable part number Status (1) Material type (2) Package | Pins Package qty | Carrier RoHS (3) Lead finish/ Ball material (4) MSL rating/ Peak reflow (5) Op temp (°C) Part marking (6) M38510/30102BCA Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102BCA M38510/30102BCA Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102BCA M38510/30102BDA Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102BDA M38510/30102BDA Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/ 30102BDA M38510/30102SCA Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/30102S CA M38510/30102SCA Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/30102S CA M38510/30102SDA Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/30102S DA M38510/30102SDA Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 JM38510/30102S DA SN54LS74AJ Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SN54LS74AJ SN54LS74AJ Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SN54LS74AJ SN54LS74AJ.A Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SN54LS74AJ SN54LS74AJ.A Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SN54LS74AJ SN54S74J Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SN54S74J SN54S74J Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SN54S74J SN54S74J.A Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SN54S74J SN54S74J.A Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SN54S74J SN74LS74AD Obsolete Production SOIC (D) | 14 - - Call TI Call TI 0 to 70 LS74A SN74LS74AD Obsolete Production SOIC (D) | 14 - - Call TI Call TI 0 to 70 LS74A SN74LS74ADBR Active Production SSOP (DB) | 14 2000 | LARGE T&R Yes NIPDAU Level-1-260C-UNLIM 0 to 70 LS74A SN74LS74ADBR Active Production SSOP (DB) | 14 2000 | LARGE T&R Yes NIPDAU Level-1-260C-UNLIM 0 to 70 LS74A SN74LS74ADBR.A Active Production SSOP (DB) | 14 2000 | LARGE T&R Yes NIPDAU Level-1-260C-UNLIM 0 to 70 LS74A SN74LS74ADBR.A Active Production SSOP (DB) | 14 2000 | LARGE T&R Yes NIPDAU Level-1-260C-UNLIM 0 to 70 LS74A SN74LS74ADR Active Production SOIC (D) | 14 2500 | LARGE T&R Yes NIPDAU Level-1-260C-UNLIM 0 to 70 LS74A SN74LS74ADR Active Production SOIC (D) | 14 2500 | LARGE T&R Yes NIPDAU Level-1-260C-UNLIM 0 to 70 LS74A SN74LS74ADR.A Active Production SOIC (D) | 14 2500 | LARGE T&R Yes NIPDAU Level-1-260C-UNLIM 0 to 70 LS74A Addendum-Page 3",
+      "page": 9,
+      "section": null,
+      "keywords": [
+        "production",
+        "14",
+        "active",
+        "type",
+        "25",
+        "tube",
+        "no",
+        "snpb"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 9,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p010.text",
+      "modality": "text",
+      "title": "PACKAGE OPTION ADDENDUM www",
+      "text": "PACKAGE OPTION ADDENDUM www.ti.com 8-Jan-2026 Orderable part number Status (1) Material type (2) Package | Pins Package qty | Carrier RoHS (3) Lead finish/ Ball material (4) MSL rating/ Peak reflow (5) Op temp (°C) Part marking (6) SN74LS74ADR.A Active Production SOIC (D) | 14 2500 | LARGE T&R Yes NIPDAU Level-1-260C-UNLIM 0 to 70 LS74A SN74LS74ADRG4 Active Production SOIC (D) | 14 2500 | LARGE T&R Yes NIPDAU Level-1-260C-UNLIM 0 to 70 LS74A SN74LS74ADRG4 Active Production SOIC (D) | 14 2500 | LARGE T&R Yes NIPDAU Level-1-260C-UNLIM 0 to 70 LS74A SN74LS74AN Active Production PDIP (N) | 14 25 | TUBE Yes NIPDAU N/A for Pkg Type 0 to 70 SN74LS74AN SN74LS74AN Active Production PDIP (N) | 14 25 | TUBE Yes NIPDAU N/A for Pkg Type 0 to 70 SN74LS74AN SN74LS74AN.A Active Production PDIP (N) | 14 25 | TUBE Yes NIPDAU N/A for Pkg Type 0 to 70 SN74LS74AN SN74LS74AN.A Active Production PDIP (N) | 14 25 | TUBE Yes NIPDAU N/A for Pkg Type 0 to 70 SN74LS74AN SN74LS74ANE4 Active Production PDIP (N) | 14 25 | TUBE Yes NIPDAU N/A for Pkg Type 0 to 70 SN74LS74AN SN74LS74ANE4 Active Production PDIP (N) | 14 25 | TUBE Yes NIPDAU N/A for Pkg Type 0 to 70 SN74LS74AN SN74LS74ANSR Active Production SOP (NS) | 14 2000 | LARGE T&R Yes NIPDAU Level-1-260C-UNLIM 0 to 70 74LS74A SN74LS74ANSR Active Production SOP (NS) | 14 2000 | LARGE T&R Yes NIPDAU Level-1-260C-UNLIM 0 to 70 74LS74A SN74LS74ANSR.A Active Production SOP (NS) | 14 2000 | LARGE T&R Yes NIPDAU Level-1-260C-UNLIM 0 to 70 74LS74A SN74LS74ANSR.A Active Production SOP (NS) | 14 2000 | LARGE T&R Yes NIPDAU Level-1-260C-UNLIM 0 to 70 74LS74A SN74LS74ANSRG4 Active Production SOP (NS) | 14 2000 | LARGE T&R Yes NIPDAU Level-1-260C-UNLIM 0 to 70 74LS74A SN74LS74ANSRG4 Active Production SOP (NS) | 14 2000 | LARGE T&R Yes NIPDAU Level-1-260C-UNLIM 0 to 70 74LS74A SN74S74D Active Production SOIC (D) | 14 50 | TUBE Yes NIPDAU Level-1-260C-UNLIM 0 to 70 S74 SN74S74D Active Production SOIC (D) | 14 50 | TUBE Yes NIPDAU Level-1-260C-UNLIM 0 to 70 S74 SN74S74D.A Active Production SOIC (D) | 14 50 | TUBE Yes NIPDAU Level-1-260C-UNLIM 0 to 70 S74 SN74S74D.A Active Production SOIC (D) | 14 50 | TUBE Yes NIPDAU Level-1-260C-UNLIM 0 to 70 S74 SN74S74N Active Production PDIP (N) | 14 25 | TUBE Yes NIPDAU N/A for Pkg Type 0 to 70 SN74S74N SN74S74N Active Production PDIP (N) | 14 25 | TUBE Yes NIPDAU N/A for Pkg Type 0 to 70 SN74S74N SN74S74N.A Active Production PDIP (N) | 14 25 | TUBE Yes NIPDAU N/A for Pkg Type 0 to 70 SN74S74N SN74S74N.A Active Production PDIP (N) | 14 25 | TUBE Yes NIPDAU N/A for Pkg Type 0 to 70 SN74S74N SNJ54LS74AFK Active Production LCCC (FK) | 20 55 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54LS 74AFK SNJ54LS74AFK Active Production LCCC (FK) | 20 55 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54LS 74AFK SNJ54LS74AFK.A Active Production LCCC (FK) | 20 55 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54LS 74AFK SNJ54LS74AFK.A Active Production LCCC (FK) | 20 55 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54LS 74AFK SNJ54LS74AJ Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54LS74AJ Addendum-Page 4",
+      "page": 10,
+      "section": null,
+      "keywords": [
+        "active",
+        "production",
+        "14",
+        "yes",
+        "nipdau",
+        "70",
+        "tube",
+        "type"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 10,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p011.text",
+      "modality": "text",
+      "title": "PACKAGE OPTION ADDENDUM www",
+      "text": "PACKAGE OPTION ADDENDUM www.ti.com 8-Jan-2026 Orderable part number Status (1) Material type (2) Package | Pins Package qty | Carrier RoHS (3) Lead finish/ Ball material (4) MSL rating/ Peak reflow (5) Op temp (°C) Part marking (6) SNJ54LS74AJ Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54LS74AJ SNJ54LS74AJ.A Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54LS74AJ SNJ54LS74AJ.A Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54LS74AJ SNJ54LS74AW Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54LS74AW SNJ54LS74AW Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54LS74AW SNJ54LS74AW.A Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54LS74AW SNJ54LS74AW.A Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54LS74AW SNJ54S74J Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54S74J SNJ54S74J Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54S74J SNJ54S74J.A Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54S74J SNJ54S74J.A Active Production CDIP (J) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54S74J SNJ54S74W Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54S74W SNJ54S74W Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54S74W SNJ54S74W.A Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54S74W SNJ54S74W.A Active Production CFP (W) | 14 25 | TUBE No SNPB N/A for Pkg Type -55 to 125 SNJ54S74W (1) Status: For more details on status, see our product life cycle. (2) Material type: When designated, preproduction parts are prototypes/experimental devices, and are not yet approved or released for full production. Testing and final process, including without limitation quality assurance, reliability performance testing, and/or process qualification, may not yet be complete, and this item is subject to further changes or possible discontinuation. If available for ordering, purchases will be subject to an additional waiver at checkout, and are intended for early internal evaluation purposes only. These items are sold without warranties of any kind. (3) RoHS values: Yes, No, RoHS Exempt. See the TI RoHS Statement for additional information and value definition. (4) Lead finish/Ball material: Parts may have multiple material finish options. Finish options are separated by a vertical ruled line. Lead finish/Ball material values may wrap to two lines if the finish value exceeds the maximum column width. (5) MSL rating/Peak reflow: The moisture sensitivity level ratings and peak solder (reflow) temperatures. In the event that a part has multiple moisture sensitivity ratings, only the lowest level per JEDEC standards is shown. Refer to the shipping label for the actual reflow temperature that will be used to mount the part to the printed circuit board. (6) Part marking: There may be an additional marking, which relates to the logo, the lot trace code information, or the environmental category of the part. Addendum-Page 5",
+      "page": 11,
+      "section": null,
+      "keywords": [
+        "type",
+        "production",
+        "no",
+        "active",
+        "14",
+        "25",
+        "tube",
+        "snpb"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 11,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p012.text",
+      "modality": "text",
+      "title": "PACKAGE OPTION ADDENDUM www",
+      "text": "PACKAGE OPTION ADDENDUM www.ti.com 8-Jan-2026 Multiple part markings will be inside parentheses. Only one part marking contained in parentheses and separated by a \"~\" will appear on a part. If a line is indented then it is a continuation of the previous line and the two combined represent the entire part marking for that device. Important Information and Disclaimer:The information provided on this page represents TI's knowledge and belief as of the date that it is provided. TI bases its knowledge and belief on information provided by third parties, and makes no representation or warranty as to the accuracy of such information. Efforts are underway to better integrate information from third parties. TI has taken and continues to take reasonable steps to provide representative and accurate information but may not have conducted destructive testing or chemical analysis on incoming materials and chemicals. TI and TI suppliers consider certain information to be proprietary, and thus CAS numbers and other limited information may not be available for release. In no event shall TI's liability arising out of such information exceed the total purchase price of the TI part(s) at issue in this document sold by TI to Customer on an annual basis. OTHER QUALIFIED VERSIONS OF SN54LS74A, SN54LS74A-SP, SN54S74, SN74LS74A, SN74S74 : • Catalog : SN74LS74A, SN54LS74A, SN74S74 • Military : SN54LS74A, SN54S74 • Space : SN54LS74A-SP NOTE: Qualified Version Definitions: • Catalog - TI's standard catalog product • Military - QML certified for Military and Defense Applications • Space - Radiation tolerant, ceramic packaging and qualified for use in Space-based application Addendum-Page 6",
+      "page": 12,
+      "section": null,
+      "keywords": [
+        "ti",
+        "information",
+        "part",
+        "sn54ls74a",
+        "provided",
+        "qualified",
+        "catalog",
+        "military"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 12,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p013.text",
+      "modality": "text",
+      "title": "PACKAGE MATERIALS INFORMATION www",
+      "text": "PACKAGE MATERIALS INFORMATION www.ti.com 24-Jul-2025 TAPE AND REEL INFORMATION Reel Width (W1) REEL DIMENSIONS A0B0K0WDimension designed to accommodate the component lengthDimension designed to accommodate the component thicknessOverall width of the carrier tapePitch between successive cavity centersDimension designed to accommodate the component width TAPE DIMENSIONSK0 P1B0WA0Cavity QUADRANT ASSIGNMENTS FOR PIN 1 ORIENTATION IN TAPE Pocket QuadrantsSprocket HolesQ1Q1Q2Q2Q3Q3Q4Q4User Direction of Feed P1ReelDiameter *All dimensions are nominal Device Package Type Package Drawing Pins SPQ Reel Diameter (mm) Reel Width W1 (mm) A0 (mm) B0 (mm) K0 (mm) P1 (mm) W (mm) Pin1 Quadrant SN74LS74ADBR SSOP DB 14 2000 330.0 16.4 8.35 6.6 2.4 12.0 16.0 Q1 SN74LS74ADR SOIC D 14 2500 330.0 16.4 6.5 9.0 2.1 8.0 16.0 Q1 SN74LS74ANSR SOP NS 14 2000 330.0 16.4 8.1 10.4 2.5 12.0 16.0 Q1 Pack Materials-Page 1",
+      "page": 13,
+      "section": null,
+      "keywords": [
+        "mm",
+        "16",
+        "reel",
+        "width",
+        "package",
+        "tape",
+        "designed",
+        "accommodate"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 13,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p014.text",
+      "modality": "text",
+      "title": "PACKAGE MATERIALS INFORMATION www",
+      "text": "PACKAGE MATERIALS INFORMATION www.ti.com 24-Jul-2025 TAPE AND REEL BOX DIMENSIONS Width (mm) W LH *All dimensions are nominal Device Package Type Package Drawing Pins SPQ Length (mm) Width (mm) Height (mm) SN74LS74ADBR SSOP DB 14 2000 353.0 353.0 32.0 SN74LS74ADR SOIC D 14 2500 353.0 353.0 32.0 SN74LS74ANSR SOP NS 14 2000 353.0 353.0 32.0 Pack Materials-Page 2",
+      "page": 14,
+      "section": null,
+      "keywords": [
+        "353",
+        "mm",
+        "package",
+        "14",
+        "32",
+        "materials",
+        "dimensions",
+        "width"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 14,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p015.text",
+      "modality": "text",
+      "title": "PACKAGE MATERIALS INFORMATION www",
+      "text": "PACKAGE MATERIALS INFORMATION www.ti.com 24-Jul-2025 TUBE L - Tube length T - Tube height W - Tube width B - Alignment groove width *All dimensions are nominal Device Package Name Package Type Pins SPQ L (mm) W (mm) T (µm) B (mm) JM38510/07101BDA W CFP 14 25 506.98 26.16 6220 NA JM38510/07101BDA.A W CFP 14 25 506.98 26.16 6220 NA JM38510/30102B2A FK LCCC 20 55 506.98 12.06 2030 NA JM38510/30102B2A.A FK LCCC 20 55 506.98 12.06 2030 NA JM38510/30102BDA W CFP 14 25 506.98 26.16 6220 NA JM38510/30102BDA.A W CFP 14 25 506.98 26.16 6220 NA JM38510/30102SDA W CFP 14 25 506.98 26.16 6220 NA JM38510/30102SDA.A W CFP 14 25 506.98 26.16 6220 NA M38510/07101BDA W CFP 14 25 506.98 26.16 6220 NA M38510/30102B2A FK LCCC 20 55 506.98 12.06 2030 NA M38510/30102BDA W CFP 14 25 506.98 26.16 6220 NA M38510/30102SDA W CFP 14 25 506.98 26.16 6220 NA SN74LS74AN N PDIP 14 25 506 13.97 11230 4.32 SN74LS74AN N PDIP 14 25 506 13.97 11230 4.32 SN74LS74AN.A N PDIP 14 25 506 13.97 11230 4.32 SN74LS74AN.A N PDIP 14 25 506 13.97 11230 4.32 SN74LS74ANE4 N PDIP 14 25 506 13.97 11230 4.32 SN74LS74ANE4 N PDIP 14 25 506 13.97 11230 4.32 SN74S74D D SOIC 14 50 506.6 8 3940 4.32 SN74S74D.A D SOIC 14 50 506.6 8 3940 4.32 SN74S74N N PDIP 14 25 506 13.97 11230 4.32 SN74S74N N PDIP 14 25 506 13.97 11230 4.32 SN74S74N.A N PDIP 14 25 506 13.97 11230 4.32 SN74S74N.A N PDIP 14 25 506 13.97 11230 4.32 SNJ54LS74AFK FK LCCC 20 55 506.98 12.06 2030 NA SNJ54LS74AFK.A FK LCCC 20 55 506.98 12.06 2030 NA SNJ54LS74AW W CFP 14 25 506.98 26.16 6220 NA SNJ54LS74AW.A W CFP 14 25 506.98 26.16 6220 NA SNJ54S74W W CFP 14 25 506.98 26.16 6220 NA Pack Materials-Page 3",
+      "page": 15,
+      "section": null,
+      "keywords": [
+        "506",
+        "14",
+        "25",
+        "98",
+        "na",
+        "cfp",
+        "26",
+        "16"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 15,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p016.text",
+      "modality": "text",
+      "title": "PACKAGE MATERIALS INFORMATION www",
+      "text": "PACKAGE MATERIALS INFORMATION www.ti.com 24-Jul-2025 Device Package Name Package Type Pins SPQ L (mm) W (mm) T (µm) B (mm) SNJ54S74W.A W CFP 14 25 506.98 26.16 6220 NA Pack Materials-Page 4",
+      "page": 16,
+      "section": null,
+      "keywords": [
+        "package",
+        "mm",
+        "materials",
+        "information",
+        "www",
+        "ti",
+        "com",
+        "24"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 16,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p018.text",
+      "modality": "text",
+      "title": "www",
+      "text": "www.ti.com PACKAGE OUTLINE C 12X 0.65 2X 3.9 14X 0.38 0.22 8.2 7.4 TYP SEATING PLANE 0.05 MIN 0.25 GAGE PLANE 0 -8 2 MAX 0.25 0.09 B 5.6 5.0 NOTE 4 A 6.5 5.9 NOTE 3 0.95 0.55 SSOP - 2 mm max heightDB0014A SMALL OUTLINE PACKAGE 4220762/A 05/2024 1 7 8 14 0.15 C A B PIN 1 INDEX AREA SEE DETAIL A 0.1 C NOTES: 1. All linear dimensions are in millimeters. Any dimensions in parenthesis are for reference only. Dimensioning and tolerancing per ASME Y14.5M. 2. This drawing is subject to change without notice. 3. This dimension does not include mold flash, protrusions, or gate burrs. Mold flash, protrusions, or gate burrs shall not exceed 0.15 mm per side. 4. Reference JEDEC registration MO-150. A 15 DETAIL A TYPICAL SCALE 2.000",
+      "page": 18,
+      "section": null,
+      "keywords": [
+        "15",
+        "package",
+        "outline",
+        "plane",
+        "05",
+        "25",
+        "max",
+        "note"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 18,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p019.text",
+      "modality": "text",
+      "title": "www",
+      "text": "www.ti.com EXAMPLE BOARD LAYOUT 0.05 MAX ALL AROUND 0.05 MIN ALL AROUND 14X (1.85) 14X (0.45) 12X (0.65) (7) (R0.05) TYP SSOP - 2 mm max heightDB0014A SMALL OUTLINE PACKAGE 4220762/A 05/2024 NOTES: (continued) 5. Publication IPC-7351 may have alternate designs. 6. Solder mask tolerances between and around signal pads can vary based on board fabrication site. LAND PATTERN EXAMPLE EXPOSED METAL SHOWN SCALE: 10X SYMM SYMM 1 7 8 14 15.000 METALSOLDER MASK OPENING METAL UNDER SOLDER MASK SOLDER MASK OPENING EXPOSED METALEXPOSED METAL SOLDER MASK DETAILS NON-SOLDER MASK DEFINED (PREFERRED) SOLDER MASK DEFINED",
+      "page": 19,
+      "section": null,
+      "keywords": [
+        "mask",
+        "solder",
+        "05",
+        "around",
+        "metal",
+        "example",
+        "board",
+        "max"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 19,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p020.text",
+      "modality": "text",
+      "title": "www",
+      "text": "www.ti.com EXAMPLE STENCIL DESIGN 14X (1.85) 14X (0.45) 12X (0.65) (7) (R0.05) TYP SSOP - 2 mm max heightDB0014A SMALL OUTLINE PACKAGE 4220762/A 05/2024 NOTES: (continued) 7. Laser cutting apertures with trapezoidal walls and rounded corners may offer better paste release. IPC-7525 may have alternate design recommendations. 8. Board assembly site may have different recommendations for stencil design. SOLDER PASTE EXAMPLE BASED ON 0.125 mm THICK STENCIL SCALE: 10X SYMM SYMM 1 7 8 14",
+      "page": 20,
+      "section": null,
+      "keywords": [
+        "stencil",
+        "design",
+        "may",
+        "example",
+        "14x",
+        "05",
+        "mm",
+        "paste"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 20,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p022.text",
+      "modality": "text",
+      "title": "www",
+      "text": "www.ti.com PACKAGE OUTLINE C TYP6.2 5.8 1.75 MAX 12X 1.27 14X 0.51 0.31 2X 7.62 TYP0.25 0.13 0 - 8 0.25 0.10 0.25 GAGE PLANE 1.27 0.40 A NOTE 3 8.75 8.55 B NOTE 4 4.0 3.8 4220718/A 09/2016 SOIC - 1.75 mm max heightD0014A SMALL OUTLINE INTEGRATED CIRCUIT NOTES: 1. All linear dimensions are in millimeters. Dimensions in parenthesis are for reference only. Dimensioning and tolerancing per ASME Y14.5M. 2. This drawing is subject to change without notice. 3. This dimension does not include mold flash, protrusions, or gate burrs. Mold flash, protrusions, or gate burrs shall not exceed 0.15 mm, per side. 4. This dimension does not include interlead flash. Interlead flash shall not exceed 0.43 mm, per side. 5. Reference JEDEC registration MS-012, variation AB. 1 14 0.25 C A B 8 7 PIN 1 ID AREA SEATING PLANE 0.1 C SEE DETAIL A DETAIL A TYPICAL SCALE 1.800",
+      "page": 22,
+      "section": null,
+      "keywords": [
+        "25",
+        "not",
+        "flash",
+        "75",
+        "mm",
+        "per",
+        "outline",
+        "max"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 22,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p023.text",
+      "modality": "text",
+      "title": "www",
+      "text": "www.ti.com EXAMPLE BOARD LAYOUT (5.4) 0.07 MAX ALL AROUND 0.07 MIN ALL AROUND 14X (1.55) 14X (0.6) 12X (1.27) (R0.05) TYP 4220718/A 09/2016 SOIC - 1.75 mm max heightD0014A SMALL OUTLINE INTEGRATED CIRCUIT SYMM SYMM LAND PATTERN EXAMPLE SCALE:8X 1 7 8 14 NOTES: (continued) 6. Publication IPC-7351 may have alternate designs. 7. Solder mask tolerances between and around signal pads can vary based on board fabrication site. METALSOLDER MASK OPENING NON SOLDER MASK DEFINED SOLDER MASK DETAILS SOLDER MASK OPENING METAL UNDER SOLDER MASK SOLDER MASK DEFINED",
+      "page": 23,
+      "section": null,
+      "keywords": [
+        "mask",
+        "solder",
+        "around",
+        "example",
+        "board",
+        "07",
+        "max",
+        "all"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 23,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p024.text",
+      "modality": "text",
+      "title": "www",
+      "text": "www.ti.com EXAMPLE STENCIL DESIGN (5.4) 12X (1.27) 14X (0.6) 14X (1.55) 4220718/A 09/2016 SOIC - 1.75 mm max heightD0014A SMALL OUTLINE INTEGRATED CIRCUIT NOTES: (continued) 8. Laser cutting apertures with trapezoidal walls and rounded corners may offer better paste release. IPC-7525 may have alternate design recommendations. 9. Board assembly site may have different recommendations for stencil design. SYMM SYMM 1 7 8 14 SOLDER PASTE EXAMPLE BASED ON 0.125 mm THICK STENCIL SCALE:8X",
+      "page": 24,
+      "section": null,
+      "keywords": [
+        "stencil",
+        "design",
+        "may",
+        "example",
+        "14x",
+        "mm",
+        "paste",
+        "have"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 24,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p026.text",
+      "modality": "text",
+      "title": "www",
+      "text": "www.ti.com GENERIC PACKAGE VIEW This image is a representation of the package family, actual package may vary. Refer to the product data sheet for package details. LCCC - 2.03 mm max heightFK 20 LEADLESS CERAMIC CHIP CARRIER8.89 x 8.89, 1.27 mm pitch 4229370\\/A\\",
+      "page": 26,
+      "section": null,
+      "keywords": [
+        "package",
+        "mm",
+        "89",
+        "www",
+        "ti",
+        "com",
+        "generic",
+        "view"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 26,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p028.text",
+      "modality": "text",
+      "title": "www",
+      "text": "www.ti.com PACKAGE OUTLINE C 14X .008-.014 [0.2-0.36]TYP -150 AT GAGE PLANE -.314 .308 -7.97 7.83 [ ] 14X -.026 .014 -0.66 0.36 [ ]14X -.065 .045 -1.65 1.15 [ ] .2 MAX TYP [5.08] .13 MIN TYP [3.3] TYP-.060 .015 -1.52 0.38 [ ] 4X .005 MIN [0.13] 12X .100 [2.54] .015 GAGE PLANE [0.38] A -.785 .754 -19.9419.15 [ ] B -.283 .245 -7.19 6.22 [ ] CDIP - 5.08 mm max heightJ0014A CERAMIC DUAL IN LINE PACKAGE 4214771/A 05/2017 NOTES: 1. All controlling linear dimensions are in inches. Dimensions in brackets are in millimeters. Any dimension in brackets or parenthesis are for reference only. Dimensioning and tolerancing per ASME Y14.5M. 2. This drawing is subject to change without notice. 3. This package is hermitically sealed with a ceramic lid using glass frit. 4. Index point is provided on cap for terminal identification only and on press ceramic glass frit seal only. 5. Falls within MIL-STD-1835 and GDIP1-T14. 7 8 14 1 PIN 1 ID (OPTIONAL) SCALE 0.900 SEATING PLANE .010 [0.25] C A B",
+      "page": 28,
+      "section": null,
+      "keywords": [
+        "typ",
+        "package",
+        "14x",
+        "plane",
+        "ceramic",
+        "only",
+        "014",
+        "36"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 28,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p029.text",
+      "modality": "text",
+      "title": "www",
+      "text": "www.ti.com EXAMPLE BOARD LAYOUT ALL AROUND [0.05] MAX .002 .002 MAX [0.05] ALL AROUND SOLDER MASK OPENING METAL (.063) [1.6] (R.002 ) TYP [0.05] 14X ( .039) [1] ( .063) [1.6] 12X (.100 ) [2.54] (.300 ) TYP [7.62] CDIP - 5.08 mm max heightJ0014A CERAMIC DUAL IN LINE PACKAGE 4214771/A 05/2017 LAND PATTERN EXAMPLE NON-SOLDER MASK DEFINED SCALE: 5X SEE DETAIL A SEE DETAIL B SYMM SYMM 1 7 8 14 DETAIL A SCALE: 15X SOLDER MASK OPENING METAL DETAIL B 13X, SCALE: 15X",
+      "page": 29,
+      "section": null,
+      "keywords": [
+        "05",
+        "detail",
+        "max",
+        "002",
+        "solder",
+        "mask",
+        "scale",
+        "example"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 29,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "sn74ls74a.p030.text",
+      "modality": "text",
+      "title": "IMPORTANT NOTICE AND DISCLAIMER TI PROVIDES TECHNICAL AND RELIABILITY DATA (INCL",
+      "text": "IMPORTANT NOTICE AND DISCLAIMER TI PROVIDES TECHNICAL AND RELIABILITY DATA (INCLUDING DATASHEETS), DESIGN RESOURCES (INCLUDING REFERENCE DESIGNS), APPLICATION OR OTHER DESIGN ADVICE, WEB TOOLS, SAFETY INFORMATION, AND OTHER RESOURCES “AS IS” AND WITH ALL FAULTS, AND DISCLAIMS ALL WARRANTIES, EXPRESS AND IMPLIED, INCLUDING WITHOUT LIMITATION ANY IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE OR NON-INFRINGEMENT OF THIRD PARTY INTELLECTUAL PROPERTY RIGHTS. These resources are intended for skilled developers designing with TI products. You are solely responsible for (1) selecting the appropriate TI products for your application, (2) designing, validating and testing your application, and (3) ensuring your application meets applicable standards, and any other safety, security, regulatory or other requirements. These resources are subject to change without notice. TI grants you permission to use these resources only for development of an application that uses the TI products described in the resource. Other reproduction and display of these resources is prohibited. No license is granted to any other TI intellectual property right or to any third party intellectual property right. TI disclaims responsibility for, and you fully indemnify TI and its representatives against any claims, damages, costs, losses, and liabilities arising out of your use of these resources. TI’s products are provided subject to TI’s Terms of Sale, TI’s General Quality Guidelines, or other applicable terms available either on ti.com or provided in conjunction with such TI products. TI’s provision of these resources does not expand or otherwise alter TI’s applicable warranties or warranty disclaimers for TI products. Unless TI explicitly designates a product as custom or customer-specified, TI products are standard, catalog, general purpose devices. TI objects to and rejects any additional or different terms you may propose. IMPORTANT NOTICE Copyright © 2026, Texas Instruments Incorporated Last updated 10/2025",
+      "page": 30,
+      "section": null,
+      "keywords": [
+        "ti",
+        "resources",
+        "other",
+        "products",
+        "any",
+        "these",
+        "application",
+        "you"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 30,
+        "backend": "pypdf"
+      }
+    }
+  ]
+}

@@ -258,11 +258,34 @@ Datasheet 检索从“PDF 全文 + 本地规则 fallback”升级为“多模态
 - **mrag_pack 版本契约**：`MragService.build_pack(..., retrieved=...)` 在带 `datasheet_chunks / figures / tables` 时输出 `pack_version="mrag_pack_v2"` + 顶层 `retrieved`；未传或为空仍输出 v1，旧 VLM/前端无感知。
 - **Verifier 强约束**：`verify_draft_answer` 新增 `tool_results` 可选入参；当 `datasheet_lookup_tool` 命中 chunk 路径，回答必须引用至少一个 `chunk_id`；走 `local_fallback` 时必须引用至少一个 `rule_id`。
 
-### 接入未来的 MinerU / Magic-PDF 解析
+### Build-time ingest 流水线（Phase 2 已落地）
 
-- 板上 runtime **不解析 PDF**：所有 PDF 由开发者预先上传，在开发机 / CI 用 MinerU 等工具跑一次,产出严格匹配 `DatasheetDocument` schema 的 JSON 与资产文件,提交进 `knowledge/datasheets/`。
-- `pyproject.toml` 通过 optional extras 隔离 build-time（MinerU、PaddleOCR/RapidOCR 等）与 runtime（仅 Pydantic + 可选 OpenVINO embedding）依赖，镜像打包时只装 runtime 集合。
-- `document_id` 是稳定主键，重新解析时同名覆盖即可；板上代码契约不变。
+`scripts/ingest_datasheets.py` 把 PDF 解析成 `DatasheetDocument` JSON,**完全离线**,不上板。三个 backend 按优先级决起来用:
+
+1. **`mineru`** — 完整多模态 parse（text / table / figure / formula / layout），需 `pip install '.[ingest]'` 并下载模型权重。
+2. **`magic_pdf`** — 同一项目早期 API，兼容适配,代码已写好。
+3. **`pypdf`** — 仅文本 fallback，runtime 已装,无外网下载、无 GPU。今天用它把 `/knowledge_base/` 三个 PDF 跑出真实文本 chunks。
+
+CLI 示例:
+```bash
+.venv/bin/python scripts/ingest_datasheets.py \
+  --pdf knowledge_base/C695838_555定时器-计时器_NE555DR_规格书_WJ1799212.PDF \
+  --document-id ne555 \
+  --title "NE555 单路定时器" \
+  --part-numbers NE555 NE555DR 555 \
+  --backend pypdf \
+  --out knowledge/datasheets/ne555.json
+```
+
+合并语义(默认 `--overwrite` 关):
+- 抽取出的 text chunks **覆盖**旧 text chunks。
+- figure / table / schematic / waveform 等非 text chunks **保留**——Phase 1 手写的占位资产一直在,直到 MinerU 真跑出来才被替换。
+- document-level metadata（title / part_numbers / source_path）优先用 CLI 参数,空则 fall back 到已存在 JSON。
+
+边界条件:
+- pypdf 对子集 CID / glyph-encoded PDF 无能为力(例如 SN74LS74A 前 6 页是 `/C0083/C0078/...`)。`PypdfBackend` 检测到这种 garbage 会跳过这些页;全部 garbage 时直接抛错并提示用 `--backend mineru`。
+- 板上 runtime 永远不装 MinerU/Magic-PDF/PaddleOCR/PDF 解析库。`pyproject.toml` 的 `ingest` extras 只在开发机/CI 装,镜像打包必须排除。
+- `document_id` 是稳定主键,重新解析时同名覆盖即可,板上代码契约不变。
 
 ### 路由
 

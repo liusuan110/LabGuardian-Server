@@ -1,19 +1,13 @@
 {
   "document_id": "lm324",
   "title": "LM324 四运算放大器",
-  "part_numbers": ["LM324", "LM324N", "LM324A"],
+  "part_numbers": [
+    "LM324",
+    "LM324N",
+    "LM324A"
+  ],
   "source_path": "knowledge_base/C351427_运算放大器_LM324_规格书_WJ253014.PDF",
   "chunks": [
-    {
-      "chunk_id": "lm324.supply.text.1",
-      "modality": "text",
-      "title": "LM324 电源与共模输入范围",
-      "text": "LM324 支持单电源 3V~32V 或双电源 ±1.5V~±16V。输入共模电压范围包括负电源轨（V- 至 V+-1.5V），因此可用于单电源、信号靠近地的应用。最大输出摆幅在轻载下约为 V- 到 V+-1.5V。",
-      "page": 3,
-      "section": "Electrical Characteristics",
-      "keywords": ["LM324", "运放", "op-amp", "供电", "电源", "共模", "单电源"],
-      "source_ref": {"page": 3}
-    },
     {
       "chunk_id": "lm324.pinout.schematic.1",
       "modality": "schematic",
@@ -21,9 +15,136 @@
       "text": "LM324 内部集成 4 个独立运算放大器，共用 VCC（引脚 4）和 GND（引脚 11）。引脚 1/2/3、5/6/7、8/9/10、12/13/14 分别为四路运放的 OUT/IN-/IN+。",
       "page": 2,
       "section": "Pin Configuration",
-      "keywords": ["LM324", "运放", "引脚", "schematic", "四运放"],
+      "keywords": [
+        "LM324",
+        "运放",
+        "引脚",
+        "schematic",
+        "四运放"
+      ],
       "asset_path": "knowledge/datasheets/assets/lm324/internal.png",
-      "source_ref": {"page": 2, "figure_id": "fig_internal"}
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 2,
+        "figure_id": "fig_internal"
+      }
+    },
+    {
+      "chunk_id": "lm324.p001.text",
+      "modality": "text",
+      "title": "作音调均衡网络，也用于其他场合",
+      "text": "作音调均衡网络，也用于其他场合。 四运放集成电路 概述： 本电路为高性能、具有四个独立的运算放大 器，内含相位补偿电路，适用于收录机和音调系统 主要特点：  无需外接相位补偿电路  电源电压范围宽：单电源时，Vcc=3~30V，双 电源时， Vcc=±1.5V~15V  功耗电流小:Icc=0.6mA（典型）（RL=∞ ）  输入电压范围可接近地电平 SOP14 内部电路图 原理简介 LM324 由四个完全相同的运算放大器 组成，单元电路如图所示,其工作原理简要说 明如下：输入信号加到 T 1 、T 4 基极，经差分 放大后；T 8 、T 9于 复合放大构成中间级；输出 级由 T 10 ~T 13 组成。其中 T 12 为保护管，当输出 电流过大时，R 上压降增大使 T 12 饱和导通， T 12 集电极电位下降，接近 1/2Vcc，使得推挽 管T 10 、T 11 和T 13 截止，从而起到保护作用。 电容 C 为相位补偿电容。 引出端功能符号 引出端序号 功 能 符 号 引出端序号 功 能 符 号 1 输出 1 OUT1 8 输出 3 OUT3 2 反向输入 1 IN- （1） 9 反向输入 3 IN- （3） 3 正向输入 1 IN+ （2） 10 正向输入 3 IN+ （3） 4 电源 Vcc 11 地 GND 5 正向输入 2 IN+ （2） 12 正向输入 4 IN+ （4） 6 反向输入 2 IN- （2） 13 反向输入 4 IN- （4） 7 输出 2 OUT2 14 输出 4 OUT4 T6 T1 T2 T4 T3 T5 T11 T10 T9 T8 T7 T13 T12 R Vo V INPUT Vcc IN- V IN+ LM324 2016-5-6 - 1 -- 14 1",
+      "page": 1,
+      "section": null,
+      "keywords": [
+        "vcc",
+        "12",
+        "10",
+        "13",
+        "lm324",
+        "11",
+        "14",
+        "30v"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 1,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "lm324.p002.text",
+      "modality": "text",
+      "title": "250 nA 5 mV 极限值 （绝对最大额定值，若无其它规定，Tamb=25℃） 参 数 符 号 测 试 条 件 额 定 值 单 位 电源电压 Vcc 32 ",
+      "text": "250 nA 5 mV 极限值 （绝对最大额定值，若无其它规定，Tamb=25℃） 参 数 符 号 测 试 条 件 额 定 值 单 位 电源电压 Vcc 32 V 差动输入电压 V ID 32 V 最大输入电压 V IN -0.3~32 V 允许功耗 P D 400 mW 工作温度 Topr 0~+70 ℃ 贮存温度 Tstg -55~+125 ℃ 电特性 （若无其它规定，Vcc=5V，Tamb=25℃） 参数 符号 测试条件 最小植 典型值 最大值 单位 失调输入电压 V IO 输入失调电流 I IO 100 nA 输入偏置电流 I BA Vcc=5V,Vo=1.4V 共模输入电压范围 V ICM 0 Vcc-1.5 V 共模抑制比 K CMR dB 强信号电压增益 G V Vcc=15V ,R L ≥2 kΩ 85 输出电压范围 V o 0 Vcc-1.5 V 电源纹波抑制比 PSRR 67 dB 通 道 分 离 C S f=1kHz~20kHz 120 dB 消耗电流（1） Icc 消耗电流（2） 输出电流（1） Io Vin+=1V ,Vin-=0V 20 输出电流（2） Io Vin+=0V ,Vin-=1V 10 测试原理图 （注：NULL 指零放大器） - + R1 R1 R2 R2 - + C Vcc Vcc Vee +1.4V NULL Vf1 - + R1 R1 R2 R2 - + C Vcc Vcc Vee +1.4V NULL Vf2 R R V i o = V f 1 /（1+R2/R1） I i o = （Vf2-Vf1）/R（1+R2/R1） 输入失调电压 Vio测试图 输入失调电流 Iio 测试图 LM324 2016-5-6 - 2 -- Vcc=5V,Vo=1.4V Vcc=5V,Vo=1.4V -5 Vcc=15V,Vo=1.4V Vcc=5~30V,Vo=1.4V Vcc=32VIcc 0.3 3 mA Vcc=3V 0.2 1.2 mA mA 65 四运放集成电路",
+      "page": 2,
+      "section": null,
+      "keywords": [
+        "vcc",
+        "4v",
+        "r1",
+        "r2",
+        "vo",
+        "5v",
+        "io",
+        "vin"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 2,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "lm324.p003.text",
+      "modality": "text",
+      "title": "- + R1 R1 R2 R2 - + C Vcc Vcc Vee +1",
+      "text": "- + R1 R1 R2 R2 - + C Vcc Vcc Vee +1.4V NULL Vf3 R - + R1 R1 R2 R2 - + C Vcc Vcc Vee +1.4V NULL Vf4 R I BA = （ Vf4-Vf3 ） /2R （ 1+R2/R1 ） 输入偏置电流 I BA 测试图 - + R1 R1 R2 R2 - + C Vcc Vcc Vee NULL Vf5, Vf6 - + R1 R1 R2 R2 - + C Vcc Vcc VeeEk1 NULL Vf7, Vf 8 Ec1 Ec2 Vee RL Ek2 CMR=20log （ Ec1-Ec2 ）（ 1+R2/R1 ） / （ Vf5-Vf6  G v = （ Ek1-Ek2 ）（ 1+R2/R1 ） / （ Vf8-Vf7 ） 共模抑制比 CMR 及共模输入电压范围 V ICM 测试图 电压增益 Gv 测试图 - + R1 R1 R2 R2 - + C Vcc1 Vcc Vee NULL Vf9, Vf10 Vcc2 Vee - + R1 R1 R2 R2 - + C Vcc Vcc Vee NULL Vf11, Vf12 Vee2 Vee1 PSRR（+）=20log（Vcc1-Vcc2）（1+R2/R1）/（Vf9-Vf10） PSRR （-）=20log（Vee1-Vee2）（1+R2/R1）/（Vf11-Vf12 电源纹波抑制比 PSRR 测试图 A Vcc - + Vcc A Vo +1V - + Vcc A Vo +1V 消耗电流 Icc 及输出电流 Io 测试图 LM324 2016-5-6 - 3 -- 四运放集成电路",
+      "page": 3,
+      "section": null,
+      "keywords": [
+        "r1",
+        "r2",
+        "vcc",
+        "vee",
+        "null",
+        "20log",
+        "psrr",
+        "4v"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 3,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "lm324.p004.text",
+      "modality": "text",
+      "title": "S W ： A C s （ A  B ） =20log （ R2*V OA ） / （ R1*V OB ） S W ： B C s （ B  A ） =20",
+      "text": "S W ： A C s （ A  B ） =20log （ R2*V OA ） / （ R1*V OB ） S W ： B C s （ B  A ） =20log （ R2*V OB ） / （ R1*V OA ） 通道分离度 Cs 测试图 应用图 +- IC1 100K 0.033uF 5.6K 1.2K 560pF 68uF 100K +- IC2 100K 4700pF 5.6K 1.2K 560pF 39uF 100K +- IC3 100K 2200pF 5.6K 1.2K 560pF 1uF 100K +- IC4 100K 470pF 5.6K 1.2K 560pF 0.39uF 100K +- IC5 100K 200pF 5.6K 1.2K 560pF 0.1uF 100K 100K + - IC6 1000uF 10uF 6.8K 14.7K 2200pF 4.7K 10uF L M 3 2 4 用于五频率音调控制电路 直流放大器 倒相放大器 矩形波发生器 + - 10K 1M Vin Vo + - 10K 100K 10uF 100K 100K 6.2K 10K Vin Vo + - 100K 10uF 100K 100K Vcc Vo 0.001uF L M 3 2 4 的其它应用 - + Vcc A R1 R2 RL a b Vcc/2 Vcc/2 A B Vo - + Vcc B R1 R2 RL a b Vcc/2 Vcc/2 C Vin LM324 2016-5-6 - 4 -- 四运放集成电路",
+      "page": 4,
+      "section": null,
+      "keywords": [
+        "100k",
+        "vcc",
+        "2k",
+        "6k",
+        "560pf",
+        "r2",
+        "r1",
+        "10uf"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 4,
+        "backend": "pypdf"
+      }
+    },
+    {
+      "chunk_id": "lm324.p005.text",
+      "modality": "text",
+      "title": "四运放集成电路",
+      "text": "四运放集成电路",
+      "page": 5,
+      "section": null,
+      "keywords": [],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 5,
+        "backend": "pypdf"
+      }
     }
   ]
 }

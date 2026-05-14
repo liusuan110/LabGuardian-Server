@@ -48,6 +48,15 @@ dev = [
 edge = [
     "openvino-genai>=2025.0.0",
 ]
+# Build-time only — used by scripts/ingest_datasheets.py to parse PDFs into
+# DatasheetDocument JSON on a developer / CI machine. NEVER install these on
+# the board: MinerU pulls layout/OCR model weights and PyTorch. The runtime
+# only reads the produced JSON + assets, so the on-device container should
+# exclude this extra entirely.
+ingest = [
+    "mineru[core]>=2.0.0; python_version<'3.13'",
+    "pypdf>=4.0",
+]
 
 [build-system]
 requires = ["hatchling"]
