@@ -1210,6 +1210,117 @@ def ensure_circuit_opening(answer: str, evidence: RuntimeEvidence) -> str:
     return opening + ("\n" + stripped if stripped else "")
 
 
+def _datasheet_hits_from(tool_results: list[ToolResult]) -> tuple[ToolResult | None, list[dict[str, Any]]]:
+    """Return (datasheet_tool_result, hits) when datasheet_lookup_tool produced
+    chunk-shaped hits this turn. Empty list when only `local_fallback` rules
+    fired or the tool wasn't called.
+    """
+    for result in tool_results:
+        if result.tool_name != "datasheet_lookup_tool":
+            continue
+        payload = result.payload or {}
+        provider = str(payload.get("provider") or "")
+        hits = payload.get("hits") or []
+        if provider in {"local_datasheet_v2", "kb_retrieval"} and isinstance(hits, list) and hits:
+            return result, [h for h in hits if isinstance(h, dict)]
+    return None, []
+
+
+def _fallback_rules_from(tool_results: list[ToolResult]) -> tuple[ToolResult | None, list[dict[str, Any]]]:
+    for result in tool_results:
+        if result.tool_name != "datasheet_lookup_tool":
+            continue
+        payload = result.payload or {}
+        if str(payload.get("provider") or "") != "local_fallback":
+            continue
+        rules = payload.get("structured_rules") or []
+        if isinstance(rules, list) and rules:
+            return result, [r for r in rules if isinstance(r, dict)]
+    return None, []
+
+
+def build_datasheet_answer(
+    *,
+    evidence: RuntimeEvidence,
+    context_pack: ContextPack,
+    tool_results: list[ToolResult],
+    user_message: str,
+) -> str | None:
+    """Render a chip-spec answer directly from datasheet_lookup_tool hits.
+
+    Phase 5 design — chip-parameter questions do NOT go through any LLM. The
+    answer is assembled deterministically from the retrieved chunks so the
+    verifier's chunk_id citation requirement is trivially satisfied and the
+    user sees the exact text we retrieved. Returns None when no datasheet
+    evidence is available (caller falls back to the regular diagnostic
+    template).
+    """
+
+    ds_result, hits = _datasheet_hits_from(tool_results)
+    fb_result, rules = _fallback_rules_from(tool_results)
+    if ds_result is None and fb_result is None:
+        return None
+
+    parts: list[str] = []
+    if ds_result is not None and hits:
+        provider = ds_result.payload.get("provider", "")
+        first_doc = str(hits[0].get("document_id") or "datasheet")
+        parts.append(f"已从本地 datasheet 检索到 {len(hits)} 段相关内容（{first_doc}）：")
+
+        # Cap at top 3 hits — keep the answer scannable. Each entry quotes
+        # the chunk_id so the verifier passes and the student can audit.
+        for idx, hit in enumerate(hits[:3], start=1):
+            title = str(hit.get("title") or hit.get("document_id") or "datasheet").strip()
+            modality = str(hit.get("modality") or "text")
+            page = hit.get("page")
+            page_label = f"p{page}" if isinstance(page, int) else ""
+            chunk_id = str(hit.get("chunk_id") or "")
+            snippet = str(hit.get("snippet") or "").strip()
+            if len(snippet) > 280:
+                snippet = snippet[:277] + "..."
+            tag = f"[{modality}]" if modality and modality != "text" else ""
+            header = " ".join(p for p in (f"{idx}.", title, page_label, tag) if p)
+            parts.append(header)
+            if snippet:
+                parts.append(snippet)
+            if chunk_id:
+                parts.append(f"引用：{chunk_id}")
+
+        # Surface asset/table when present so a downstream UI can render them.
+        asset_lines: list[str] = []
+        for hit in hits[:3]:
+            asset = hit.get("asset_path")
+            if asset and isinstance(asset, str):
+                asset_lines.append(f"参考资产：{asset}")
+            table_html = hit.get("table_html")
+            if table_html and isinstance(table_html, str):
+                asset_lines.append("（命中数据包含结构化表格，详见 chunk）")
+        if asset_lines:
+            parts.append("")
+            parts.extend(asset_lines[:3])
+
+        provider_label = "本地结构化 datasheet" if provider == "local_datasheet_v2" else "PDF 知识库"
+        parts.append("")
+        parts.append(f"知识来源：{provider_label}（无 LLM 合成，直接呈现检索片段）。")
+
+    if fb_result is not None and rules and not hits:
+        # Rule-based fallback path — no chunks, just deterministic safety /
+        # pin rules with rule_id citations the verifier accepts.
+        comp_type = str(fb_result.payload.get("component_type") or "未知元件")
+        parts.append(f"未找到该器件的具体 datasheet，按 {comp_type} 通用规则回答：")
+        for idx, rule in enumerate(rules[:5], start=1):
+            text = str(rule.get("text") or "").strip()
+            rule_id = str(rule.get("rule_id") or "")
+            line = f"{idx}. {text}" if text else f"{idx}. ({rule_id})"
+            if rule_id and rule_id not in line:
+                line += f"（依据 {rule_id}）"
+            parts.append(line)
+        parts.append("")
+        parts.append("知识来源：本地通用规则库（无 datasheet 命中，无 LLM 合成）。")
+
+    return "\n".join(parts).strip() or None
+
+
 def build_diagnostic_template_answer(
     *,
     station_id: str,
@@ -1220,6 +1331,19 @@ def build_diagnostic_template_answer(
     tool_results: list[ToolResult],
 ) -> str:
     """基于用户意图生成自然语言回答，不暴露 system prompt / raw JSON。"""
+    # Datasheet path: if the SemanticRouter enabled datasheet_lookup_tool and
+    # the tool produced chunk hits or rule fallback, answer directly from the
+    # retrieved evidence — no LLM. This is the only "no-LLM" answer path; the
+    # diagnostic templates below still drive everything else.
+    datasheet_answer = build_datasheet_answer(
+        evidence=evidence,
+        context_pack=context_pack,
+        tool_results=tool_results,
+        user_message=user_message or query,
+    )
+    if datasheet_answer:
+        return _with_diagnostic_anchors(datasheet_answer, evidence)
+
     message = user_message or query
     target_component = _extract_target_component(message, evidence)
     if target_component and _looks_like_fix_or_wiring_question(message):

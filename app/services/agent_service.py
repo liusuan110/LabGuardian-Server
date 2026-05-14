@@ -20,6 +20,7 @@ from app.agent.answering import (
     build_concept_answer,
     build_concept_citations,
     build_concept_evidence,
+    build_datasheet_answer,
     build_diagnostic_citations,
     build_diagnostic_evidence,
     build_lab_guidance_answer,
@@ -32,8 +33,10 @@ from app.agent.graph import run_diagnostic_graph
 from app.agent.intent import classify_intent
 from app.agent.llm import get_llm_provider
 from app.agent.tools import (
+    DatasheetLookupInput,
     TeachingConceptLookupInput,
     ToolResult,
+    datasheet_lookup_tool,
     teaching_concept_lookup_tool,
 )
 from app.agent.verification import verify_draft_answer
@@ -204,39 +207,6 @@ def _looks_like_current_context_follow_up(question: str) -> bool:
         "怎么处理",
     )
     return any(phrase in msg for phrase in follow_up_phrases)
-
-
-def _looks_like_datasheet_question(question: str) -> bool:
-    msg = (question or "").strip().lower()
-    if not msg:
-        return False
-    tokens = (
-        "datasheet",
-        "数据手册",
-        "器件手册",
-        "手册",
-        "规格书",
-        "pdf",
-        ".pdf",
-        "检索",
-        "查找",
-        "pinout",
-        "引脚",
-        "脚位",
-        "pin ",
-        "pin:",
-        "管脚",
-        "电气特性",
-        "推荐工作条件",
-        "绝对最大",
-        "absolute maximum",
-        "typical",
-        "maximum ratings",
-        "electrical characteristics",
-    )
-    has_token = any(token in msg for token in tokens)
-    has_known_part = any(part in msg for part in ("ne555", "lm324", "74ls74", "54ls74", "xd74ls74"))
-    return has_token and (has_known_part or _is_circuit_related_question(question))
 
 
 def _build_concept_not_found_prompt(*, question: str, evidence: Any) -> str:
@@ -422,13 +392,10 @@ class AgentService:
                 stations={request.station_id: self._station_payload(classroom, request)},
                 error_tag_service=ErrorTagService(),
             )
-            if _looks_like_datasheet_question(question):
-                return self._run_datasheet_kb_job(
-                    job_id=job_id,
-                    request=request,
-                    evidence_contract=evidence_contract,
-                    created_at=created_at,
-                )
+            # Datasheet questions now route through the diagnostic ReAct graph
+            # like every other query — Phase 4 SemanticRouter decides whether
+            # to enable datasheet_lookup_tool, and the answering node renders
+            # the chunk hits deterministically (no LLM call).
             intent = classify_intent(
                 question,
                 evidence=evidence_contract,
@@ -555,13 +522,6 @@ class AgentService:
         evidence_contract.history_summary = history_summary
 
         question = request.user_message or request.query
-        if question and _looks_like_datasheet_question(question):
-            return self._run_datasheet_kb_job(
-                job_id=job_id,
-                request=request,
-                evidence_contract=evidence_contract,
-                created_at=created_at,
-            )
         if (
             question
             and not _is_agent_identity_question(question)
@@ -732,54 +692,6 @@ class AgentService:
             station_data = {"station_id": request.station_id}
         return station_data
 
-    def _run_datasheet_kb_job(
-        self,
-        *,
-        job_id: str,
-        request: AngntAskRequest,
-        evidence_contract: Any,
-        created_at: float,
-    ) -> AngntJobResult:
-        question = request.user_message or request.query
-        top_k = min(int(request.top_k or getattr(settings, "KB_DEFAULT_TOP_K", 6)), 8)
-        question_l = question.lower()
-        if any(token in question_l for token in ("引脚", "脚位", "管脚", "pinout", "pin ", "pin:")):
-            top_k = min(top_k, 3)
-        answer, citations, evidence_items, used = self._rag_service.answer_with_kb(
-            query=question,
-            top_k=top_k,
-        )
-        actions = self._build_actions(
-            risk_level=evidence_contract.risk_level,
-            diagnostics=evidence_contract.diagnostics,
-        )
-        actual_provider, actual_model = self._actual_llm_usage()
-        if used:
-            actual_provider = "kb_retrieval"
-            actual_model = "local_datasheet_pdf"
-        return AngntJobResult(
-            job_id=job_id,
-            station_id=request.station_id,
-            mode=request.mode,
-            answer=answer,
-            actual_llm_provider=actual_provider,
-            actual_llm_model=actual_model,
-            follow_up_suggestions=[
-                "你要我继续查 NE555 的哪个引脚功能，比如 RESET、TRIG、THRES 或 DISCH？",
-                "如果你手上是 DIP-8 或 SOIC-8，我可以按封装方向帮你对照每个脚。",
-                "把你当前电路里 NE555 接到哪些元件说一下，我可以结合连接检查有没有接反或漏接。",
-            ],
-            citations=citations,
-            evidence=evidence_items,
-            actions=actions,
-            used_retrieval=used,
-            created_at=created_at,
-            debug=AngntChatDebug(
-                job_id=job_id,
-                used_context_refs=[c.source_id for c in citations],
-            ),
-        )
-
     def _augment_diagnostic_evidence_with_intent(
         self,
         *,
@@ -847,6 +759,28 @@ class AgentService:
             concept_payload = tool_result.payload.get("concept") or {}
             concept = _ConceptPack.model_validate(concept_payload)
 
+        # Phase 5: chip-parameter questions ("NE555 的引脚有哪些") classify as
+        # concept_tutor but have no entry in CONCEPT_LIBRARY. Before falling
+        # through to the LLM "concept-not-found" stub, consult the YAML
+        # SemanticRouter; if it picks `datasheet`, run datasheet_lookup_tool
+        # and render the answer deterministically from the chunks — no LLM,
+        # no Chroma, no Ollama. This is the path the deleted outer gate used
+        # to short-circuit (poorly).
+        from app.agent.router import get_router
+
+        router = get_router()
+        datasheet_decision = router.decide("datasheet", question) if router.has_route("datasheet") else None
+        datasheet_tool_result: ToolResult | None = None
+        if (
+            concept is None
+            and datasheet_decision is not None
+            and datasheet_decision.fired
+            and not _is_agent_identity_question(question)
+        ):
+            datasheet_tool_result = datasheet_lookup_tool(
+                DatasheetLookupInput(query=question, error_family="unknown")
+            )
+
         actual_provider, actual_model = self._actual_llm_usage()
         if _is_agent_identity_question(question):
             draft = _agent_identity_answer()
@@ -857,6 +791,22 @@ class AgentService:
                 concept=concept,
                 evidence=evidence_contract,
             )
+        elif datasheet_tool_result is not None:
+            # Direct render from datasheet chunks. No LLM is invoked.
+            tool_results.append(datasheet_tool_result)
+            from app.agent.contracts import ContextPack as _ContextPack
+            ds_pack = _ContextPack(
+                pack_id=f"{request.station_id}:datasheet",
+                error_family="unknown",
+                risk_level=evidence_contract.risk_level,
+            )
+            draft = build_datasheet_answer(
+                evidence=evidence_contract,
+                context_pack=ds_pack,
+                tool_results=[datasheet_tool_result],
+                user_message=question,
+            ) or "未找到该器件的 datasheet 内容。请补充芯片型号或参数关键词。"
+            actual_provider, actual_model = "local_datasheet_kb", "no_llm"
         else:
             if concept is None:
                 draft, actual_provider, actual_model = self._llm_concept_not_found_answer(

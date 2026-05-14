@@ -395,16 +395,25 @@ def test_agent_auto_routes_led_question_to_concept_tutor() -> None:
     assert result.mode == "agent_auto"
 
 
-def test_agent_auto_routes_datasheet_pin_question_to_kb() -> None:
+def test_agent_auto_routes_datasheet_pin_question_to_local_kb() -> None:
+    """Post-Phase-5 contract: chip-parameter questions are answered directly
+    from the local DatasheetKbService (knowledge/datasheets/*.json) without
+    invoking any LLM. The legacy `_FakeDatasheetRagService` mock is no longer
+    consulted because the outer gate + `_run_datasheet_kb_job` are gone."""
+
     classroom = ClassroomState()
     rag = _FakeDatasheetRagService()
     service = AgentService(rag_service=rag)
     result = _submit(service, classroom, mode="agent_auto", query="NE555的引脚有哪些")
 
-    assert result.actual_llm_provider == "kb_retrieval"
-    assert result.used_retrieval
-    assert rag.last_top_k == 3
-    assert result.citations[0].source_type == "datasheet_pdf"
+    # No LLM involved — provider tag is the new local-kb marker.
+    assert result.actual_llm_provider == "local_datasheet_kb"
+    assert result.actual_llm_model == "no_llm"
+    # Legacy answer_with_kb mock should not have been called.
+    assert rag.last_top_k == 0
+    # Answer contains a real chunk_id from knowledge/datasheets/ne555.json.
+    assert "ne555." in result.answer
+    assert "无 LLM 合成" in result.answer
 
 
 def test_agent_auto_routes_rc_question_to_concept_tutor() -> None:
