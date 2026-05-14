@@ -41,12 +41,23 @@ def classify_error_family(evidence: RuntimeEvidence) -> ErrorFamily:
 
 def build_context_pack(evidence: RuntimeEvidence, *, query: str = "", user_message: str = "") -> ContextPack:
     family = classify_error_family(evidence)
+    allow_tools = _allowed_tools_for_family(family)
+    merged_query = (user_message or query or "").strip().lower()
+    if merged_query and _looks_like_datasheet_query(merged_query, evidence):
+        if not any(tool.name == "datasheet_lookup_tool" for tool in allow_tools):
+            allow_tools.append(
+                AllowedTool(
+                    name="datasheet_lookup_tool",
+                    reason="用户在问数据手册/引脚/参数相关问题，允许检索本地 datasheet PDF。",
+                    required=False,
+                )
+            )
     pack = ContextPack(
         pack_id=f"pcm_{family}_v1",
         error_family=family,
         risk_level=evidence.risk_level,
         pushed_facts=_build_pushed_facts(evidence=evidence, family=family, query=query, user_message=user_message),
-        allowed_tools=_allowed_tools_for_family(family),
+        allowed_tools=allow_tools,
         prompt_rules=_prompt_rules_for_family(family),
         citation_requirements=[
             "回答必须引用 validator_report_v2 或 netlist_v2 中的具体证据。",
@@ -58,6 +69,44 @@ def build_context_pack(evidence: RuntimeEvidence, *, query: str = "", user_messa
     )
     pack.metrics = estimate_context_pack_metrics(pack)
     return pack
+
+
+def _looks_like_datasheet_query(msg: str, evidence: RuntimeEvidence) -> bool:
+    tokens = (
+        "datasheet",
+        "数据手册",
+        "器件手册",
+        "规格书",
+        "pdf",
+        ".pdf",
+        "检索",
+        "查找",
+        "pinout",
+        "引脚",
+        "脚位",
+        "管脚",
+        "电气特性",
+        "推荐工作条件",
+        "绝对最大",
+        "maximum ratings",
+        "electrical characteristics",
+    )
+    if not any(token in msg for token in tokens):
+        return False
+    if any(part in msg for part in ("ne555", "lm324", "74ls74", "54ls74", "xd74ls74")):
+        return True
+    for comp in (evidence.netlist_v2 or {}).get("components", []) or []:
+        if not isinstance(comp, dict):
+            continue
+        subtype = str(comp.get("part_subtype") or "").strip().lower()
+        if subtype and subtype in msg:
+            return True
+        meta = comp.get("metadata", {}) if isinstance(comp.get("metadata"), dict) else {}
+        for key in ("part_number", "model", "chip", "ic", "label", "name"):
+            value = str(meta.get(key) or "").strip().lower()
+            if value and value in msg:
+                return True
+    return True
 
 
 def estimate_context_pack_metrics(pack: ContextPack) -> ContextPackMetrics:

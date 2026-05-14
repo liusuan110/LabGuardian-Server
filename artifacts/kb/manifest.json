@@ -1,0 +1,76 @@
+{
+  "docs": [
+    {
+      "doc_id": "32af4a9aae4ea992",
+      "filename": "National -54LS74.pdf",
+      "sha256": "32af4a9aae4ea9924c174985b162c10c7115280fd421440e41001d2b3ad382ec",
+      "page_count": 8,
+      "chunk_count": 12,
+      "created_at": 1778677745.498723
+    },
+    {
+      "doc_id": "a102cf65c29b1364",
+      "filename": "TI-LM324.pdf",
+      "sha256": "a102cf65c29b1364fb85188259d397c43210b6cc2abee0f55d541e9569f21a11",
+      "page_count": 61,
+      "chunk_count": 80,
+      "created_at": 1778677798.297555
+    },
+    {
+      "doc_id": "6a5baecdcfe8ae30",
+      "filename": "TI-NE555.pdf",
+      "sha256": "6a5baecdcfe8ae3095d3eb2b1a67212dee1042a1e569ec956beaa7f801bfe630",
+      "page_count": 37,
+      "chunk_count": 54,
+      "created_at": 1778677810.0426452
+    },
+    {
+      "doc_id": "2a44228615faa701",
+      "filename": "XD74LS74.PDF",
+      "sha256": "2a44228615faa7010118edba7a8c55b498a2f3d1f50134d0562a30e8e52c10a5",
+      "page_count": 5,
+      "chunk_count": 6,
+      "created_at": 1778679056.3253589
+    },
+    {
+      "doc_id": "239ffe7a3952100f",
+      "filename": "ONSEMI-SN74LS74.pdf",
+      "sha256": "239ffe7a3952100fb798e9da25ce1544b8195abd1dd610cd7f6f26564275f160",
+      "page_count": 8,
+      "chunk_count": 12,
+      "created_at": 1778679755.6052577
+    },
+    {
+      "doc_id": "491ea79925c3d6a1",
+      "filename": "HITACHI-74LS74.pdf",
+      "sha256": "491ea79925c3d6a1d2eb60a975e83d67c0c0b3d3503184309d1c0122b6551817",
+      "page_count": 6,
+      "chunk_count": 6,
+      "created_at": 1778680092.0722358
+    },
+    {
+      "doc_id": "f1505f0fdfe5aac5",
+      "filename": "C351427___LM324___WJ253014.PDF",
+      "sha256": "f1505f0fdfe5aac5dc43568e46f74355bd8a5ea4a5a56dcf437185e66ffcd114",
+      "page_count": 5,
+      "chunk_count": 5,
+      "created_at": 1778735083.6057832
+    },
+    {
+      "doc_id": "6c7f3682350bc9ea",
+      "filename": "sn74ls74a.pdf",
+      "sha256": "6c7f3682350bc9ea5cb80214a71de9ad0395fcaacf771ece297c5789aa7084d1",
+      "page_count": 30,
+      "chunk_count": 38,
+      "created_at": 1778735107.894211
+    },
+    {
+      "doc_id": "1909ff7051d988d4",
+      "filename": "C695838_555_-__NE555DR___WJ1799212.PDF",
+      "sha256": "1909ff7051d988d42cdd4c552c02706662d6e3822f595e819e20cb2618d33fcc",
+      "page_count": 24,
+      "chunk_count": 29,
+      "created_at": 1778742989.691088
+    }
+  ]
+}

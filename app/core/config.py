@@ -158,6 +158,9 @@ class Settings(BaseSettings):
     KB_STORAGE_DIR: str = str(PROJECT_ROOT / "artifacts" / "kb")
     KB_COLLECTION: str = "labguardian_kb"
     KB_DEFAULT_TOP_K: int = 6
+    KB_BOOTSTRAP_DIR: str = str(PROJECT_ROOT / "knowledge_base")
+    KB_EMBEDDING_PROVIDER: str = "openai"  # openai | ollama
+    KB_OLLAMA_EMBED_MODEL: str = "nomic-embed-text"
     TEACHING_KB_DIR: str = str(PROJECT_ROOT / "knowledge" / "teaching_scenes")
     FAULT_CASE_KB_DIR: str = str(PROJECT_ROOT / "knowledge" / "fault_cases")
 

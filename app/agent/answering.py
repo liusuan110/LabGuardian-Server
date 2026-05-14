@@ -1356,6 +1356,24 @@ def build_diagnostic_citations(
                 snippet=result.summary[:260],
             )
         )
+        if result.tool_name == "datasheet_lookup_tool":
+            hits = result.payload.get("hits", [])
+            if isinstance(hits, list):
+                for item in hits[:3]:
+                    if not isinstance(item, dict):
+                        continue
+                    title = str(item.get("title") or item.get("filename") or "datasheet").strip()
+                    snippet = str(item.get("snippet") or "").strip()[:260]
+                    source_id = str(item.get("source_id") or title).strip()
+                    if title:
+                        citations.append(
+                            AngntCitation(
+                                source_type="datasheet_pdf",
+                                source_id=source_id,
+                                title=title,
+                                snippet=snippet,
+                            )
+                        )
     return citations
 
 
