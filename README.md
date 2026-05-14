@@ -12,6 +12,24 @@ LabGuardian 的服务器端负责把视觉识别结果转换成可验证、可�
 - [fastapi/full-stack-fastapi-template](https://github.com/fastapi/full-stack-fastapi-template)
 - [GregaVrbancic/fastapi-celery](https://github.com/GregaVrbancic/fastapi-celery)
 
+## 新增：IC8 / IC14 / Potentiometer 检测支持
+
+本次更新集成了专门训练的 YOLOv8 组件检测模型（`models/component/best.pt`），新增三类元件的识别能力：
+
+| 元件 | 类型标识 | 封装 | 置信度（实测） |
+|------|----------|------|----------------|
+| DIP-8 集成电路 | `IC8` | `dip8` | ~0.92 |
+| DIP-14 集成电路 | `IC14` | `dip14` | ~0.95 |
+| 旋转电位器 | `Potentiometer` | `potentiometer_3pin` | ~0.93 |
+
+新模型已通过完整 S1→S5 流水线端到端测试（`POST /api/v1/pipeline/run`），1.2–1.3 秒完成单张推理（CPU，960×960）。
+
+模型权重不入仓库（`.gitignore`），需手动放置到 `models/component/best.pt`，服务启动时自动加载。
+
+详见 [docs/yolo_integration.md](docs/yolo_integration.md)。
+
+---
+
 ## 当前状态
 
 当前仓库已经完成的关键迁移：
@@ -52,6 +70,7 @@ LabGuardian 的服务器端负责把视觉识别结果转换成可验证、可�
 - [pcm-agent-architecture.md](docs/pcm-agent-architecture.md)
 - [vision-stage-contracts.md](docs/vision-stage-contracts.md)
 - [validator-error-codes.md](docs/validator-error-codes.md)
+- [yolo_integration.md](docs/yolo_integration.md) ← 新增 IC8/IC14/Potentiometer 检测集成
 
 ## 架构概览
 

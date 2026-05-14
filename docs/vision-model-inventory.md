@@ -19,31 +19,44 @@ S2: pixel pin -> hole_id mapping
 推荐权重：
 
 ```text
-train_demo/detect_components/weights/best.pt
+models/component/best.pt          ← 当前生效（新）
+train_demo/detect_components/weights/best.pt  ← 旧路径，仍作 fallback
 ```
 
-用途：
+**`models/component/best.pt`（当前主模型）**
 
-- 当前组件检测主模型
 - 模型类型：`DetectionModel`
 - 后端 backend：`yolo_detect_component`
-- 标签体系已经对齐当前后端：
-  - `capacitor_ceramic`
-  - `capacitor_electrolytic`
-  - `diode`
-  - `jumper_wire`
-  - `led`
-  - `resistor`
-  - `transistor_3pin`
+- 文件大小：~6.1 MB
+- 标签体系（含新增类别）：
+  - `IC-8` → `IC8`（DIP-8 封装）**新增**
+  - `IC-14` → `IC14`（DIP-14 封装）**新增**
+  - `potentiometer` → `Potentiometer` **新增**
+  - `capacitor_ceramic` → `CapacitorCeramic`
+  - `capacitor_electrolytic` → `CapacitorElectrolytic`
+  - `diode` → `Diode`
+  - `jumper_wire` → `Wire`
+  - `led` → `LED`
+  - `resistor` → `Resistor`
+  - `transistor_3pin` → `Transistor`
 
-训练表现：
+实测置信度：
 
-- 最好 `Box mAP50-95`: `0.8142`
-- 最后一轮 `Box mAP50-95`: `0.8124`
+- IC14：0.948–0.955
+- IC8：0.918
+- Potentiometer：0.896–0.946
+
+**`train_demo/detect_components/weights/best.pt`（历史旧权重）**
+
+- 模型类型：`DetectionModel`
+- 后端 backend：`yolo_detect_component`
+- 标签体系：不含 IC-8/IC-14/potentiometer
+- 训练表现：最好 `Box mAP50-95`: `0.8142`
+- 状态：保留作 fallback，不再作默认主模型
 
 结论：
 
-- 继续作为 S1 默认组件检测模型。
+- `models/component/best.pt` 为当前 S1 默认检测模型，config.py 自动发现。
 
 ### S1.5 引脚检测
 
