@@ -72,6 +72,7 @@ DEFAULT_COMPONENT_MODEL_PATH = _first_existing_path(
     MODEL_ROOT / "component_detector" / "best.pt",
     MODEL_ROOT / "detect_components" / "best.pt",
     MODEL_ROOT / "detect_components" / "weights" / "best.pt",
+    TRAIN_DEMO_DIR / "detect_components_v2" / "weights" / "best.pt",
     TRAIN_DEMO_DIR / "detect_components" / "weights" / "best.pt",
 )
 # Pin main path uses full-image YOLO-Pose. Do not auto-select legacy ROI weights here.
