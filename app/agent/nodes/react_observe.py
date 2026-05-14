@@ -122,6 +122,8 @@ def _dispatch_tool(tool_name: str, arguments: dict, state: DiagnosticState) -> T
             payload = {
                 "component_id": args.get("component_id", ""),
                 "component_type": args.get("component_type", ""),
+                "part_number": args.get("part_number", ""),
+                "package_type": args.get("package_type", ""),
                 "query": args.get("query", state.query),
                 "error_family": args.get("error_family", state.error_family),
             }

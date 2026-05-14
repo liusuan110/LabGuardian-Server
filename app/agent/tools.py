@@ -6,7 +6,9 @@ from pydantic import BaseModel, Field
 
 from app.agent.concepts import CONCEPT_LIBRARY, lookup_concept
 from app.agent.contracts import RuntimeEvidence
+from app.core.config import settings
 from app.domain.board_schema import BoardSchema
+from app.services.kb_service import KbService
 from app.services.teaching_kb_service import TeachingKbService
 
 
@@ -43,6 +45,8 @@ class SafetyRuleLookupInput(BaseModel):
 class DatasheetLookupInput(BaseModel):
     component_type: str = ""
     component_id: str = ""
+    part_number: str = ""
+    package_type: str = ""
     query: str = ""
     error_family: str = "unknown"
 
@@ -204,33 +208,90 @@ def fault_case_lookup_tool(
 
 def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
     key = _datasheet_key(args.component_type or args.component_id or args.query)
+    query = " ".join(
+        part
+        for part in [args.part_number, args.component_id, args.component_type, args.package_type, args.query]
+        if part
+    ).strip()
+    if not query:
+        query = args.query or args.component_id or args.component_type
+
+    hits: list[dict[str, Any]] = []
+    kb_query_allowed = True
+    if key in LOCAL_DATASHEET_FALLBACKS and not args.part_number:
+        kb_query_allowed = bool(KbService()._chip_hints_from_query(query))
+    if kb_query_allowed:
+        try:
+            kb = KbService()
+            raw_hits = kb.retrieve(query=query, top_k=min(4, max(1, int(getattr(settings, "KB_DEFAULT_TOP_K", 6)))))
+            for hit, _ in raw_hits[:4]:
+                meta = hit.get("metadata", {}) or {}
+                hits.append(
+                    {
+                        "title": hit.get("title") or "",
+                        "snippet": hit.get("snippet") or "",
+                        "filename": meta.get("filename") or meta.get("source") or "",
+                        "page": meta.get("page"),
+                        "score": hit.get("score", 0.0),
+                        "source_id": f'{meta.get("doc_id", "")}:{meta.get("chunk_index", "")}',
+                    }
+                )
+        except Exception:
+            hits = []
+
+    if hits:
+        rules = [
+            f"参考资料：{item.get('title') or item.get('filename') or 'datasheet'}：{str(item.get('snippet') or '').strip()}"
+            for item in hits[:3]
+            if item.get("snippet")
+        ]
+        return ToolResult(
+            tool_name="datasheet_lookup_tool",
+            summary=f"datasheet 检索命中 {len(hits)} 段（{hits[0].get('filename') or 'pdf'}）。",
+            payload={
+                "provider": "kb_retrieval",
+                "component_id": args.component_id,
+                "component_type": args.component_type,
+                "part_number": args.part_number,
+                "package_type": args.package_type,
+                "query": query,
+                "error_family": args.error_family,
+                "hits": hits,
+                "rules": rules[:4],
+            },
+        )
+
     fallback = LOCAL_DATASHEET_FALLBACKS.get(key)
     if fallback is None:
         fallback = {
             "component_type": args.component_type or "unknown",
             "package": "local_fallback_unknown",
-            "pin_rules": ["本地 fallback 未收录该器件，请以实物丝印和课程参考电路为准。"],
+            "pin_rules": ["本地 datasheet 未命中该器件；请以实物丝印和课程参考电路为准。"],
             "safety_rules": ["通电前先确认器件方向、限流条件和电源轨连接。"],
-            "notes": "未访问外部 datasheet，仅返回本地保守规则。",
+            "notes": "未命中本地 PDF；返回保守规则。",
         }
 
+    rules: list[str] = []
+    rules.extend(fallback.get("pin_rules", []))
+    rules.extend(fallback.get("safety_rules", []))
     return ToolResult(
         tool_name="datasheet_lookup_tool",
-        summary=(
-            f"本地 datasheet fallback: {fallback['component_type']} / "
-            f"{fallback['package']}。"
-        ),
+        summary=f"datasheet 未命中 PDF，回退到本地规则：{fallback['component_type']} / {fallback['package']}。",
         payload={
             "provider": "local_fallback",
             "component_id": args.component_id,
             "component_type": fallback["component_type"],
+            "part_number": args.part_number,
+            "package_type": args.package_type,
             "package": fallback["package"],
             "pin_rules": fallback["pin_rules"],
             "safety_rules": fallback["safety_rules"],
             "notes": fallback["notes"],
             "matched_key": key if key in LOCAL_DATASHEET_FALLBACKS else "",
-            "query": args.query,
+            "query": query,
             "error_family": args.error_family,
+            "rules": rules[:6],
+            "hits": [],
         },
     )
 

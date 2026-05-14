@@ -19,6 +19,16 @@ async def list_docs(kb: KbService = Depends(get_kb_service)):
     return kb.list_documents()
 
 
+@router.get("/debug")
+async def debug_kb(kb: KbService = Depends(get_kb_service)):
+    return kb.get_debug_status()
+
+
+@router.get("/embedding-test")
+async def embedding_test(kb: KbService = Depends(get_kb_service)):
+    return kb.test_embeddings(text="NE555 reset pin")
+
+
 @router.post("/upload", response_model=KbDocumentInfo)
 async def upload_pdf(
     file: UploadFile = File(...),
@@ -53,4 +63,3 @@ async def query_kb(
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
-

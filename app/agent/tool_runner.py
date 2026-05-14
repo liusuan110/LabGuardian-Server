@@ -53,11 +53,14 @@ def run_diagnostic_tools(
         )
 
     if "datasheet_lookup_tool" in tool_names:
+        component_id = first_finding.component_id if first_finding else ""
         results.append(
             datasheet_lookup_tool(
                 DatasheetLookupInput(
-                    component_id=first_finding.component_id if first_finding else "",
+                    component_id=component_id,
                     component_type=_component_type_from_evidence(evidence),
+                    part_number=_part_number_from_evidence(evidence, component_id),
+                    package_type=_package_type_from_evidence(evidence, component_id),
                     query=query,
                     error_family=context_pack.error_family,
                 )
@@ -90,6 +93,37 @@ def _component_type_from_evidence(evidence: RuntimeEvidence) -> str:
         component_type = finding.payload.get("component_type")
         if component_type:
             return str(component_type)
+    return ""
+
+
+def _part_number_from_evidence(evidence: RuntimeEvidence, component_id: str) -> str:
+    cid = str(component_id or "").strip()
+    for component in evidence.netlist_v2.get("components", []):
+        if not isinstance(component, dict):
+            continue
+        if cid and str(component.get("component_id") or "").strip() != cid:
+            continue
+        subtype = str(component.get("part_subtype") or "").strip()
+        if subtype:
+            return subtype
+        meta = component.get("metadata", {}) if isinstance(component.get("metadata"), dict) else {}
+        for key in ("part_number", "model", "chip", "ic", "label", "name"):
+            value = str(meta.get(key) or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def _package_type_from_evidence(evidence: RuntimeEvidence, component_id: str) -> str:
+    cid = str(component_id or "").strip()
+    for component in evidence.netlist_v2.get("components", []):
+        if not isinstance(component, dict):
+            continue
+        if cid and str(component.get("component_id") or "").strip() != cid:
+            continue
+        pkg = str(component.get("package_type") or "").strip()
+        if pkg:
+            return pkg
     return ""
 
 

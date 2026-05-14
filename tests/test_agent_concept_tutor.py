@@ -10,7 +10,7 @@ from app.agent.tools import (
     teaching_concept_lookup_tool,
 )
 from app.agent.verification import verify_draft_answer
-from app.schemas.angnt import AngntAskRequest
+from app.schemas.angnt import AngntAskRequest, AngntCitation, AngntEvidence
 from app.services.agent_service import (
     AgentService,
     _build_concept_not_found_prompt,
@@ -22,6 +22,34 @@ from app.services.rag_service import RagService
 
 def _service() -> AgentService:
     return AgentService(rag_service=RagService())
+
+
+class _FakeDatasheetRagService(RagService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.last_top_k = 0
+
+    def answer_with_kb(self, *, query: str, top_k: int):
+        self.last_top_k = top_k
+        return (
+            "NE555 的 DIP-8 引脚为 GND、TRIG、OUT、RESET、VCC、DISCH、THRES、CONT。",
+            [
+                AngntCitation(
+                    source_type="datasheet_pdf",
+                    source_id="fake:pin",
+                    title="NE555 p3",
+                    snippet="pin configuration",
+                )
+            ],
+            [
+                AngntEvidence(
+                    evidence_type="datasheet_chunk",
+                    source_id="fake:pin",
+                    summary="NE555 p3",
+                )
+            ],
+            True,
+        )
 
 
 def _submit(service: AgentService, classroom: ClassroomState, *, mode: str, query: str):
@@ -365,6 +393,18 @@ def test_agent_auto_routes_led_question_to_concept_tutor() -> None:
     assert "concept_pack" in evidence_types
     assert "知识来源" in result.answer
     assert result.mode == "agent_auto"
+
+
+def test_agent_auto_routes_datasheet_pin_question_to_kb() -> None:
+    classroom = ClassroomState()
+    rag = _FakeDatasheetRagService()
+    service = AgentService(rag_service=rag)
+    result = _submit(service, classroom, mode="agent_auto", query="NE555的引脚有哪些")
+
+    assert result.actual_llm_provider == "kb_retrieval"
+    assert result.used_retrieval
+    assert rag.last_top_k == 3
+    assert result.citations[0].source_type == "datasheet_pdf"
 
 
 def test_agent_auto_routes_rc_question_to_concept_tutor() -> None:
