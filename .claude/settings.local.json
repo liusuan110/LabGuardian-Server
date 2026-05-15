@@ -18,7 +18,8 @@
       "Bash(.venv/bin/python -m pytest tests/pipeline/test_s1b_pin_detect.py -q)",
       "Bash(.venv/bin/python -m pytest tests/pipeline/test_s2_mapping.py tests/pipeline/test_s1b_pin_detect.py -q)",
       "Bash(.venv/bin/python -m pytest tests/pipeline/test_s1b_pin_detect.py tests/pipeline/test_s2_mapping.py -q)",
-      "Bash(.venv/bin/python -m pytest tests/pipeline/ -q --no-header)"
+      "Bash(.venv/bin/python -m pytest tests/pipeline/ -q --no-header)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }
