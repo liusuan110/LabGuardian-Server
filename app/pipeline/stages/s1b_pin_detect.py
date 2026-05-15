@@ -20,14 +20,12 @@ import numpy as np
 from app.pipeline.vision.pin_model import PinRoiDetector, _parse_model_keypoints
 from app.pipeline.vision.image_io import decode_images_b64, decode_summary
 from app.pipeline.vision.label_mapping import (
+    default_package_type,
     default_pin_count,
     default_pin_names,
-    normalize_component_type,
-)
-from app.pipeline.vision.pin_schema import (
-    default_package_type,
     default_pin_schema_id,
     default_symmetry_group,
+    normalize_component_type,
 )
 from app.pipeline.vision.transistor_polarity import infer_transistor_pin_roles
 
