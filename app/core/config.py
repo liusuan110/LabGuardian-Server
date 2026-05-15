@@ -72,10 +72,11 @@ DEFAULT_COMPONENT_MODEL_PATH = _first_existing_path(
     MODEL_ROOT / "component_detector" / "best.pt",
     MODEL_ROOT / "detect_components" / "best.pt",
     MODEL_ROOT / "detect_components" / "weights" / "best.pt",
-    # v1 (7 类: resistor / led / diode / wire / 陶瓷电容 / 电解电容 / 三极管) 优先;
-    # v2 只训了 IC-14 / IC-8 / potentiometer 3 类, 单独用会把其它元件丢光.
-    TRAIN_DEMO_DIR / "detect_components_v2" / "weights" / "best.pt",
+    # merged_det_v2 覆盖基础元件 + potentiometer + IC-8/IC-14，作为本地默认 S1 主模型。
+    TRAIN_DEMO_DIR / "merged_det_v2" / "weights" / "best.pt",
     TRAIN_DEMO_DIR / "detect_components" / "weights" / "best.pt",
+    # detect_components_v2 只训了 IC-14 / IC-8 / potentiometer，保留为历史候选。
+    TRAIN_DEMO_DIR / "detect_components_v2" / "weights" / "best.pt",
     
 )
 # Pin main path uses full-image YOLO-Pose. Do not auto-select legacy ROI weights here.
@@ -229,6 +230,7 @@ component_candidates = (
     model_root / "component_detector" / "best.pt",
     model_root / "detect_components" / "best.pt",
     model_root / "detect_components" / "weights" / "best.pt",
+    model_root / "merged_det_v2" / "weights" / "best.pt",
 )
 pin_candidates = (
     model_root / "pose_components" / "best.pt",

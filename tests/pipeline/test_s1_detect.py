@@ -313,7 +313,7 @@ class TestS1ICPackageInference:
         assert det["package_confidence"] == 1.0
 
     def test_ic_v2_hyphen_labels_recognized(self, blank_image_b64):
-        """detect_components_v2 真实标签 IC-8 / IC-14 必须能走完 S1 不被静默过滤,
+        """IC-8 / IC-14 和 ic_8 / ic_14 必须能走完 S1 不被静默过滤,
         且封装识别走 model_class 路径直接拿 dip8 / dip14."""
         from app.pipeline.stages.s1_detect import run_detect
         from tests.pipeline.mocks import MockComponentDetector
@@ -321,23 +321,31 @@ class TestS1ICPackageInference:
         detector = MockComponentDetector([
             {"class_name": "IC-8", "bbox": (100, 200, 300, 260), "confidence": 0.88},
             {"class_name": "IC-14", "bbox": (320, 200, 600, 260), "confidence": 0.84},
+            {"class_name": "ic_8", "bbox": (620, 200, 820, 260), "confidence": 0.82},
+            {"class_name": "ic_14", "bbox": (840, 200, 1120, 260), "confidence": 0.8},
         ])
         result = run_detect(images_b64=[blank_image_b64], detector=detector)
 
-        # 关键: 两个 IC 都被保留, 不再被 is_supported_component_type 丢掉.
-        assert len(result["detections"]) == 2
-        by_pkg = {d["package_type"]: d for d in result["detections"]}
+        # 关键: IC 都被保留, 不再被 is_supported_component_type 丢掉.
+        assert len(result["detections"]) == 4
+        by_raw = {d["raw_class_name"]: d for d in result["detections"]}
 
-        assert "dip8" in by_pkg
-        assert by_pkg["dip8"]["component_type"] == "IC"
-        assert by_pkg["dip8"]["package_source"] == "model_class"
-        assert by_pkg["dip8"]["package_confidence"] == 1.0
-        assert by_pkg["dip8"]["raw_class_name"] == "IC-8"
+        assert by_raw["IC-8"]["package_type"] == "dip8"
+        assert by_raw["IC-8"]["component_type"] == "IC"
+        assert by_raw["IC-8"]["package_source"] == "model_class"
+        assert by_raw["IC-8"]["package_confidence"] == 1.0
 
-        assert "dip14" in by_pkg
-        assert by_pkg["dip14"]["component_type"] == "IC"
-        assert by_pkg["dip14"]["package_source"] == "model_class"
-        assert by_pkg["dip14"]["raw_class_name"] == "IC-14"
+        assert by_raw["IC-14"]["package_type"] == "dip14"
+        assert by_raw["IC-14"]["component_type"] == "IC"
+        assert by_raw["IC-14"]["package_source"] == "model_class"
+        assert by_raw["IC-14"]["package_confidence"] == 1.0
+
+        assert by_raw["ic_8"]["package_type"] == "dip8"
+        assert by_raw["ic_8"]["component_type"] == "IC"
+        assert by_raw["ic_8"]["package_source"] == "model_class"
+        assert by_raw["ic_14"]["package_type"] == "dip14"
+        assert by_raw["ic_14"]["component_type"] == "IC"
+        assert by_raw["ic_14"]["package_source"] == "model_class"
 
     def test_ic_without_calibrator_returns_unknown(self, blank_image_b64):
         """模型只输出 IC, 且没有 calibrator → package_type=unknown."""

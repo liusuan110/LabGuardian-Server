@@ -19,12 +19,12 @@ S2: pixel pin -> hole_id mapping
 推荐权重：
 
 ```text
-train_demo/detect_components/weights/best.pt
+train_demo/merged_det_v2/weights/best.pt
 ```
 
 用途：
 
-- 当前组件检测主模型
+- 当前组件检测主模型，合并基础元件、电位器、DIP-8/DIP-14 IC
 - 模型类型：`DetectionModel`
 - 后端 backend：`yolo_detect_component`
 - 标签体系已经对齐当前后端：
@@ -35,15 +35,18 @@ train_demo/detect_components/weights/best.pt
   - `led`
   - `resistor`
   - `transistor_3pin`
+  - `potentiometer`
+  - `ic_8`
+  - `ic_14`
 
 训练表现：
 
-- 最好 `Box mAP50-95`: `0.8142`
-- 最后一轮 `Box mAP50-95`: `0.8124`
+- 最好 `Box mAP50-95`: `0.8359`
+- 最后一轮 `Box mAP50-95`: `0.8300`
 
 结论：
 
-- 继续作为 S1 默认组件检测模型。
+- 作为 S1 默认组件检测模型。
 
 ### S1.5 引脚检测
 
