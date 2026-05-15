@@ -18,6 +18,7 @@ import logging
 import time
 from typing import Any, Dict, List
 
+import cv2
 import numpy as np
 
 from app.pipeline.vision.pin_model import PinRoiDetector, _parse_model_keypoints
@@ -573,7 +574,7 @@ def _semanticize_potentiometer_pins(
         return _pot_refused_output(pins=pins, view_id=view_id, reason="calibrator_unavailable")
 
     detected_pixel_by_idx = _pot_extract_view_pixels(
-        pins=pins, view_id=view_id, bbox=bbox, calibrator=calibrator,
+        pins=pins, view_id=view_id, bbox=bbox, calibrator=calibrator, top_image=top_image,
     )
     if detected_pixel_by_idx is None:
         return _pot_refused_output(pins=pins, view_id=view_id, reason="no_visible_potentiometer_keypoints")
@@ -638,6 +639,7 @@ def _pot_extract_view_pixels(
     view_id: str,
     bbox: list[float],
     calibrator: Any | None = None,
+    top_image: Any | None = None,
 ) -> list[tuple[int, tuple[float, float]]] | None:
     """Return [(pin_idx, (px, py))] x3 using model keypoints where present, bbox fallback otherwise.
 
@@ -659,7 +661,7 @@ def _pot_extract_view_pixels(
     if not missing_idxs:
         return valid
 
-    fallback = _potentiometer_bbox_fallback_points(bbox, calibrator=calibrator)
+    fallback = _potentiometer_bbox_fallback_points(bbox, calibrator=calibrator, top_image=top_image)
     fallback_points = [fallback["terminal_a"], fallback["wiper"], fallback["terminal_b"]]
     used = [False, False, False]
     if valid:
@@ -964,6 +966,7 @@ def _potentiometer_bbox_fallback_points(
     bbox: list[float],
     *,
     calibrator: Any | None = None,
+    top_image: Any | None = None,
 ) -> dict[str, tuple[float, float]]:
     """Fallback 3-pin positions when model keypoints are missing.
 
@@ -984,6 +987,13 @@ def _potentiometer_bbox_fallback_points(
         x1, x2 = x2, x1
     if y2 < y1:
         y1, y2 = y2, y1
+
+    top_box_fallback = _potentiometer_top_box_fallback_points(
+        bbox=(x1, y1, x2, y2),
+        top_image=top_image,
+    )
+    if top_box_fallback is not None:
+        return top_box_fallback
 
     board_fallback = _potentiometer_bbox_fallback_points_board(
         bbox=(x1, y1, x2, y2),
@@ -1007,6 +1017,111 @@ def _potentiometer_bbox_fallback_points(
         "wiper": (x, y1 + height * 0.50),
         "terminal_b": (x, y1 + height * 0.78),
     }
+
+
+def _potentiometer_top_box_fallback_points(
+    *,
+    bbox: tuple[float, float, float, float],
+    top_image: Any | None,
+) -> dict[str, tuple[float, float]] | None:
+    """Estimate POT pins from the visible top rectangle.
+
+    The top-down view often hides the three metal legs. The blue top cap,
+    however, remains visible. We rectify that cap to a rotated rectangle and
+    place the three electrical slots along its long axis.
+    """
+    if top_image is None or not isinstance(top_image, np.ndarray) or top_image.size == 0:
+        return None
+    if top_image.ndim < 2:
+        return None
+
+    x1, y1, x2, y2 = bbox
+    h, w = top_image.shape[:2]
+    ix1 = max(0, int(np.floor(min(x1, x2))))
+    iy1 = max(0, int(np.floor(min(y1, y2))))
+    ix2 = min(w, int(np.ceil(max(x1, x2))))
+    iy2 = min(h, int(np.ceil(max(y1, y2))))
+    if ix2 - ix1 < 6 or iy2 - iy1 < 6:
+        return None
+
+    crop = top_image[iy1:iy2, ix1:ix2]
+    rect = _detect_potentiometer_top_rect(crop)
+    if rect is None:
+        return None
+
+    (cx, cy), (rw, rh), angle = rect
+    if rw < 3.0 or rh < 3.0:
+        return None
+
+    theta = np.deg2rad(float(angle))
+    if rw >= rh:
+        ax, ay = float(np.cos(theta)), float(np.sin(theta))
+        span = float(rw)
+    else:
+        ax, ay = float(-np.sin(theta)), float(np.cos(theta))
+        span = float(rh)
+
+    norm = max((ax * ax + ay * ay) ** 0.5, 1e-6)
+    ax, ay = ax / norm, ay / norm
+    gcx = float(ix1 + cx)
+    gcy = float(iy1 + cy)
+
+    # Slightly inward from the cap ends: the outer pins are not at the corners.
+    offsets = (-0.24, 0.0, 0.24)
+    points = [(gcx + ax * span * off, gcy + ay * span * off) for off in offsets]
+    points = _order_pot_points_by_image_axis(points)
+    return {
+        "terminal_a": points[0],
+        "wiper": points[1],
+        "terminal_b": points[2],
+    }
+
+
+def _detect_potentiometer_top_rect(crop: np.ndarray) -> tuple[tuple[float, float], tuple[float, float], float] | None:
+    if crop.size == 0:
+        return None
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    blue_mask = cv2.inRange(hsv, np.array([85, 35, 25], dtype=np.uint8), np.array([150, 255, 255], dtype=np.uint8))
+
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(cv2.GaussianBlur(gray, (3, 3), 0), 45, 130)
+    mask = cv2.bitwise_or(blue_mask, cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8), iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8), iterations=1)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    crop_area = float(crop.shape[0] * crop.shape[1])
+    best: tuple[float, tuple[tuple[float, float], tuple[float, float], float]] | None = None
+    for contour in contours:
+        area = float(cv2.contourArea(contour))
+        if area < max(12.0, crop_area * 0.03):
+            continue
+        rect = cv2.minAreaRect(contour)
+        (_cx, _cy), (rw, rh), _angle = rect
+        rect_area = max(1.0, float(rw) * float(rh))
+        fill = area / rect_area
+        if fill < 0.25:
+            continue
+        aspect = max(float(rw), float(rh)) / max(1.0, min(float(rw), float(rh)))
+        if aspect > 5.0:
+            continue
+        score = area * min(fill, 1.0)
+        if best is None or score > best[0]:
+            best = (score, rect)
+    return best[1] if best is not None else None
+
+
+def _order_pot_points_by_image_axis(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    if len(points) != 3:
+        return points
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    if (max(xs) - min(xs)) >= (max(ys) - min(ys)):
+        return sorted(points, key=lambda p: p[0])
+    return sorted(points, key=lambda p: p[1])
 
 
 def _potentiometer_bbox_fallback_points_board(
