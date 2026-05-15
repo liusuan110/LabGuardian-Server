@@ -154,12 +154,17 @@ def _wrong_connection_items(ref_payload: dict[str, Any], cur_netlist_v2: dict[st
         cur_pins_by_role = {normalize_pin_role(ctype, p): p for p in cur_comp.get("pins", [])}
         for pin in connected_ref_pins:
             ref_pin_role = normalize_pin_role(ctype, pin)
-            cur_pin = cur_pins_by_role.get(ref_pin_role) or cur_pins.get(pin.get("pin"))
+            mapped_cur_net = net_map.get(pin.get("net"))
+            cur_pin = _current_pin_for_reference_role(
+                ctype=ctype,
+                ref_pin_role=ref_pin_role,
+                mapped_cur_net=mapped_cur_net,
+                cur_pins_by_role=cur_pins_by_role,
+            ) or cur_pins.get(pin.get("pin"))
             if not cur_pin:
                 if ctype in STRICT_PIN_ROLE_TYPES:
                     items.append(_detailed_item(error_code="PIN_ROLE_MISMATCH", error_family="wiring_mismatch", severity="error", message=f"{ref_id}.{pin.get('pin')} 需要功能引脚 {ref_pin_role}，但当前元件 {cur_id} 未找到对应功能引脚。", expected={"ref_pin": f"{ref_id}.{pin.get('pin')}", "pin_role": ref_pin_role}, actual={"actual_component_id": cur_id, "available_pin_roles": sorted(cur_pins_by_role)}, component_ref={"ref_id": ref_id, "type": ref_comp.get("type")}, component_actual={"component_id": cur_id, "type": cur_comp.get("component_type")}, evidence_refs=[{"type": "component", "component_id": cur_id}], suggested_action=f"请重新标注 {cur_id} 的功能引脚，确保 {ref_pin_role} 接到正确网络。"))
                 continue
-            mapped_cur_net = net_map.get(pin.get("net"))
             cur_net = cur_pin.get("electrical_net_id")
             if mapped_cur_net and cur_net != mapped_cur_net:
                 actual_pin_role = normalize_pin_role(ctype, cur_pin)
@@ -167,6 +172,24 @@ def _wrong_connection_items(ref_payload: dict[str, Any], cur_netlist_v2: dict[st
                 desc = _current_net_descriptor(cur_net, cur_net_by_id)
                 items.append(_detailed_item(error_code=error_code, error_family="wiring_mismatch", severity="error", message=f"{ref_id}.{pin.get('pin')} 应连接到参考网络 {pin.get('net')}，但当前实际连接到 {desc['canonical_name']}。", expected={"ref_pin": f"{ref_id}.{pin.get('pin')}", "pin_role": ref_pin_role, "expected_net": pin.get("net")}, actual={"actual_component_id": cur_id, "actual_pin": cur_pin.get("pin_name"), "pin_role": actual_pin_role, "actual_net": desc, "expected_current_net": _current_net_descriptor(mapped_cur_net, cur_net_by_id), "hole_id": cur_pin.get("hole_id")}, component_ref={"ref_id": ref_id, "type": ref_comp.get("type")}, component_actual={"component_id": cur_id, "type": cur_comp.get("component_type")}, evidence_refs=[{"type": "component", "component_id": cur_id}, {"type": "net", "electrical_net_id": cur_net, "canonical_name": desc["canonical_name"]}], suggested_action=f"请将 {cur_id}.{pin.get('pin')} 从 {desc['canonical_name']} 改接到与 {pin.get('net')} 对应的网络。"))
     return items
+
+
+def _current_pin_for_reference_role(
+    *,
+    ctype: str,
+    ref_pin_role: str,
+    mapped_cur_net: str | None,
+    cur_pins_by_role: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    if ctype == "Potentiometer" and ref_pin_role in {"terminal_a", "terminal_b"}:
+        terminal_roles = ("terminal_a", "terminal_b")
+        if mapped_cur_net:
+            for role in terminal_roles:
+                pin = cur_pins_by_role.get(role)
+                if pin and pin.get("electrical_net_id") == mapped_cur_net:
+                    return pin
+        return cur_pins_by_role.get(ref_pin_role) or next((cur_pins_by_role.get(role) for role in terminal_roles if cur_pins_by_role.get(role)), None)
+    return cur_pins_by_role.get(ref_pin_role)
 
 
 def _wire_item(ref_id: str, cur_id: str, ref_comp: dict[str, Any], cur_comp: dict[str, Any], ref_nets: list[str], cur_nets: set[Any], cur_net_by_id: dict[str, dict[str, Any]], message: str) -> dict[str, Any]:

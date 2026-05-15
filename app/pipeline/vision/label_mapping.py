@@ -81,6 +81,7 @@ COMPONENT_TYPE_TO_SYMMETRY_GROUP = {
     "Wire": [["pin1", "pin2"]],
     "Capacitor": [["pin1", "pin2"]],
     "CapacitorCeramic": [["pin1", "pin2"]],
+    "Potentiometer": [["terminal_a", "terminal_b"]],
 }
 
 
@@ -135,6 +136,9 @@ def default_pin_names(component_type: str, pin_count: int) -> list[str]:
     if component_type == "CapacitorElectrolytic" and pin_count >= 2:
         names = ["positive", "negative"]
         return names[:pin_count] + [f"pin{i}" for i in range(3, pin_count + 1)]
+    if component_type == "Potentiometer" and pin_count >= 3:
+        names = ["terminal_a", "wiper", "terminal_b"]
+        return names[:pin_count] + [f"pin{i}" for i in range(4, pin_count + 1)]
     return [f"pin{i}" for i in range(1, pin_count + 1)]
 
 

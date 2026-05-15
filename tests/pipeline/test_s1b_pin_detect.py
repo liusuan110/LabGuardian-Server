@@ -47,7 +47,7 @@ class TestPinDetectionMock:
             assert comp["pins"][1]["pin_name"] == "pin2"
 
     def test_t4_2_mock_3pin(self, blank_image_b64):
-        """T4.4: Mock 3-pin (Potentiometer) → len(pins)=3"""
+        """T4.4: Potentiometer pins are semantic and wiper is the middle leg."""
         from app.pipeline.stages.s1b_pin_detect import run_pin_detect
         from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
         from app.pipeline.stages.s1_detect import run_detect
@@ -56,9 +56,9 @@ class TestPinDetectionMock:
             {"class_name": "Potentiometer", "bbox": (100, 200, 300, 260), "confidence": 0.9}
         ])
         pot_pin = MockPinDetector([
-            {"pin_id": 1, "pin_name": "pin1", "keypoint": (100.0, 240.0), "confidence": 0.9, "visibility": 2},
-            {"pin_id": 2, "pin_name": "pin2", "keypoint": (200.0, 240.0), "confidence": 0.9, "visibility": 2},
-            {"pin_id": 3, "pin_name": "pin3", "keypoint": (300.0, 240.0), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 1, "pin_name": "terminal_b", "keypoint": (300.0, 240.0), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 2, "pin_name": "terminal_a", "keypoint": (100.0, 240.0), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 3, "pin_name": "wiper", "keypoint": (200.0, 240.0), "confidence": 0.9, "visibility": 2},
         ])
 
         s1 = run_detect(images_b64=[blank_image_b64], detector=pot_det)
@@ -69,7 +69,40 @@ class TestPinDetectionMock:
         )
 
         assert len(result["components"]) == 1
-        assert len(result["components"][0]["pins"]) == 3
+        comp = result["components"][0]
+        assert comp["symmetry_group"] == [["terminal_a", "terminal_b"]]
+        pins = comp["pins"]
+        assert [pin["pin_name"] for pin in pins] == ["terminal_a", "wiper", "terminal_b"]
+        assert pins[1]["keypoints_by_view"]["top"] == [200.0, 240.0]
+        assert pins[1]["metadata"]["potentiometer_role_source"] == "geometry_three_point_projection"
+
+    def test_t4_2a_potentiometer_missing_terminal_keeps_wiper(self, blank_image_b64):
+        """With one missing terminal, the point closest to the body center stays wiper."""
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
+        from app.pipeline.stages.s1_detect import run_detect
+
+        pot_det = MockComponentDetector([
+            {"class_name": "Potentiometer", "bbox": (100, 200, 300, 260), "confidence": 0.9}
+        ])
+        pot_pin = MockPinDetector([
+            {"pin_id": 1, "pin_name": "terminal_a", "keypoint": (100.0, 240.0), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 2, "pin_name": "wiper", "keypoint": (200.0, 240.0), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 3, "pin_name": "terminal_b", "keypoint": None, "confidence": 0.0, "visibility": 0},
+        ])
+
+        s1 = run_detect(images_b64=[blank_image_b64], detector=pot_det)
+        result = run_pin_detect(
+            detections=s1["detections"],
+            images_b64=[blank_image_b64],
+            pin_detector=pot_pin,
+        )
+
+        pins = result["components"][0]["pins"]
+        assert [pin["pin_name"] for pin in pins] == ["terminal_a", "wiper", "terminal_b"]
+        assert pins[1]["keypoints_by_view"]["top"] == [200.0, 240.0]
+        assert pins[2]["visibility_by_view"]["top"] == 0
+        assert pins[1]["metadata"]["potentiometer_role_degraded_reason"] == "one_potentiometer_terminal_missing"
 
     def test_t4_2b_mock_transistor_3pin(self, blank_image_b64):
         """模型新标签 transistor_3pin 会被解释为 3-pin Transistor."""

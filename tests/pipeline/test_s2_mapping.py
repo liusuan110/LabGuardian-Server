@@ -958,7 +958,64 @@ class TestS2Mapping:
         assert pin2["hole_id"] == "I21"
         assert pin1["hole_id"] != pin2["hole_id"]
 
-    def test_t5_14_low_snap_confidence_uses_selected_hole(self):
+    def test_t5_14_potentiometer_selector_keeps_wiper_and_separates_terminals(self):
+        from app.pipeline.stages.s2_mapping import run_mapping
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.fixtures import image_to_b64, make_blank_image
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+
+        def fake_candidates_scored(x: float, y: float, k: int = 5):
+            if x < 180:
+                return [(("20", "a"), 0.0), (("19", "a"), 5.0)]
+            if x < 220:
+                return [(("20", "a"), 0.0)]
+            return [(("20", "a"), 0.0), (("21", "a"), 5.0)]
+
+        calibrator.frame_pixel_to_logic_candidates_scored = fake_candidates_scored  # type: ignore[method-assign]
+
+        def pin(pin_id: int, pin_name: str, x: float) -> dict:
+            return {
+                "pin_id": pin_id,
+                "pin_name": pin_name,
+                "keypoints_by_view": {"top": [x, 240.0]},
+                "visibility_by_view": {"top": 2},
+                "score_by_view": {"top": 0.95},
+                "source_by_view": {"top": "model"},
+                "confidence": 0.95,
+                "source": "model",
+            }
+
+        components = [
+            {
+                "component_id": "POT1",
+                "component_type": "Potentiometer",
+                "pins": [
+                    pin(1, "terminal_a", 150.0),
+                    pin(2, "wiper", 200.0),
+                    pin(3, "terminal_b", 250.0),
+                ],
+            }
+        ]
+
+        result = run_mapping(
+            components=components,
+            calibrator=calibrator,
+            image_shape=(480, 640),
+            images_b64=[image_to_b64(make_blank_image())],
+        )
+
+        terminal_a, wiper, terminal_b = result["components"][0]["pins"]
+        assert [pin["pin_name"] for pin in (terminal_a, wiper, terminal_b)] == ["terminal_a", "wiper", "terminal_b"]
+        assert wiper["hole_id"] == "A20"
+        assert terminal_a["hole_id"] == "A19"
+        assert terminal_b["hole_id"] == "A21"
+        assert len({terminal_a["hole_id"], wiper["hole_id"], terminal_b["hole_id"]}) == 3
+        assert terminal_a["metadata"]["selected_by"].endswith("+potentiometer_terminal_selector")
+        assert terminal_b["metadata"]["selected_by"].endswith("+potentiometer_terminal_selector")
+
+    def test_t5_15_low_snap_confidence_uses_selected_hole(self):
         from app.pipeline.stages.s2_mapping import run_mapping
         from app.pipeline.vision.calibrator import BreadboardCalibrator
         from tests.pipeline.fixtures import image_to_b64, make_blank_image

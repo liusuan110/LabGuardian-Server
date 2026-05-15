@@ -79,9 +79,9 @@ def normalize_pin_role(component_type: Any, pin: Any) -> str:
     if ctype == "Potentiometer":
         if value in {"w", "wiper", "center", "middle"}:
             return "wiper"
-        if value in {"terminal_a", "a", "pin1", "1"}:
+        if value in {"terminal_a", "a"}:
             return "terminal_a"
-        if value in {"terminal_b", "b", "pin2", "2"}:
+        if value in {"terminal_b", "b"}:
             return "terminal_b"
     if ctype in {"LED", "Diode"}:
         if value in {"a", "anode", "positive", "+"}:

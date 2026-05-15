@@ -122,6 +122,58 @@ def _cur_netlist_extra_resistor() -> dict:
     }
 
 
+def _pot_ref_payload() -> dict:
+    return {
+        "format": "logical_reference_v1",
+        "reference_id": "pot_divider_v1",
+        "name": "Potentiometer divider",
+        "components": [
+            {
+                "ref_id": "POT1",
+                "type": "Potentiometer",
+                "pins": [
+                    {"pin": "terminal_a", "net": "VIN"},
+                    {"pin": "wiper", "net": "VOUT"},
+                    {"pin": "terminal_b", "net": "GND"},
+                ],
+            }
+        ],
+        "nets": [
+            {"net": "VIN", "role": "input"},
+            {"net": "VOUT", "role": "output"},
+            {"net": "GND", "role": "ground"},
+        ],
+    }
+
+
+def _pot_cur_netlist(*, swap_terminals: bool = False, wiper_wrong: bool = False) -> dict:
+    terminal_a_net = "NET_GND" if swap_terminals else "NET_VIN"
+    terminal_b_net = "NET_VIN" if swap_terminals else "NET_GND"
+    wiper_net = "NET_VIN" if wiper_wrong else "NET_VOUT"
+    if wiper_wrong:
+        terminal_a_net = "NET_VIN"
+        terminal_b_net = "NET_VOUT"
+        wiper_net = "NET_GND"
+    return {
+        "components": [
+            {
+                "component_id": "POT2",
+                "component_type": "Potentiometer",
+                "pins": [
+                    {"pin_name": "terminal_a", "electrical_net_id": terminal_a_net, "hole_id": "A10"},
+                    {"pin_name": "wiper", "electrical_net_id": wiper_net, "hole_id": "A11"},
+                    {"pin_name": "terminal_b", "electrical_net_id": terminal_b_net, "hole_id": "A12"},
+                ],
+            }
+        ],
+        "nets": [
+            {"electrical_net_id": "NET_VIN", "role": "input"},
+            {"electrical_net_id": "NET_VOUT", "role": "output"},
+            {"electrical_net_id": "NET_GND", "role": "ground", "role_label": "GND"},
+        ],
+    }
+
+
 def _cur_netlist_wrong_connection() -> dict:
     """R1 and C1 both connect to VIN and GND (parallel instead of series)."""
     return {
@@ -160,6 +212,26 @@ class TestCompareLogicalGraphsDetailed:
         assert result["logic_correct"] is True
         assert result["report"]["summary"]["reference_id"] == "rc_first_order_v1"
         assert result["report"]["summary"]["reference_name"] == "一阶 RC 电路"
+
+    def test_potentiometer_terminal_swap_is_equivalent(self) -> None:
+        ref_payload = _pot_ref_payload()
+        cur_netlist = _pot_cur_netlist(swap_terminals=True)
+        ref = logical_reference_to_graph(ref_payload)
+        cur = current_netlist_v2_to_graph(cur_netlist)
+
+        result = compare_logical_graphs(ref, cur, ref_payload=ref_payload, cur_netlist_v2=cur_netlist)
+
+        assert result["logic_correct"] is True
+
+    def test_potentiometer_wiper_is_strict(self) -> None:
+        ref_payload = _pot_ref_payload()
+        cur_netlist = _pot_cur_netlist(wiper_wrong=True)
+        ref = logical_reference_to_graph(ref_payload)
+        cur = current_netlist_v2_to_graph(cur_netlist)
+
+        result = compare_logical_graphs(ref, cur, ref_payload=ref_payload, cur_netlist_v2=cur_netlist)
+
+        assert result["logic_correct"] is False
 
     def test_missing_component_detailed(self) -> None:
         ref = logical_reference_to_graph(_ref_payload())

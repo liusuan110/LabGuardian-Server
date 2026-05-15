@@ -539,6 +539,8 @@ def _edge_match_for_alias_inference(left: dict[str, Any], right: dict[str, Any])
     pin_right = normalize_pin_role(comp_type, right.get("pin_role") or right.get("pin"))
     if comp_type in {"Resistor", "Capacitor", "CapacitorCeramic", "Wire"}:
         return True
+    if comp_type == "Potentiometer" and {pin_left, pin_right} == {"terminal_a", "terminal_b"}:
+        return True
     return pin_left == pin_right
 
 

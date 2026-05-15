@@ -215,6 +215,12 @@ def _apply_component_pair_selector(
     board_schema: BoardSchema,
 ) -> List[Dict[str, Any]]:
     component_type = normalize_component_type(str(comp.get("component_type") or comp.get("class_name") or "UNKNOWN"))
+    if component_type == "Potentiometer":
+        return _apply_potentiometer_pin_selector(
+            mapped_pins=mapped_pins,
+            calibrator=calibrator,
+            board_schema=board_schema,
+        )
     if component_type not in TWO_PIN_PAIRED:
         return mapped_pins
     if len(mapped_pins) < 2:
@@ -236,6 +242,145 @@ def _apply_component_pair_selector(
         _refresh_selected_pin_evidence(resolved_pin, board_schema=board_schema)
         mapped_pins[idx] = resolved_pin
     return mapped_pins
+
+
+def _apply_potentiometer_pin_selector(
+    *,
+    mapped_pins: List[Dict[str, Any]],
+    calibrator: BreadboardCalibrator,
+    board_schema: BoardSchema,
+) -> List[Dict[str, Any]]:
+    by_name = {str(pin.get("pin_name") or ""): dict(pin) for pin in mapped_pins}
+    if not all(name in by_name for name in ("terminal_a", "wiper", "terminal_b")):
+        return mapped_pins
+
+    terminal_a = by_name["terminal_a"]
+    wiper = by_name["wiper"]
+    terminal_b = by_name["terminal_b"]
+    wiper_hole = wiper.get("hole_id")
+    if not wiper_hole:
+        return [terminal_a, wiper, terminal_b]
+    wiper_hole = board_schema.normalize_hole_id(str(wiper_hole))
+    wiper_point = _hole_id_to_board_point(wiper_hole, board_schema, calibrator)
+    wiper_seed = _pin_seed_board_point(wiper)
+    pitch = _mapping_pitch(calibrator)
+
+    candidates_a = _ranked_candidates_for_pin(terminal_a, board_schema=board_schema, calibrator=calibrator)
+    candidates_b = _ranked_candidates_for_pin(terminal_b, board_schema=board_schema, calibrator=calibrator)
+    if not candidates_a or not candidates_b:
+        return [terminal_a, wiper, terminal_b]
+
+    seed_a = _pin_seed_board_point(terminal_a)
+    seed_b = _pin_seed_board_point(terminal_b)
+    expected_a_wiper = _pair_seed_distance(seed_a, wiper_seed)
+    expected_b_wiper = _pair_seed_distance(seed_b, wiper_seed)
+    expected_terminal_span = _pair_seed_distance(seed_a, seed_b)
+
+    best: Optional[
+        Tuple[
+            float,
+            Tuple[str, Optional[Tuple[str, str]], Optional[Tuple[float, float]], int],
+            Tuple[str, Optional[Tuple[str, str]], Optional[Tuple[float, float]], int],
+        ]
+    ] = None
+    for cand_a in candidates_a:
+        for cand_b in candidates_b:
+            hole_a, _logic_a, point_a, rank_a = cand_a
+            hole_b, _logic_b, point_b, rank_b = cand_b
+            if hole_a == hole_b or hole_a == wiper_hole or hole_b == wiper_hole:
+                continue
+            score = (rank_a + rank_b) * 0.55
+            if wiper_point is not None:
+                if point_a is not None and expected_a_wiper is not None:
+                    score += abs(_euclidean(point_a, wiper_point) - expected_a_wiper) / max(pitch, 1.0) * 0.30
+                if point_b is not None and expected_b_wiper is not None:
+                    score += abs(_euclidean(point_b, wiper_point) - expected_b_wiper) / max(pitch, 1.0) * 0.30
+            if point_a is not None and point_b is not None and expected_terminal_span is not None:
+                score += abs(_euclidean(point_a, point_b) - expected_terminal_span) / max(pitch, 1.0) * 0.18
+            if best is None or score < best[0]:
+                best = (score, cand_a, cand_b)
+
+    if best is None:
+        return [terminal_a, wiper, terminal_b]
+
+    _, chosen_a, chosen_b = best
+    terminal_a = _apply_joint_selected_candidate(
+        terminal_a,
+        chosen_a,
+        board_schema=board_schema,
+        selector_name="potentiometer_terminal_selector",
+    )
+    terminal_b = _apply_joint_selected_candidate(
+        terminal_b,
+        chosen_b,
+        board_schema=board_schema,
+        selector_name="potentiometer_terminal_selector",
+    )
+    wiper_meta = dict(wiper.get("metadata") or {})
+    wiper_meta["potentiometer_selector"] = {
+        "strategy": "wiper_independent_terminal_joint_selection",
+        "role": "wiper",
+        "selected_hole_id": wiper_hole,
+    }
+    wiper["metadata"] = wiper_meta
+    _refresh_selected_pin_evidence(wiper, board_schema=board_schema)
+    _refresh_selected_pin_evidence(terminal_a, board_schema=board_schema)
+    _refresh_selected_pin_evidence(terminal_b, board_schema=board_schema)
+    return [terminal_a, wiper, terminal_b]
+
+
+def _ranked_candidates_for_pin(
+    pin: Dict[str, Any],
+    *,
+    board_schema: BoardSchema,
+    calibrator: BreadboardCalibrator,
+) -> List[Tuple[str, Optional[Tuple[str, str]], Optional[Tuple[float, float]], int]]:
+    ranked: List[Tuple[str, Optional[Tuple[str, str]], Optional[Tuple[float, float]], int]] = []
+    seen = set()
+    for rank, hole_id in enumerate(pin.get("candidate_hole_ids") or []):
+        normalized = board_schema.normalize_hole_id(str(hole_id))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        logic_loc = board_schema.hole_id_to_logic_loc(normalized)
+        board_point = _hole_id_to_board_point(normalized, board_schema, calibrator)
+        ranked.append((normalized, logic_loc, board_point, rank))
+    if pin.get("hole_id"):
+        normalized = board_schema.normalize_hole_id(str(pin["hole_id"]))
+        if normalized not in seen:
+            logic_loc = board_schema.hole_id_to_logic_loc(normalized)
+            board_point = _hole_id_to_board_point(normalized, board_schema, calibrator)
+            ranked.insert(0, (normalized, logic_loc, board_point, 0))
+    return ranked[:6]
+
+
+def _apply_joint_selected_candidate(
+    pin: Dict[str, Any],
+    chosen: Tuple[str, Optional[Tuple[str, str]], Optional[Tuple[float, float]], int],
+    *,
+    board_schema: BoardSchema,
+    selector_name: str,
+) -> Dict[str, Any]:
+    updated = dict(pin)
+    hole_id, logic_loc, board_point, _rank = chosen
+    candidate_hole_ids = [hole_id] + [hid for hid in updated.get("candidate_hole_ids") or [] if hid != hole_id]
+    updated["hole_id"] = hole_id
+    updated["logic_loc"] = list(logic_loc) if logic_loc else updated.get("logic_loc")
+    updated["board_2d_point"] = [float(board_point[0]), float(board_point[1])] if board_point is not None else updated.get("board_2d_point")
+    updated["electrical_node_id"] = board_schema.resolve_hole_to_node(hole_id)
+    updated["candidate_hole_ids"] = candidate_hole_ids
+    updated["candidate_node_ids"] = _candidate_node_ids(candidate_hole_ids, board_schema)
+    updated["candidate_count"] = len(candidate_hole_ids)
+    metadata = dict(updated.get("metadata") or {})
+    metadata["selected_by"] = f"{metadata.get('selected_by', 'multi_view_weighted_vote')}+{selector_name}"
+    metadata[selector_name] = {
+        "strategy": "joint_hole_selection",
+        "selected_hole_id": hole_id,
+    }
+    if board_point is not None:
+        metadata["selected_board_2d_point"] = [float(board_point[0]), float(board_point[1])]
+    updated["metadata"] = metadata
+    return updated
 def _ensure_calibrated(
     calibrator: BreadboardCalibrator,
     decoded_images: List[Dict[str, Any]],

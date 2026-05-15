@@ -46,6 +46,7 @@ ROI_RETRY_SCALES = {
     "right_front": [1.0, 1.3, 1.7],
 }
 ROI_EDGE_MARGIN_PX = 12
+POTENTIOMETER_PIN_NAMES = ["terminal_a", "wiper", "terminal_b"]
 
 
 @dataclass
@@ -265,6 +266,11 @@ def _run_pin_detect_legacy(
             predictions_by_view=predictions_by_view,
             view_ids=view_ids,
         )
+        if component_type == "Potentiometer":
+            component["pins"] = _semanticize_potentiometer_pins(
+                pins=component["pins"],
+                bbox=list(bbox),
+            )
         top_roi = rois_by_view.get("top") or {}
         component["roi"] = {
             "offset": list(top_roi.get("offset") or [0, 0]),
@@ -507,6 +513,106 @@ def _aligned_keypoints(component_type: str, keypoints: list[tuple[float, float] 
     return result
 
 
+def _potentiometer_projection_axis(points: list[tuple[float, float]]) -> tuple[float, float]:
+    if len(points) < 2:
+        return (1.0, 0.0)
+    arr = np.asarray(points, dtype=np.float32)
+    centered = arr - arr.mean(axis=0)
+    try:
+        _, _, vh = np.linalg.svd(centered, full_matrices=False)
+        axis = vh[0]
+        ax, ay = float(axis[0]), float(axis[1])
+    except Exception:
+        p0, p1 = points[0], points[-1]
+        ax, ay = float(p1[0] - p0[0]), float(p1[1] - p0[1])
+    norm = max((ax * ax + ay * ay) ** 0.5, 1e-6)
+    ax, ay = ax / norm, ay / norm
+    if ax < 0 or (abs(ax) < 1e-6 and ay < 0):
+        ax, ay = -ax, -ay
+    return (ax, ay)
+
+
+def _project_point(point: tuple[float, float], axis: tuple[float, float]) -> float:
+    return float(point[0] * axis[0] + point[1] * axis[1])
+
+
+def _semanticize_potentiometer_pins(
+    *,
+    pins: list[dict],
+    bbox: list[float],
+    view_id: str = "top",
+) -> list[dict]:
+    """Rename/reorder potentiometer pins so the geometric middle leg is wiper."""
+    if len(pins) != 3:
+        return pins
+
+    entries = [dict(pin) for pin in pins]
+    valid: list[tuple[int, tuple[float, float]]] = []
+    for idx, pin in enumerate(entries):
+        keypoints_by_view = dict(pin.get("keypoints_by_view") or {})
+        point = keypoints_by_view.get(view_id)
+        if point and len(point) >= 2:
+            valid.append((idx, (float(point[0]), float(point[1]))))
+
+    assignment: dict[str, int] = {}
+    role_source = "unavailable"
+    degraded_reason = ""
+    if len(valid) >= 3:
+        axis = _potentiometer_projection_axis([point for _, point in valid])
+        ordered = sorted(valid, key=lambda item: _project_point(item[1], axis))
+        assignment = {
+            "terminal_a": ordered[0][0],
+            "wiper": ordered[1][0],
+            "terminal_b": ordered[2][0],
+        }
+        role_source = "geometry_three_point_projection"
+    elif len(valid) == 2:
+        axis = _potentiometer_projection_axis([point for _, point in valid])
+        x1, y1, x2, y2 = [float(v) for v in (bbox or [0.0, 0.0, 0.0, 0.0])[:4]]
+        center_projection = _project_point(((x1 + x2) / 2.0, (y1 + y2) / 2.0), axis)
+        wiper_idx, wiper_point = min(valid, key=lambda item: abs(_project_point(item[1], axis) - center_projection))
+        terminal_idx, terminal_point = next(item for item in valid if item[0] != wiper_idx)
+        missing_idx = next((idx for idx in range(3) if idx not in {wiper_idx, terminal_idx}), terminal_idx)
+        terminal_role = "terminal_a" if _project_point(terminal_point, axis) < _project_point(wiper_point, axis) else "terminal_b"
+        missing_role = "terminal_b" if terminal_role == "terminal_a" else "terminal_a"
+        assignment = {
+            terminal_role: terminal_idx,
+            "wiper": wiper_idx,
+            missing_role: missing_idx,
+        }
+        role_source = "geometry_two_point_center_projection"
+        degraded_reason = "one_potentiometer_terminal_missing"
+    elif len(valid) == 1:
+        wiper_idx = valid[0][0]
+        missing = [idx for idx in range(3) if idx != wiper_idx]
+        assignment = {
+            "terminal_a": missing[0],
+            "wiper": wiper_idx,
+            "terminal_b": missing[1],
+        }
+        role_source = "single_visible_point_assumed_wiper"
+        degraded_reason = "two_potentiometer_terminals_missing"
+    else:
+        assignment = {"terminal_a": 0, "wiper": 1, "terminal_b": 2}
+        degraded_reason = "no_visible_potentiometer_keypoints"
+
+    ordered_entries: list[dict] = []
+    for pin_id, pin_name in enumerate(POTENTIOMETER_PIN_NAMES, start=1):
+        source_idx = assignment[pin_name]
+        pin = dict(entries[source_idx])
+        metadata = dict(pin.get("metadata") or {})
+        metadata["potentiometer_role_source"] = role_source
+        metadata["potentiometer_source_pin_id"] = entries[source_idx].get("pin_id")
+        if degraded_reason:
+            metadata["potentiometer_role_degraded_reason"] = degraded_reason
+        pin["pin_id"] = pin_id
+        pin["pin_name"] = pin_name
+        pin["pin_display_name"] = pin_name
+        pin["metadata"] = metadata
+        ordered_entries.append(pin)
+    return ordered_entries
+
+
 def _build_components_from_full_pose(
     *,
     detections: list[dict],
@@ -620,6 +726,11 @@ def _build_components_from_full_pose(
                     "source": "model" if kp is not None else "unavailable",
                     "metadata": {"per_view": per_view},
                 }
+            )
+        if component_type == "Potentiometer":
+            pins = _semanticize_potentiometer_pins(
+                pins=pins,
+                bbox=list(det.get("bbox") or [0, 0, 0, 0]),
             )
 
         roi_by_view = {

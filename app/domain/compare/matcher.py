@@ -93,9 +93,17 @@ def _edge_match(a: dict[str, Any], b: dict[str, Any]) -> bool:
         return True
     pin_a = str(a.get("pin_role") or a.get("pin") or "")
     pin_b = str(b.get("pin_role") or b.get("pin") or "")
+    if "Potentiometer" in {comp_type_a, comp_type_b}:
+        return _potentiometer_pin_roles_equivalent(pin_a, pin_b)
     if comp_type_a in STRICT_PIN_ROLE_TYPES or comp_type_b in STRICT_PIN_ROLE_TYPES:
         return pin_a == pin_b
     return pin_a == pin_b
+
+
+def _potentiometer_pin_roles_equivalent(left: str, right: str) -> bool:
+    if left == right:
+        return True
+    return {left, right} == {"terminal_a", "terminal_b"}
 
 
 def _role_labels_equivalent(a: dict[str, Any], b: dict[str, Any]) -> bool:
