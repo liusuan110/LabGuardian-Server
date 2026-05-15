@@ -848,6 +848,7 @@ def _potentiometer_bbox_fallback_points(
     top_box_fallback = _potentiometer_top_box_fallback_points(
         bbox=(x1, y1, x2, y2),
         top_image=top_image,
+        calibrator=calibrator,
     )
     if top_box_fallback is not None:
         return top_box_fallback
@@ -880,6 +881,7 @@ def _potentiometer_top_box_fallback_points(
     *,
     bbox: tuple[float, float, float, float],
     top_image: Any | None,
+    calibrator: Any | None = None,
 ) -> dict[str, tuple[float, float]] | None:
     """Estimate POT pins from the visible top rectangle.
 
@@ -923,15 +925,41 @@ def _potentiometer_top_box_fallback_points(
     gcx = float(ix1 + cx)
     gcy = float(iy1 + cy)
 
-    # Slightly inward from the cap ends: the outer pins are not at the corners.
-    offsets = (-0.24, 0.0, 0.24)
-    points = [(gcx + ax * span * off, gcy + ay * span * off) for off in offsets]
+    spacing = _potentiometer_fallback_spacing_px(
+        calibrator=calibrator,
+        bbox=bbox,
+        top_box_span=span,
+    )
+    points = [
+        (gcx - ax * spacing, gcy - ay * spacing),
+        (gcx, gcy),
+        (gcx + ax * spacing, gcy + ay * spacing),
+    ]
     points = _order_pot_points_by_image_axis(points)
     return {
         "terminal_a": points[0],
         "wiper": points[1],
         "terminal_b": points[2],
     }
+
+
+def _potentiometer_fallback_spacing_px(
+    *,
+    calibrator: Any | None,
+    bbox: tuple[float, float, float, float],
+    top_box_span: float,
+) -> float:
+    """Return approximate adjacent-hole spacing for POT fallback points."""
+    if calibrator is not None and hasattr(calibrator, "representative_pitch_px"):
+        try:
+            pitch = float(calibrator.representative_pitch_px())
+            if np.isfinite(pitch) and pitch > 1.0:
+                return pitch
+        except Exception:
+            pass
+    x1, y1, x2, y2 = bbox
+    bbox_major = max(abs(float(x2) - float(x1)), abs(float(y2) - float(y1)))
+    return float(max(8.0, min(bbox_major * 0.32, top_box_span * 0.55)))
 
 
 def _detect_potentiometer_top_rect(crop: np.ndarray) -> tuple[tuple[float, float], tuple[float, float], float] | None:
