@@ -85,6 +85,9 @@ def test_production_references_are_dsl_only() -> None:
         "rc_lowpass_v1",
         "test_all_signal_v1",
         "test_rc_v1",
+        "ua741_inverting_active_lowpass_v1",
+        "ua741_inverting_amp_gain10_v1",
+        "ua741_inverting_summing_amp_v1",
         "voltage_divider_v1",
     }
     assert all(item["source_type"] == "dsl_python_v1" for item in refs)
@@ -99,6 +102,9 @@ def test_migrated_reference_dsl_topology_signatures() -> None:
         "rc_lowpass_v1": (2, 3),
         "test_all_signal_v1": (1, 2),
         "test_rc_v1": (1, 2),
+        "ua741_inverting_active_lowpass_v1": (5, 7),
+        "ua741_inverting_amp_gain10_v1": (4, 7),
+        "ua741_inverting_summing_amp_v1": (7, 8),
         "voltage_divider_v1": (2, 3),
     }
 
