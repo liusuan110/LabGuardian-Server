@@ -27,24 +27,10 @@ def three_blank_images_b64():
 
 
 @pytest.fixture
-def resistor_roi_b64():
-    """模拟 Resistor ROI base64."""
-    from tests.pipeline.fixtures import make_resistor_roi, image_to_b64
-    return image_to_b64(make_resistor_roi())
-
-
-@pytest.fixture
 def breadboard_image_b64():
     """模拟面包板图像 base64."""
     from tests.pipeline.fixtures import make_breadboard_image, image_to_b64
     return image_to_b64(make_breadboard_image())
-
-
-@pytest.fixture
-def resistor_roi_image():
-    """模拟 Resistor ROI 图像（NumPy 数组）."""
-    from tests.pipeline.fixtures import make_resistor_roi
-    return make_resistor_roi()
 
 
 @pytest.fixture
@@ -108,29 +94,8 @@ def mock_detector_breadboard():
 
 
 @pytest.fixture
-def mock_pin_detector_2pin():
-    """Mock Pin 检测器 — 2-pin 元件."""
-    from tests.pipeline.mocks import MockPinDetector
-    return MockPinDetector([
-        {"pin_id": 1, "pin_name": "pin1", "keypoint": (120.0, 240.0), "confidence": 0.95, "visibility": 2},
-        {"pin_id": 2, "pin_name": "pin2", "keypoint": (280.0, 240.0), "confidence": 0.95, "visibility": 2},
-    ])
-
-
-@pytest.fixture
-def mock_pin_detector_3pin():
-    """Mock Pin 检测器 — 3-pin 元件."""
-    from tests.pipeline.mocks import MockPinDetector
-    return MockPinDetector([
-        {"pin_id": 1, "pin_name": "pin1", "keypoint": (100.0, 240.0), "confidence": 0.95, "visibility": 2},
-        {"pin_id": 2, "pin_name": "pin2", "keypoint": (200.0, 240.0), "confidence": 0.95, "visibility": 2},
-        {"pin_id": 3, "pin_name": "pin3", "keypoint": (300.0, 240.0), "confidence": 0.95, "visibility": 2},
-    ])
-
-
-@pytest.fixture
 def real_pin_detector():
-    """真实的 PinRoiDetector（无模型 → 走启发式 fallback）."""
+    """真实的 PinRoiDetector（无模型 → unavailable pin shell）."""
     from app.pipeline.vision.pin_model import PinRoiDetector
     return PinRoiDetector(model_path=None, device="cpu")
 

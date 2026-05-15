@@ -149,7 +149,7 @@ def run_pipeline(
                 len(s1["detections"]), s1["duration_ms"])
     _notify("detect", 1.0)
 
-    # ── S1.5: 组件 ROI pin 检测 ──
+    # ── S1.5: 整图 pin 检测 ──
     _notify("pin_detect", 0.0)
     s15 = run_pin_detect(
         detections=s1["detections"],

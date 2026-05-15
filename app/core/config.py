@@ -123,7 +123,7 @@ class Settings(BaseSettings):
     YOLO_IOU_THRESHOLD: float = 0.5
     YOLO_IMGSZ: int = 960
     YOLO_DEVICE: str = "cpu"
-    # 当前 pin 主路径使用 full-image YOLO-Pose。ROI 训练权重仅保留兼容候选位。
+    # 当前 pin 主路径使用 full-image YOLO-Pose。
     PIN_MODEL_PATH: str | None = DEFAULT_PIN_MODEL_PATH
     PIN_MODEL_DEVICE: str = "cpu"
 

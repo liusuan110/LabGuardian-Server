@@ -53,7 +53,7 @@ class TestInterfaceVersions:
         )
 
         assert result["interface_version"] == "component_pin_detect_v1"
-        assert result["pin_detector_mode"] == "heuristic_fallback"
+        assert result["pin_detector_mode"] == "unavailable"
         assert result["pin_detector_backend"] == "yolo_pose"
 
     def test_t9_3_s2_interface_version(self):
@@ -73,16 +73,16 @@ class TestInterfaceVersions:
                         "keypoints_by_view": {"top": [160.0, 240.0]},
                         "visibility_by_view": {"top": 2},
                         "score_by_view": {"top": 0.95},
-                        "source_by_view": {"top": "heuristic_fallback"},
-                        "confidence": 0.95, "source": "heuristic_fallback",
+                        "source_by_view": {"top": "model"},
+                        "confidence": 0.95, "source": "model",
                     },
                     {
                         "pin_id": 2, "pin_name": "pin2",
                         "keypoints_by_view": {"top": [340.0, 240.0]},
                         "visibility_by_view": {"top": 2},
                         "score_by_view": {"top": 0.95},
-                        "source_by_view": {"top": "heuristic_fallback"},
-                        "confidence": 0.95, "source": "heuristic_fallback",
+                        "source_by_view": {"top": "model"},
+                        "confidence": 0.95, "source": "model",
                     },
                 ],
             }
@@ -154,13 +154,13 @@ class TestInterfaceVersions:
                         "pin_id": 1, "pin_name": "pin1",
                         "hole_id": "A1", "electrical_node_id": "ROW_1_L",
                         "confidence": 0.95, "observations": [],
-                        "source": "heuristic_fallback",
+                        "source": "model",
                     },
                     {
                         "pin_id": 2, "pin_name": "pin2",
                         "hole_id": "A3", "electrical_node_id": "ROW_3_L",
                         "confidence": 0.95, "observations": [],
-                        "source": "heuristic_fallback",
+                        "source": "model",
                     },
                 ],
             }
@@ -188,13 +188,13 @@ class TestInterfaceVersions:
                         "pin_id": 1, "pin_name": "pin1",
                         "hole_id": "A1", "electrical_node_id": "ROW_1_L",
                         "confidence": 0.95, "observations": [],
-                        "source": "heuristic_fallback",
+                        "source": "model",
                     },
                     {
                         "pin_id": 2, "pin_name": "pin2",
                         "hole_id": "A3", "electrical_node_id": "ROW_3_L",
                         "confidence": 0.95, "observations": [],
-                        "source": "heuristic_fallback",
+                        "source": "model",
                     },
                 ],
             }
@@ -236,7 +236,7 @@ class TestInterfaceVersions:
         for comp in result["components"]:
             for pin_data in comp["pins"]:
                 assert "source" in pin_data
-                assert pin_data["source"] in ("heuristic_fallback", "model", "unavailable")
+                assert pin_data["source"] in ("model", "unavailable")
 
     def test_t9_7_pin_detector_backend_mode(self, blank_image_b64):
         """T9.5: pin_detector.backend_mode 透传到输出"""
@@ -258,7 +258,7 @@ class TestInterfaceVersions:
         )
 
         assert "pin_detector_mode" in result
-        assert result["pin_detector_mode"] == "heuristic_fallback"
+        assert result["pin_detector_mode"] == "unavailable"
         assert "pin_detector_backend" in result
         assert result["pin_detector_backend"] == "yolo_pose"
 

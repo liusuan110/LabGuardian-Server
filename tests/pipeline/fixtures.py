@@ -13,42 +13,6 @@ def make_blank_image(h: int = 480, w: int = 640, color: tuple = (128, 128, 128))
     return np.full((h, w, 3), color, dtype=np.uint8)
 
 
-def make_resistor_roi(h: int = 60, w: int = 200) -> np.ndarray:
-    """模拟 Resistor ROI 图像（暗线引脚 + 彩色主体）."""
-    img = np.full((h, w, 3), 200, dtype=np.uint8)
-    # 左引脚线
-    cv2.line(img, (0, h // 2), (w // 4, h // 2), (50, 50, 50), 4)
-    # 右引脚线
-    cv2.line(img, (w * 3 // 4, h // 2), (w, h // 2), (50, 50, 50), 4)
-    # 棕色主体
-    cv2.rectangle(img, (w // 4, 5), (w * 3 // 4, h - 5), (139, 69, 19), -1)
-    # 色环（模拟）
-    cv2.rectangle(img, (w // 2 - 5, 5), (w // 2 + 5, h - 5), (255, 200, 0), 2)
-    return img
-
-
-def make_capacitor_roi(h: int = 40, w: int = 100) -> np.ndarray:
-    """模拟 Capacitor ROI 图像."""
-    img = np.full((h, w, 3), 200, dtype=np.uint8)
-    # 引脚线
-    cv2.line(img, (0, h // 2), (w // 4, h // 2), (50, 50, 50), 3)
-    cv2.line(img, (w * 3 // 4, h // 2), (w, h // 2), (50, 50, 50), 3)
-    # 蓝色主体
-    cv2.circle(img, (w // 2, h // 2), min(h // 2 - 5, w // 2 - 5), (200, 100, 50), -1)
-    return img
-
-
-def make_led_roi(h: int = 50, w: int = 80) -> np.ndarray:
-    """模拟 LED ROI 图像."""
-    img = np.full((h, w, 3), 200, dtype=np.uint8)
-    cv2.line(img, (0, h // 2), (w // 3, h // 2), (50, 50, 50), 3)
-    cv2.line(img, (w * 2 // 3, h // 2), (w, h // 2), (50, 50, 50), 3)
-    # 圆顶（透明效果）
-    cv2.ellipse(img, (w // 2, h // 3), (w // 3, h // 3), 0, 0, 180, (50, 255, 50), 2)
-    cv2.circle(img, (w // 2, h // 3), 5, (255, 255, 0), -1)
-    return img
-
-
 def make_breadboard_image(h: int = 480, w: int = 640) -> np.ndarray:
     """模拟面包板图像（白底 + 灰孔洞点阵）."""
     img = np.full((h, w, 3), 240, dtype=np.uint8)

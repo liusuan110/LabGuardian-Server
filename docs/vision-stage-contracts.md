@@ -140,12 +140,12 @@ S1 component detect
 约定:
 
 - `source="model"` 表示来自真实 `YOLO-Pose`
-- `source="heuristic_fallback"` 表示来自 fallback
-- fallback 可以继续存在, 但必须显式标记, 不得伪装成模型输出
+- `source="unavailable"` 表示当前没有可用 pose keypoint
+- 当前链路已移除单组件裁切小图后的 pin fallback
 - `roi_by_view` 现在主要作为兼容输出壳保留:
   - `top` 视图常见为 `source="full_image_pose"`
+  - 无 pose 模型时 `top` 也应标记为 `source="unavailable"`
   - 侧视图若未参与默认判定，应明确标记为 `unavailable`
-- 若未来重新启用 ROI 路径，才需要恢复 `associated_bbox_candidate / shared_bbox_fallback` 这类语义
 
 ## S2
 

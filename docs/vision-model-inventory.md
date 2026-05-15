@@ -67,9 +67,7 @@ train_demo/pose_components/weights/best.pt
 当前判断：
 
 - 正式主链默认已切到 `pose_components`
-- ROI 裁切训练权重暂不再作为默认主链候选，只保留实验和历史对照价值
-  - 最终 `hole_id` 是否合理
-  - ROI 是否包含完整元件和引脚活动区
+- 单组件裁切小图后的 pin 识别链路已移除，后续 S1.5 只评估整图 pose 结果
 
 ## 历史模型
 
@@ -85,7 +83,7 @@ train_demo/pose_components/weights/best.pt
 
 当前判断：
 
-- 指标不错，但在当前 ROI 链路里曾出现较多同孔问题。
+- 指标不错，但 keypoint 落点仍需要结合 S2 hole mapping 继续评估。
 - 保留用于对比，不建议作为默认 pin 模型。
 
 ### 已删除：旧根目录 `models/`
@@ -106,17 +104,6 @@ train_demo/pose_components/weights/best.pt
 
 - 标签体系和当前后端不一致。
 - 已从仓库删除，不再作为历史备份或默认 fallback。
-
-## 当前调试输出
-
-最近一次新版 `train_demo/models` 在真实图片上的可视化输出位于：
-
-```text
-/tmp/pose_crop_by_box_v1_3_camera_roll_visuals
-/tmp/pose_crop_by_box_v1_3_complex_visuals
-```
-
-这些目录不属于仓库源码，仅用于本地观察模型效果。
 
 ## 协作约定
 

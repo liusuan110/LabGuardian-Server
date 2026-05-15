@@ -1340,7 +1340,6 @@ def _prediction_source_weight(source: str) -> float:
     return {
         "model": 1.0,
         "mock_model": 1.0,
-        "heuristic_fallback": 0.72,
     }.get(source, 0.65)
 
 

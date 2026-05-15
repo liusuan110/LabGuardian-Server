@@ -23,8 +23,8 @@ component detector:
 pin detector:
   $LABGUARDIAN_MODEL_ROOT/pin/best.pt
   $LABGUARDIAN_MODEL_ROOT/pin_detector/best.pt
-  $LABGUARDIAN_MODEL_ROOT/pose_roi_context_v12/best.pt
-  $LABGUARDIAN_MODEL_ROOT/pose_roi_context_v12/weights/best.pt
+  $LABGUARDIAN_MODEL_ROOT/pose_components/best.pt
+  $LABGUARDIAN_MODEL_ROOT/pose_components/weights/best.pt
   $LABGUARDIAN_MODEL_ROOT/models/best.pt
   $LABGUARDIAN_MODEL_ROOT/models/weights/best.pt
 ```
