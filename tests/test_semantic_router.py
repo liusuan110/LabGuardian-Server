@@ -12,15 +12,12 @@ Mix of three test paths to cover the router's degradation chain:
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 from typing import Sequence
 
 import numpy as np
 
 from app.agent.router import RouteDefinition, SemanticRouter
 from app.services.embedding_backend import EmbeddingBackend, NullEmbeddingBackend
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class _FakeEmbedding(EmbeddingBackend):
@@ -90,11 +87,11 @@ def test_auto_fire_part_number_bypasses_other_checks() -> None:
     assert decision.keyword_hits == ["ne555"]
 
 
-def test_embedding_path_fires_on_paraphrased_datasheet_query() -> None:
+def test_embedding_path_fires_on_paraphrased_datasheet_query(tmp_path) -> None:
     """Phrasing that shares NO surface keywords with the YAML keyword list
     should still route via the embedding side when a backend is active."""
 
-    routes_dir = REPO_ROOT / "tests" / "_tmp_routes_a"
+    routes_dir = tmp_path / "routes"
     routes_dir.mkdir(parents=True, exist_ok=True)
     (routes_dir / "datasheet.yaml").write_text(
         """
@@ -119,11 +116,11 @@ min_keyword_hits: 1
     assert decision.matched_via == "embedding"
 
 
-def test_embedding_negative_utterance_vetoes_wiring_query() -> None:
+def test_embedding_negative_utterance_vetoes_wiring_query(tmp_path) -> None:
     """A query that lexically matches negative utterances must score below
     threshold even if it tangentially overlaps positive utterances."""
 
-    routes_dir = REPO_ROOT / "tests" / "_tmp_routes_b"
+    routes_dir = tmp_path / "routes"
     routes_dir.mkdir(parents=True, exist_ok=True)
     (routes_dir / "datasheet.yaml").write_text(
         """
