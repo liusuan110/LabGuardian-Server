@@ -270,6 +270,8 @@ def _run_pin_detect_legacy(
             component["pins"] = _semanticize_potentiometer_pins(
                 pins=component["pins"],
                 bbox=list(bbox),
+                calibrator=calibrator,
+                top_image=top_image,
             )
         top_roi = rois_by_view.get("top") or {}
         component["roi"] = {
@@ -486,6 +488,8 @@ def _match_pose_instance(det: dict, pose_instances: list[PoseInstance]) -> PoseI
         for inst in pose_instances
         if not inst.used and inst.component_type == component_type
     ]
+    if component_type == "Potentiometer" and not typed_candidates:
+        return None
     candidates = typed_candidates or [inst for inst in pose_instances if not inst.used]
     best: tuple[float, PoseInstance] | None = None
     for inst in candidates:
@@ -536,81 +540,609 @@ def _project_point(point: tuple[float, float], axis: tuple[float, float]) -> flo
     return float(point[0] * axis[0] + point[1] * axis[1])
 
 
+_POT_LETTERS = list("abcdefghij")
+# Within a half (a-e or f-j), 3 adjacent letters: indices 0-2, 1-3, 2-4 / 5-7, 6-8, 7-9.
+_POT_VERTICAL_LETTER_STARTS = (0, 1, 2, 5, 6, 7)
+
+
 def _semanticize_potentiometer_pins(
     *,
     pins: list[dict],
     bbox: list[float],
     view_id: str = "top",
+    calibrator: Any | None = None,
+    top_image: Any | None = None,
 ) -> list[dict]:
-    """Rename/reorder potentiometer pins so the geometric middle leg is wiper."""
+    """Rename/reorder POT pins as terminal_a/wiper/terminal_b and snap to 3-collinear holes.
+
+    物理约束: POT 三个引脚必须同时落在面包板的一条线上 ——
+    - 横插 (horizontal): 三脚同一字母行 (a-j 中某一个), 跨 3 个相邻数字列;
+    - 竖插 (vertical):  三脚同一数字列, 跨同一半 (a-e 或 f-j) 内 3 个相邻字母行.
+
+    当 calibrator 就绪时, 将模型 keypoint (缺失则用 bbox 几何补齐) 投到 board plane,
+    枚举所有合法三孔三元组, 选总平方距离最小的一组, 把三脚的 keypoint_by_view
+    重写为候选孔在 frame pixel 上的精确位置.
+
+    当 calibrator 不可用时 -> 拒绝输出 pin 坐标 (与 IC 同一策略), 仅保留 pin schema
+    + degraded metadata, 让下游跳过此元件而不是吸附到错孔.
+    """
     if len(pins) != 3:
         return pins
 
-    entries = [dict(pin) for pin in pins]
+    if not _ensure_calibrator_ready(calibrator=calibrator, top_image=top_image):
+        return _pot_refused_output(pins=pins, view_id=view_id, reason="calibrator_unavailable")
+
+    detected_pixel_by_idx = _pot_extract_view_pixels(
+        pins=pins, view_id=view_id, bbox=bbox, calibrator=calibrator,
+    )
+    if detected_pixel_by_idx is None:
+        return _pot_refused_output(pins=pins, view_id=view_id, reason="no_visible_potentiometer_keypoints")
+
+    detected_board: list[tuple[int, tuple[float, float]]] = []
+    for src_idx, pixel in detected_pixel_by_idx:
+        try:
+            bp = calibrator.frame_pixel_to_board_point(float(pixel[0]), float(pixel[1]))
+        except Exception as exc:
+            logger.debug("S1.5 POT geometry: frame_pixel_to_board_point failed: %s", exc)
+            return _pot_refused_output(pins=pins, view_id=view_id, reason="calibrator_projection_failed")
+        detected_board.append((src_idx, (float(bp[0]), float(bp[1]))))
+
+    bbox_footprint = _pot_bbox_board_footprint(bbox=bbox, calibrator=calibrator)
+    snap = _pot_best_snap(
+        detected=detected_board,
+        calibrator=calibrator,
+        bbox_footprint=bbox_footprint,
+    )
+    if snap is None:
+        return _pot_refused_output(pins=pins, view_id=view_id, reason="no_legal_triplet")
+
+    return _pot_apply_snap(
+        pins=pins,
+        view_id=view_id,
+        snap=snap,
+        calibrator=calibrator,
+        keypoint_sources={src_idx: src for src_idx, src in _pot_keypoint_sources(pins, view_id).items()},
+    )
+
+
+def _ensure_calibrator_ready(*, calibrator: Any | None, top_image: Any | None) -> bool:
+    if calibrator is None:
+        return False
+    if getattr(calibrator, "is_grid_ready", False):
+        return True
+    if top_image is None or not hasattr(calibrator, "ensure_calibrated"):
+        return False
+    try:
+        calibrator.ensure_calibrated(top_image)
+    except Exception as exc:
+        logger.debug("S1.5 POT geometry: ensure_calibrated failed: %s", exc)
+        return False
+    return bool(getattr(calibrator, "is_grid_ready", False))
+
+
+def _pot_keypoint_sources(pins: list[dict], view_id: str) -> dict[int, str]:
+    """Map original pin index → source label ('model' / 'potentiometer_bbox_fallback' / 'unavailable')."""
+    sources: dict[int, str] = {}
+    for idx, pin in enumerate(pins):
+        if _pin_has_view_keypoint(pin, view_id):
+            src = (pin.get("source_by_view") or {}).get(view_id) or pin.get("source") or "model"
+            sources[idx] = str(src)
+        else:
+            sources[idx] = "potentiometer_bbox_fallback"
+    return sources
+
+
+def _pot_extract_view_pixels(
+    *,
+    pins: list[dict],
+    view_id: str,
+    bbox: list[float],
+    calibrator: Any | None = None,
+) -> list[tuple[int, tuple[float, float]]] | None:
+    """Return [(pin_idx, (px, py))] x3 using model keypoints where present, bbox fallback otherwise.
+
+    Returns None when there are zero visible keypoints AND bbox is degenerate
+    (caller should refuse output in that case).
+    """
     valid: list[tuple[int, tuple[float, float]]] = []
-    for idx, pin in enumerate(entries):
-        keypoints_by_view = dict(pin.get("keypoints_by_view") or {})
-        point = keypoints_by_view.get(view_id)
+    missing_idxs: list[int] = []
+    for idx, pin in enumerate(pins):
+        point = (pin.get("keypoints_by_view") or {}).get(view_id)
         if point and len(point) >= 2:
             valid.append((idx, (float(point[0]), float(point[1]))))
+        else:
+            missing_idxs.append(idx)
 
-    assignment: dict[str, int] = {}
-    role_source = "unavailable"
-    degraded_reason = ""
-    if len(valid) >= 3:
-        axis = _potentiometer_projection_axis([point for _, point in valid])
-        ordered = sorted(valid, key=lambda item: _project_point(item[1], axis))
-        assignment = {
-            "terminal_a": ordered[0][0],
-            "wiper": ordered[1][0],
-            "terminal_b": ordered[2][0],
-        }
-        role_source = "geometry_three_point_projection"
-    elif len(valid) == 2:
-        axis = _potentiometer_projection_axis([point for _, point in valid])
+    if not valid and not _bbox_is_usable(bbox):
+        return None
+
+    if not missing_idxs:
+        return valid
+
+    fallback = _potentiometer_bbox_fallback_points(bbox, calibrator=calibrator)
+    fallback_points = [fallback["terminal_a"], fallback["wiper"], fallback["terminal_b"]]
+    used = [False, False, False]
+    if valid:
+        # Greedily assign each valid keypoint to its nearest fallback slot,
+        # so the remaining slots are used for the *missing* original indices.
+        for _, pt in valid:
+            dists = [
+                ((pt[0] - fp[0]) ** 2 + (pt[1] - fp[1]) ** 2, slot)
+                for slot, fp in enumerate(fallback_points)
+                if not used[slot]
+            ]
+            if not dists:
+                break
+            dists.sort()
+            used[dists[0][1]] = True
+    free_slots = [slot for slot, taken in enumerate(used) if not taken]
+    for missing_idx, slot in zip(missing_idxs, free_slots):
+        valid.append((missing_idx, fallback_points[slot]))
+
+    valid.sort(key=lambda item: item[0])
+    return valid
+
+
+def _bbox_is_usable(bbox: list[float]) -> bool:
+    try:
         x1, y1, x2, y2 = [float(v) for v in (bbox or [0.0, 0.0, 0.0, 0.0])[:4]]
-        center_projection = _project_point(((x1 + x2) / 2.0, (y1 + y2) / 2.0), axis)
-        wiper_idx, wiper_point = min(valid, key=lambda item: abs(_project_point(item[1], axis) - center_projection))
-        terminal_idx, terminal_point = next(item for item in valid if item[0] != wiper_idx)
-        missing_idx = next((idx for idx in range(3) if idx not in {wiper_idx, terminal_idx}), terminal_idx)
-        terminal_role = "terminal_a" if _project_point(terminal_point, axis) < _project_point(wiper_point, axis) else "terminal_b"
-        missing_role = "terminal_b" if terminal_role == "terminal_a" else "terminal_a"
-        assignment = {
-            terminal_role: terminal_idx,
-            "wiper": wiper_idx,
-            missing_role: missing_idx,
-        }
-        role_source = "geometry_two_point_center_projection"
-        degraded_reason = "one_potentiometer_terminal_missing"
-    elif len(valid) == 1:
-        wiper_idx = valid[0][0]
-        missing = [idx for idx in range(3) if idx != wiper_idx]
-        assignment = {
-            "terminal_a": missing[0],
-            "wiper": wiper_idx,
-            "terminal_b": missing[1],
-        }
-        role_source = "single_visible_point_assumed_wiper"
-        degraded_reason = "two_potentiometer_terminals_missing"
-    else:
-        assignment = {"terminal_a": 0, "wiper": 1, "terminal_b": 2}
-        degraded_reason = "no_visible_potentiometer_keypoints"
+    except (TypeError, ValueError):
+        return False
+    return (x2 - x1) > 1.0 and (y2 - y1) > 1.0
 
-    ordered_entries: list[dict] = []
-    for pin_id, pin_name in enumerate(POTENTIOMETER_PIN_NAMES, start=1):
-        source_idx = assignment[pin_name]
-        pin = dict(entries[source_idx])
+
+def _pot_enumerate_triplets(
+    *,
+    calibrator: Any,
+) -> list[tuple[str, list[tuple[str, str]]]]:
+    """Yield (orientation, [logic_loc x3]) for every legal 3-collinear hole triplet."""
+    row_coords = getattr(calibrator, "row_coords", None)
+    if row_coords is None or len(row_coords) < 3:
+        return []
+    n_digits = int(len(row_coords))
+    out: list[tuple[str, list[tuple[str, str]]]] = []
+    # Horizontal: same letter row, 3 adjacent digit columns.
+    for letter in _POT_LETTERS:
+        for d in range(1, n_digits - 1):
+            out.append(("horizontal", [(str(d), letter), (str(d + 1), letter), (str(d + 2), letter)]))
+    # Vertical: same digit column, 3 adjacent letters within same half (a-e or f-j).
+    for d in range(1, n_digits + 1):
+        for start in _POT_VERTICAL_LETTER_STARTS:
+            out.append((
+                "vertical",
+                [
+                    (str(d), _POT_LETTERS[start]),
+                    (str(d), _POT_LETTERS[start + 1]),
+                    (str(d), _POT_LETTERS[start + 2]),
+                ],
+            ))
+    return out
+
+
+def _pot_bbox_board_footprint(
+    *,
+    bbox: list[float],
+    calibrator: Any,
+) -> tuple[float, float, float, float] | None:
+    """Project bbox 4 corners to board plane → axis-aligned (x_lo, y_lo, x_hi, y_hi).
+
+    Returns ``None`` when the bbox is degenerate or the calibrator can't project.
+    The 3296 trim-pot pins always sit *underneath* the body in plan view, so the
+    legal 3-hole triplet must lie inside this footprint — only holes covered by
+    the body bbox are physical pin candidates.
+    """
+    try:
+        x1, y1, x2, y2 = [float(v) for v in (bbox or [0.0, 0.0, 0.0, 0.0])[:4]]
+    except (TypeError, ValueError):
+        return None
+    if x2 < x1:
+        x1, x2 = x2, x1
+    if y2 < y1:
+        y1, y2 = y2, y1
+    if (x2 - x1) < 1.0 or (y2 - y1) < 1.0:
+        return None
+    try:
+        corners = [
+            calibrator.frame_pixel_to_board_point(x1, y1),
+            calibrator.frame_pixel_to_board_point(x2, y1),
+            calibrator.frame_pixel_to_board_point(x1, y2),
+            calibrator.frame_pixel_to_board_point(x2, y2),
+        ]
+    except Exception as exc:
+        logger.debug("S1.5 POT footprint: frame_pixel_to_board_point failed: %s", exc)
+        return None
+    bxs = [float(c[0]) for c in corners]
+    bys = [float(c[1]) for c in corners]
+    return (min(bxs), min(bys), max(bxs), max(bys))
+
+
+def _pot_best_snap(
+    *,
+    detected: list[tuple[int, tuple[float, float]]],
+    calibrator: Any,
+    bbox_footprint: tuple[float, float, float, float] | None = None,
+) -> dict[str, Any] | None:
+    """Find the legal 3-collinear hole triplet minimizing sum-sq distance to `detected` board points.
+
+    When ``bbox_footprint`` is provided, candidates whose 3 holes all lie inside
+    (with a half-pitch tolerance for bbox slop) are evaluated first; the
+    unconstrained set is only used as a fallback if no triplet fits inside.
+    This enforces the physical reality that 3296 trim-pot pins are hidden
+    underneath the component body — visible adjacent holes are never the
+    physical pin positions.
+
+    Returns dict with:
+      - orientation: "horizontal" | "vertical"
+      - logic_locs: list[(digit, letter)] sorted along the candidate axis
+      - board_points: list[(bx, by)] for those 3 holes, same order
+      - sorted_detected_idx: [original pin idx] in the same projection order
+      - cost_sq: total squared distance in board-plane units
+      - body_constrained: True when the selected triplet sits inside bbox_footprint
+    """
+    if len(detected) != 3:
+        return None
+    triplets = _pot_enumerate_triplets(calibrator=calibrator)
+    if not triplets:
+        return None
+
+    tol = 0.0
+    if bbox_footprint is not None:
+        pitch = float(getattr(calibrator, "representative_pitch_px", lambda: 10.0)())
+        # Half-pitch slop absorbs slight detection-bbox under-tightness.
+        tol = max(pitch * 0.5, 1.0)
+        fx_lo, fy_lo, fx_hi, fy_hi = bbox_footprint
+
+    inside_best: dict[str, Any] | None = None
+    inside_cost = float("inf")
+    any_best: dict[str, Any] | None = None
+    any_cost = float("inf")
+
+    for orientation, locs in triplets:
+        cps: list[tuple[float, float]] = []
+        ok = True
+        for loc in locs:
+            pt = calibrator.logic_to_board_point(loc)
+            if pt is None:
+                ok = False
+                break
+            cps.append((float(pt[0]), float(pt[1])))
+        if not ok or len(cps) != 3:
+            continue
+        dx = cps[2][0] - cps[0][0]
+        dy = cps[2][1] - cps[0][1]
+        norm = (dx * dx + dy * dy) ** 0.5
+        if norm < 1e-6:
+            continue
+        ax = dx / norm
+        ay = dy / norm
+        sorted_det = sorted(detected, key=lambda item: item[1][0] * ax + item[1][1] * ay)
+        cost = 0.0
+        for (_idx, bp), cp in zip(sorted_det, cps):
+            ex = bp[0] - cp[0]
+            ey = bp[1] - cp[1]
+            cost += ex * ex + ey * ey
+        record = {
+            "orientation": orientation,
+            "logic_locs": list(locs),
+            "board_points": list(cps),
+            "sorted_detected_idx": [item[0] for item in sorted_det],
+            "cost_sq": cost,
+        }
+        if cost < any_cost:
+            any_cost = cost
+            any_best = record
+        if bbox_footprint is not None:
+            inside = all(
+                fx_lo - tol <= cp[0] <= fx_hi + tol and fy_lo - tol <= cp[1] <= fy_hi + tol
+                for cp in cps
+            )
+            if inside and cost < inside_cost:
+                inside_cost = cost
+                inside_best = record
+
+    if inside_best is not None:
+        inside_best = dict(inside_best)
+        inside_best["body_constrained"] = True
+        return inside_best
+    if any_best is not None:
+        any_best = dict(any_best)
+        any_best["body_constrained"] = False
+    return any_best
+
+
+def _pot_apply_snap(
+    *,
+    pins: list[dict],
+    view_id: str,
+    snap: dict[str, Any],
+    calibrator: Any,
+    keypoint_sources: dict[int, str],
+) -> list[dict]:
+    """Rewrite the 3 pin entries to reflect the chosen 3-collinear hole triplet."""
+    entries = [dict(pin) for pin in pins]
+    sorted_idx: list[int] = snap["sorted_detected_idx"]
+    logic_locs: list[tuple[str, str]] = snap["logic_locs"]
+    board_points: list[tuple[float, float]] = snap["board_points"]
+    orientation: str = snap["orientation"]
+    cost_sq: float = float(snap.get("cost_sq", 0.0))
+
+    # Frame-pixel positions of the 3 candidate holes.
+    frame_pixels: list[tuple[float, float]] = []
+    if hasattr(calibrator, "board_point_to_frame_pixel"):
+        for bp in board_points:
+            try:
+                fp = calibrator.board_point_to_frame_pixel(float(bp[0]), float(bp[1]))
+                frame_pixels.append((float(fp[0]), float(fp[1])))
+            except Exception:
+                frame_pixels.append((float(bp[0]), float(bp[1])))
+    else:
+        frame_pixels = [tuple(bp) for bp in board_points]
+
+    out: list[dict] = []
+    # ordered_role_idx[0] = wire to terminal_a, [1] = wiper, [2] = terminal_b.
+    for slot, pin_name in enumerate(POTENTIOMETER_PIN_NAMES):
+        src_idx = sorted_idx[slot]
+        pin = dict(entries[src_idx])
+        kx, ky = frame_pixels[slot]
+        keypoints_by_view = dict(pin.get("keypoints_by_view") or {})
+        visibility_by_view = dict(pin.get("visibility_by_view") or {})
+        score_by_view = dict(pin.get("score_by_view") or {})
+        source_by_view = dict(pin.get("source_by_view") or {})
+        keypoints_by_view[view_id] = [kx, ky]
+        visibility_by_view[view_id] = 2
+        score_by_view[view_id] = max(float(score_by_view.get(view_id, 0.0) or 0.0), 0.75)
+        source_by_view[view_id] = "potentiometer_board_logic"
+
         metadata = dict(pin.get("metadata") or {})
-        metadata["potentiometer_role_source"] = role_source
-        metadata["potentiometer_source_pin_id"] = entries[source_idx].get("pin_id")
-        if degraded_reason:
-            metadata["potentiometer_role_degraded_reason"] = degraded_reason
-        pin["pin_id"] = pin_id
+        metadata["potentiometer_role_source"] = "board_plane_3collinear_snap"
+        metadata["potentiometer_source_pin_id"] = entries[src_idx].get("pin_id")
+        metadata["potentiometer_input_source"] = keypoint_sources.get(src_idx, "unknown")
+        metadata["pot_orientation"] = orientation
+        metadata["pot_logic_slots"] = [list(loc) for loc in logic_locs]
+        metadata["pot_snap_cost_sq"] = cost_sq
+        metadata["pot_body_constrained"] = bool(snap.get("body_constrained", False))
+        metadata["board_2d_point"] = [float(board_points[slot][0]), float(board_points[slot][1])]
+        if orientation == "horizontal":
+            metadata["row_lock"] = logic_locs[slot][1]
+        else:
+            metadata["column_lock"] = logic_locs[slot][0]
+
+        pin["pin_id"] = slot + 1
         pin["pin_name"] = pin_name
         pin["pin_display_name"] = pin_name
+        pin["keypoints_by_view"] = keypoints_by_view
+        pin["visibility_by_view"] = visibility_by_view
+        pin["score_by_view"] = score_by_view
+        pin["source_by_view"] = source_by_view
+        pin["confidence"] = max(float(pin.get("confidence", 0.0) or 0.0), 0.75)
+        pin["source"] = "potentiometer_board_logic"
         pin["metadata"] = metadata
-        ordered_entries.append(pin)
-    return ordered_entries
+        out.append(pin)
+    return out
+
+
+def _pot_refused_output(*, pins: list[dict], view_id: str, reason: str) -> list[dict]:
+    """Return 3 pin entries with no usable keypoint and a degraded reason.
+
+    Used when the calibrator is unavailable so downstream stages know to
+    skip the component instead of snapping to the wrong hole.
+    """
+    logger.warning("S1.5 POT geometry: refusing pin output (%s)", reason)
+    out: list[dict] = []
+    for slot, pin_name in enumerate(POTENTIOMETER_PIN_NAMES):
+        src = dict(pins[slot]) if slot < len(pins) else {}
+        metadata = dict(src.get("metadata") or {})
+        metadata["potentiometer_role_source"] = "refused"
+        metadata["potentiometer_role_degraded_reason"] = reason
+        metadata.pop("board_2d_point", None)
+        metadata.pop("pot_orientation", None)
+        metadata.pop("pot_logic_slots", None)
+        pin = {
+            "pin_id": slot + 1,
+            "pin_name": pin_name,
+            "pin_display_name": pin_name,
+            "polarity_role": src.get("polarity_role", "UNKNOWN"),
+            "polarity_candidate_role": src.get("polarity_candidate_role", "UNKNOWN"),
+            "keypoints_by_view": {view_id: None},
+            "visibility_by_view": {view_id: 0},
+            "score_by_view": {view_id: 0.0},
+            "source_by_view": {view_id: "unavailable"},
+            "confidence": 0.0,
+            "source": "unavailable",
+            "metadata": metadata,
+        }
+        out.append(pin)
+    return out
+
+
+def _pin_has_view_keypoint(pin: dict, view_id: str) -> bool:
+    point = (pin.get("keypoints_by_view") or {}).get(view_id)
+    return bool(point and len(point) >= 2)
+
+
+def _potentiometer_bbox_fallback_points(
+    bbox: list[float],
+    *,
+    calibrator: Any | None = None,
+) -> dict[str, tuple[float, float]]:
+    """Fallback 3-pin positions when model keypoints are missing.
+
+    With a calibrator: project bbox 4 corners to board plane, pick the dominant
+    axis (digit vs letter), snap the bbox center to the nearest legal hole, and
+    emit 3 adjacent legal hole positions (in frame pixels). These are already
+    "legal 3-collinear holes" so the board-plane snap in
+    ``_semanticize_potentiometer_pins`` finds them with cost ≈ 0.
+
+    Without a calibrator: degrade to the old image-frame heuristic so callers
+    that don't pass a calibrator (refused path, unit tests) keep working.
+    """
+    try:
+        x1, y1, x2, y2 = [float(v) for v in (bbox or [0.0, 0.0, 0.0, 0.0])[:4]]
+    except (TypeError, ValueError):
+        x1, y1, x2, y2 = 0.0, 0.0, 0.0, 0.0
+    if x2 < x1:
+        x1, x2 = x2, x1
+    if y2 < y1:
+        y1, y2 = y2, y1
+
+    board_fallback = _potentiometer_bbox_fallback_points_board(
+        bbox=(x1, y1, x2, y2),
+        calibrator=calibrator,
+    )
+    if board_fallback is not None:
+        return board_fallback
+
+    width = max(1.0, x2 - x1)
+    height = max(1.0, y2 - y1)
+    if width >= height:
+        y = y2 - height * 0.18
+        return {
+            "terminal_a": (x1 + width * 0.22, y),
+            "wiper": (x1 + width * 0.50, y),
+            "terminal_b": (x1 + width * 0.78, y),
+        }
+    x = x1 + width * 0.50
+    return {
+        "terminal_a": (x, y1 + height * 0.22),
+        "wiper": (x, y1 + height * 0.50),
+        "terminal_b": (x, y1 + height * 0.78),
+    }
+
+
+def _potentiometer_bbox_fallback_points_board(
+    *,
+    bbox: tuple[float, float, float, float],
+    calibrator: Any | None,
+) -> dict[str, tuple[float, float]] | None:
+    """Compute 3 fallback hole positions in board plane → frame pixels.
+
+    Returns ``None`` when the calibrator is unusable; caller then degrades to
+    image-frame heuristics.
+    """
+    if calibrator is None or not getattr(calibrator, "is_grid_ready", False):
+        return None
+    if not hasattr(calibrator, "frame_pixel_to_board_point"):
+        return None
+    if not hasattr(calibrator, "logic_to_board_point"):
+        return None
+
+    x1, y1, x2, y2 = bbox
+    try:
+        bp_corners = [
+            calibrator.frame_pixel_to_board_point(x1, y1),
+            calibrator.frame_pixel_to_board_point(x2, y1),
+            calibrator.frame_pixel_to_board_point(x1, y2),
+            calibrator.frame_pixel_to_board_point(x2, y2),
+        ]
+    except Exception as exc:
+        logger.debug("S1.5 POT fallback: bbox board projection failed: %s", exc)
+        return None
+
+    bxs = [pt[0] for pt in bp_corners]
+    bys = [pt[1] for pt in bp_corners]
+    spread_x = max(bxs) - min(bxs)
+    spread_y = max(bys) - min(bys)
+    center_x = 0.5 * (max(bxs) + min(bxs))
+    center_y = 0.5 * (max(bys) + min(bys))
+
+    landscape = bool(getattr(calibrator, "landscape", False) or getattr(calibrator, "_landscape", False))
+    # Map board axes back to "digit axis" / "letter axis":
+    #   landscape=True  -> digits along board-X, letters along board-Y
+    #   landscape=False -> digits along board-Y, letters along board-X
+    if landscape:
+        digit_spread, letter_spread = spread_x, spread_y
+    else:
+        digit_spread, letter_spread = spread_y, spread_x
+
+    horizontal_insert = digit_spread >= letter_spread
+
+    anchor = None
+    if hasattr(calibrator, "board_point_to_logic"):
+        try:
+            anchor = calibrator.board_point_to_logic(center_x, center_y)
+        except Exception as exc:
+            logger.debug("S1.5 POT fallback: board_point_to_logic failed: %s", exc)
+            anchor = None
+    if anchor is None or len(anchor) < 2:
+        return None
+
+    digit_str, letter_str = str(anchor[0]).strip(), str(anchor[1]).strip().lower()
+    try:
+        digit_idx = int(digit_str) - 1
+    except ValueError:
+        return None
+    if letter_str not in _POT_LETTERS:
+        return None
+    letter_idx = _POT_LETTERS.index(letter_str)
+
+    row_coords = getattr(calibrator, "row_coords", None)
+    n_digits = int(len(row_coords)) if row_coords is not None else 0
+    if n_digits < 3:
+        return None
+
+    if horizontal_insert:
+        # 3 adjacent digits, same letter. Clamp window so all 3 are in [1, n_digits].
+        start = max(1, min(digit_idx, n_digits - 2))
+        digits = [str(start), str(start + 1), str(start + 2)]
+        triplet = [(d, letter_str) for d in digits]
+    else:
+        # 3 adjacent letters within same half (a-e or f-j), same digit.
+        if letter_idx <= 4:
+            start = max(0, min(letter_idx - 1, 2))
+        else:
+            start = max(5, min(letter_idx - 1, 7))
+        triplet = [(digit_str, _POT_LETTERS[start + i]) for i in range(3)]
+
+    frame_pixels: list[tuple[float, float]] = []
+    for loc in triplet:
+        try:
+            bp = calibrator.logic_to_board_point(loc)
+            if bp is None:
+                return None
+            if hasattr(calibrator, "board_point_to_frame_pixel"):
+                fp = calibrator.board_point_to_frame_pixel(float(bp[0]), float(bp[1]))
+                frame_pixels.append((float(fp[0]), float(fp[1])))
+            else:
+                frame_pixels.append((float(bp[0]), float(bp[1])))
+        except Exception as exc:
+            logger.debug("S1.5 POT fallback: hole projection failed for %s: %s", loc, exc)
+            return None
+
+    return {
+        "terminal_a": frame_pixels[0],
+        "wiper": frame_pixels[1],
+        "terminal_b": frame_pixels[2],
+    }
+
+
+def _with_potentiometer_fallback_keypoint(
+    *,
+    pin: dict,
+    pin_name: str,
+    keypoint: tuple[float, float],
+    view_id: str,
+) -> dict:
+    updated = dict(pin)
+    kx, ky = float(keypoint[0]), float(keypoint[1])
+    keypoints_by_view = dict(updated.get("keypoints_by_view") or {})
+    visibility_by_view = dict(updated.get("visibility_by_view") or {})
+    score_by_view = dict(updated.get("score_by_view") or {})
+    source_by_view = dict(updated.get("source_by_view") or {})
+    keypoints_by_view[view_id] = [kx, ky]
+    visibility_by_view[view_id] = 1
+    score_by_view[view_id] = max(float(score_by_view.get(view_id, 0.0) or 0.0), 0.35)
+    source_by_view[view_id] = "potentiometer_bbox_fallback"
+    updated["keypoints_by_view"] = keypoints_by_view
+    updated["visibility_by_view"] = visibility_by_view
+    updated["score_by_view"] = score_by_view
+    updated["source_by_view"] = source_by_view
+    updated["confidence"] = max(float(updated.get("confidence", 0.0) or 0.0), 0.35)
+    updated["source"] = "potentiometer_bbox_fallback"
+    metadata = dict(updated.get("metadata") or {})
+    metadata["potentiometer_fallback_pin_name"] = pin_name
+    metadata["potentiometer_fallback_keypoint"] = [kx, ky]
+    updated["metadata"] = metadata
+    return updated
 
 
 def _build_components_from_full_pose(
@@ -731,6 +1263,8 @@ def _build_components_from_full_pose(
             pins = _semanticize_potentiometer_pins(
                 pins=pins,
                 bbox=list(det.get("bbox") or [0, 0, 0, 0]),
+                calibrator=calibrator,
+                top_image=top_image,
             )
 
         roi_by_view = {
@@ -1088,6 +1622,7 @@ def _build_ic_geometry_pins(
     view_ids: List[str],
     calibrator: Any | None = None,
     top_image: np.ndarray | None = None,
+    _allow_image_frame_fallback: bool = False,
 ) -> List[dict]:
     """根据 IC bbox + 面包板 e/f 行约束推断 DIP8/DIP14 引脚槽位。
 
@@ -1104,9 +1639,9 @@ def _build_ic_geometry_pins(
     1) calibrator 就绪 / 能 ensure_calibrated 成功 -> 用 logic_to_board_point 选
        4 / 7 个连续数字列, board_2d_point 直接来自面包板逻辑坐标, 反变换回 frame
        pixel 得到 keypoint.
-    2) 完全拿不到 calibrator -> 退化到 image-frame 兜底, 假设标准俯拍
-       (数字列 ≈ image-X, 字母行 ≈ image-Y), 兜底也固定 e 在 image-Y 小一侧,
-       f 在大一侧, 不再因 bbox 长短轴翻转.
+    2) calibrator 拿不到 -> 拒绝输出引脚 (返回 []), 同时把 degraded 信号写到 det
+       的 metadata. 下游 (S2) 应直接跳过此 IC 而不是吸附到错孔. 旧的 image-frame
+       兜底仅保留给 ``_allow_image_frame_fallback=True`` 的离线测试入口.
     """
     pkg = _normalize_ic_package_type(package_type)
     pin_count = _ic_pin_count(pkg)
@@ -1126,7 +1661,15 @@ def _build_ic_geometry_pins(
         top_image=top_image,
     )
     if layout is None:
-        layout = _image_frame_fallback_layout(bbox=bbox, half=half)
+        if _allow_image_frame_fallback:
+            layout = _image_frame_fallback_layout(bbox=bbox, half=half)
+        else:
+            logger.warning(
+                "S1.5 IC geometry: calibrator unavailable, refusing pin output "
+                "(package=%s, bbox=%s).",
+                pkg, bbox,
+            )
+            return []
 
     notch_at_low_index = notch_direction in {"left", "up"}
     pins_by_id: Dict[int, dict] = {}
@@ -1219,23 +1762,30 @@ def _try_board_logic_layout(
     if landscape:
         # 数字列轴在 board X 方向; 字母行 a-j 在 board Y 方向.
         bxs = [bp_tl[0], bp_tr[0], bp_bl[0], bp_br[0]]
-        lo, hi = min(bxs), max(bxs)
     else:
         bxs = [bp_tl[1], bp_tr[1], bp_bl[1], bp_br[1]]
-        lo, hi = min(bxs), max(bxs)
-    center = 0.5 * (lo + hi)
+    bbox_lo, bbox_hi = min(bxs), max(bxs)
+    bbox_center = 0.5 * (bbox_lo + bbox_hi)
 
     coords = np.asarray(row_coords, dtype=np.float32)
     if coords.size < half:
         return None
-    # 选 half 个相邻数字列 (列号连续), 让窗口中点最贴近 bbox 中点.
+    # 选 half 个相邻数字列 (列号连续), 让该列窗口与 bbox 数字列投影 [lo,hi] 的 1D IoU 最大.
+    # 与旧的"bbox 中点选窗口"相比, IoU 对 bbox 单侧含 label / 留白偏移更鲁棒.
     best_start = 0
-    best_diff = float("inf")
+    best_key: tuple[float, float] = (-1.0, -float("inf"))
     for start in range(coords.size - half + 1):
-        window_center = 0.5 * (float(coords[start]) + float(coords[start + half - 1]))
-        diff = abs(window_center - center)
-        if diff < best_diff:
-            best_diff = diff
+        win_lo = float(coords[start])
+        win_hi = float(coords[start + half - 1])
+        inter = max(0.0, min(win_hi, bbox_hi) - max(win_lo, bbox_lo))
+        union = max(win_hi, bbox_hi) - min(win_lo, bbox_lo)
+        iou = inter / union if union > 1e-6 else 0.0
+        win_center = 0.5 * (win_lo + win_hi)
+        # Tiebreaker: prefer the window whose center is closer to the bbox center
+        # (covers degenerate cases where every window has IoU 0 — bbox far outside).
+        key = (iou, -abs(win_center - bbox_center))
+        if key > best_key:
+            best_key = key
             best_start = start
 
     digit_column_labels = [str(best_start + i + 1) for i in range(half)]

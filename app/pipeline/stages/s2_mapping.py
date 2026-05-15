@@ -474,6 +474,62 @@ def _candidates_for_projection(
     return _get_candidates(pixel, calibrator, k=k)
 
 
+def _filter_candidates_by_pin_constraints(
+    *,
+    scored_candidates: List[Tuple[Tuple[str, str], float]],
+    pin_metadata: Dict[str, Any],
+) -> List[Tuple[Tuple[str, str], float]]:
+    """Drop logic candidates that violate physical constraints stamped by S1.5.
+
+    Constraints honored (set by ``s1b_pin_detect``):
+      * ``row_lock`` (str letter, e.g. ``"e"``): IC pin must snap to that letter row;
+        used both for DIP IC e/f bridge and for horizontally-inserted potentiometers.
+      * ``column_lock`` (str digit): vertically-inserted potentiometer must keep
+        the same digit column across all three pins.
+      * ``pot_logic_slots`` (``List[(digit, letter)]``): the exact 3-collinear hole
+        triplet the POT pins were snapped to; any candidate outside that triplet
+        would cross to a different physical line and must be rejected.
+
+    Returns the filtered list. If filtering removes every candidate, returns an
+    empty list — downstream then leaves the pin unmapped instead of falling back
+    to the geometrically wrong nearest hole.
+    """
+    if not scored_candidates or not pin_metadata:
+        return scored_candidates
+
+    row_lock_raw = pin_metadata.get("row_lock")
+    column_lock_raw = pin_metadata.get("column_lock")
+    slots_raw = pin_metadata.get("pot_logic_slots")
+
+    row_lock = str(row_lock_raw).strip().lower() if row_lock_raw else None
+    column_lock = str(column_lock_raw).strip() if column_lock_raw else None
+    slot_set: Optional[set[Tuple[str, str]]] = None
+    if slots_raw:
+        slot_set = set()
+        for entry in slots_raw:
+            if entry is None or len(entry) < 2:
+                continue
+            slot_set.add((str(entry[0]).strip(), str(entry[1]).strip().lower()))
+
+    if row_lock is None and column_lock is None and not slot_set:
+        return scored_candidates
+
+    filtered: List[Tuple[Tuple[str, str], float]] = []
+    for logic_loc, distance in scored_candidates:
+        if logic_loc is None or len(logic_loc) < 2:
+            continue
+        digit = str(logic_loc[0]).strip()
+        letter = str(logic_loc[1]).strip().lower()
+        if row_lock is not None and letter != row_lock:
+            continue
+        if column_lock is not None and digit != column_lock:
+            continue
+        if slot_set is not None and (digit, letter) not in slot_set:
+            continue
+        filtered.append((logic_loc, distance))
+    return filtered
+
+
 def _snap_confidence_from_distance(distance_px: float, pitch_px: float) -> float:
     """Convert a snap distance to a [0, 1] confidence score.
 
@@ -871,6 +927,10 @@ def _build_pin_observations_from_predictions(
             )
             if pixel is not None or projection.should_use_board_point_for_mapping
             else []
+        )
+        scored_candidates = _filter_candidates_by_pin_constraints(
+            scored_candidates=scored_candidates,
+            pin_metadata=pin_metadata,
         )
         logic_candidates = [item[0] for item in scored_candidates]
         candidate_hole_ids = [

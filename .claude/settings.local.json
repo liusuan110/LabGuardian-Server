@@ -11,7 +11,14 @@
       "Bash(D:/software/Python/Scripts/pytest.exe tests/test_agent_service_diagnostic.py::test_diagnostic_agent_mode_works_without_station_state tests/test_vlm_provider_contract.py::test_gate_does_not_fire_for_short_circuit -q)",
       "Bash(D:/software/Python/Scripts/pytest.exe tests/pipeline/test_s1_detect.py -x -q)",
       "Bash(D:/software/Python/python.exe *)",
-      "Bash(D:/software/Python/Scripts/pytest.exe tests/pipeline/test_s1b_pin_detect.py -q)"
+      "Bash(D:/software/Python/Scripts/pytest.exe tests/pipeline/test_s1b_pin_detect.py -q)",
+      "Bash(ls /Users/liusuan/Desktop/LabGuardian-Server | grep -i -E \"venv|env|requirements|pyproject\" *)",
+      "Bash(cat /Users/liusuan/Desktop/LabGuardian-Server/pyproject.toml | head -40 *)",
+      "Bash(.venv/bin/python -m pytest tests/pipeline/test_s1b_pin_detect.py -x -q)",
+      "Bash(.venv/bin/python -m pytest tests/pipeline/test_s1b_pin_detect.py -q)",
+      "Bash(.venv/bin/python -m pytest tests/pipeline/test_s2_mapping.py tests/pipeline/test_s1b_pin_detect.py -q)",
+      "Bash(.venv/bin/python -m pytest tests/pipeline/test_s1b_pin_detect.py tests/pipeline/test_s2_mapping.py -q)",
+      "Bash(.venv/bin/python -m pytest tests/pipeline/ -q --no-header)"
     ]
   }
 }

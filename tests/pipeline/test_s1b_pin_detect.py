@@ -46,19 +46,26 @@ class TestPinDetectionMock:
             assert comp["pins"][0]["pin_name"] == "pin1"
             assert comp["pins"][1]["pin_name"] == "pin2"
 
-    def test_t4_2_mock_3pin(self, blank_image_b64):
-        """T4.4: Potentiometer pins are semantic and wiper is the middle leg."""
+    def test_t4_2_mock_3pin_horizontal_snap(self, blank_image_b64):
+        """POT with 3 keypoints near a horizontal triplet snaps to 3 adjacent digit columns on one letter row."""
         from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
         from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
         from app.pipeline.stages.s1_detect import run_detect
 
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        # Horizontal insert: three pins share letter "e", spread across digits 10..12.
+        e_x = float(calibrator.col_coords[4])  # letter 'e' X
+        ys = [float(calibrator.row_coords[i]) for i in (9, 10, 11)]  # digits 10, 11, 12
+
         pot_det = MockComponentDetector([
-            {"class_name": "Potentiometer", "bbox": (100, 200, 300, 260), "confidence": 0.9}
+            {"class_name": "Potentiometer", "bbox": (e_x - 6.0, ys[0] - 4.0, e_x + 6.0, ys[2] + 4.0), "confidence": 0.9}
         ])
         pot_pin = MockPinDetector([
-            {"pin_id": 1, "pin_name": "terminal_b", "keypoint": (300.0, 240.0), "confidence": 0.9, "visibility": 2},
-            {"pin_id": 2, "pin_name": "terminal_a", "keypoint": (100.0, 240.0), "confidence": 0.9, "visibility": 2},
-            {"pin_id": 3, "pin_name": "wiper", "keypoint": (200.0, 240.0), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 1, "pin_name": "terminal_b", "keypoint": (e_x, ys[2]), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 2, "pin_name": "terminal_a", "keypoint": (e_x, ys[0]), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 3, "pin_name": "wiper", "keypoint": (e_x, ys[1]), "confidence": 0.9, "visibility": 2},
         ])
 
         s1 = run_detect(images_b64=[blank_image_b64], detector=pot_det)
@@ -66,18 +73,253 @@ class TestPinDetectionMock:
             detections=s1["detections"],
             images_b64=[blank_image_b64],
             pin_detector=pot_pin,
+            calibrator=calibrator,
         )
 
-        assert len(result["components"]) == 1
         comp = result["components"][0]
         assert comp["symmetry_group"] == [["terminal_a", "terminal_b"]]
         pins = comp["pins"]
         assert [pin["pin_name"] for pin in pins] == ["terminal_a", "wiper", "terminal_b"]
-        assert pins[1]["keypoints_by_view"]["top"] == [200.0, 240.0]
-        assert pins[1]["metadata"]["potentiometer_role_source"] == "geometry_three_point_projection"
+        for pin in pins:
+            assert pin["metadata"]["potentiometer_role_source"] == "board_plane_3collinear_snap"
+            assert pin["metadata"]["pot_orientation"] == "horizontal"
+            assert pin["metadata"]["row_lock"] == "e"
+        # logic_slots: same letter "e", 3 adjacent digits.
+        slots = pins[0]["metadata"]["pot_logic_slots"]
+        assert [s[1] for s in slots] == ["e", "e", "e"]
+        digits = [int(s[0]) for s in slots]
+        assert digits == [digits[0] + i for i in range(3)]
+        # wiper sits on the middle hole's board point.
+        assert pins[1]["metadata"]["board_2d_point"] == pytest.approx([e_x, ys[1]], abs=1e-3)
+        # keypoints_by_view is the candidate hole's frame pixel (no perspective in synthetic mode).
+        assert pins[0]["keypoints_by_view"]["top"] == pytest.approx([e_x, ys[0]], abs=1e-3)
+        assert pins[1]["keypoints_by_view"]["top"] == pytest.approx([e_x, ys[1]], abs=1e-3)
+        assert pins[2]["keypoints_by_view"]["top"] == pytest.approx([e_x, ys[2]], abs=1e-3)
+        # Snap cost should be ~0 since keypoints sit exactly on holes.
+        assert pins[0]["metadata"]["pot_snap_cost_sq"] < 1e-6
 
-    def test_t4_2a_potentiometer_missing_terminal_keeps_wiper(self, blank_image_b64):
-        """With one missing terminal, the point closest to the body center stays wiper."""
+    def test_t4_2a_potentiometer_missing_terminal_snaps_to_correct_triplet(self, blank_image_b64):
+        """One missing terminal: bbox fallback + remaining 2 keypoints still resolve the right 3-collinear triplet."""
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
+        from app.pipeline.stages.s1_detect import run_detect
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        e_x = float(calibrator.col_coords[4])
+        ys = [float(calibrator.row_coords[i]) for i in (20, 21, 22)]  # digits 21,22,23
+
+        pot_det = MockComponentDetector([
+            {"class_name": "Potentiometer", "bbox": (e_x - 6.0, ys[0] - 4.0, e_x + 6.0, ys[2] + 4.0), "confidence": 0.9}
+        ])
+        pot_pin = MockPinDetector([
+            {"pin_id": 1, "pin_name": "terminal_a", "keypoint": (e_x, ys[0]), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 2, "pin_name": "wiper", "keypoint": (e_x, ys[1]), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 3, "pin_name": "terminal_b", "keypoint": None, "confidence": 0.0, "visibility": 0},
+        ])
+
+        s1 = run_detect(images_b64=[blank_image_b64], detector=pot_det)
+        result = run_pin_detect(
+            detections=s1["detections"],
+            images_b64=[blank_image_b64],
+            pin_detector=pot_pin,
+            calibrator=calibrator,
+        )
+
+        pins = result["components"][0]["pins"]
+        assert [pin["pin_name"] for pin in pins] == ["terminal_a", "wiper", "terminal_b"]
+        # Even with one missing keypoint the snap recovers the correct logical triplet.
+        slots = pins[0]["metadata"]["pot_logic_slots"]
+        digits = [int(s[0]) for s in slots]
+        assert [s[1] for s in slots] == ["e", "e", "e"]
+        assert digits == [21, 22, 23]
+        # terminal_a / wiper keypoints land on holes 21 and 22 respectively.
+        assert pins[0]["keypoints_by_view"]["top"] == pytest.approx([e_x, ys[0]], abs=1e-3)
+        assert pins[1]["keypoints_by_view"]["top"] == pytest.approx([e_x, ys[1]], abs=1e-3)
+        # terminal_b (previously missing) gets snapped to hole 23 by geometry.
+        assert pins[2]["keypoints_by_view"]["top"] == pytest.approx([e_x, ys[2]], abs=1e-3)
+        assert pins[2]["visibility_by_view"]["top"] == 2
+        assert pins[2]["metadata"]["potentiometer_input_source"] == "potentiometer_bbox_fallback"
+
+    def test_pot_vertical_snap(self, blank_image_b64):
+        """竖插 POT: 三脚同一数字列, 跨同一半内 3 个相邻字母行."""
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
+        from app.pipeline.stages.s1_detect import run_detect
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        digit_y = float(calibrator.row_coords[14])  # digit 15
+        # Vertical insert in the f-j half: letters f, g, h.
+        xs = [float(calibrator.col_coords[i]) for i in (5, 6, 7)]
+
+        pot_det = MockComponentDetector([
+            {"class_name": "Potentiometer", "bbox": (xs[0] - 4.0, digit_y - 6.0, xs[2] + 4.0, digit_y + 6.0), "confidence": 0.9}
+        ])
+        pot_pin = MockPinDetector([
+            {"pin_id": 1, "pin_name": "terminal_a", "keypoint": (xs[0], digit_y), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 2, "pin_name": "wiper", "keypoint": (xs[1], digit_y), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 3, "pin_name": "terminal_b", "keypoint": (xs[2], digit_y), "confidence": 0.9, "visibility": 2},
+        ])
+        s1 = run_detect(images_b64=[blank_image_b64], detector=pot_det)
+        result = run_pin_detect(
+            detections=s1["detections"], images_b64=[blank_image_b64], pin_detector=pot_pin, calibrator=calibrator,
+        )
+
+        pins = result["components"][0]["pins"]
+        assert [p["pin_name"] for p in pins] == ["terminal_a", "wiper", "terminal_b"]
+        for pin in pins:
+            assert pin["metadata"]["pot_orientation"] == "vertical"
+            assert pin["metadata"]["column_lock"] == "15"
+        slots = pins[0]["metadata"]["pot_logic_slots"]
+        letters = [s[1] for s in slots]
+        assert letters == ["f", "g", "h"]
+        assert all(s[0] == "15" for s in slots)
+        # All three resulting keypoints share Y = digit 15 row.
+        for pin in pins:
+            assert pin["keypoints_by_view"]["top"][1] == pytest.approx(digit_y, abs=1e-3)
+
+    def test_pot_jitter_stability(self, blank_image_b64):
+        """Sub-pitch jitter on detected keypoints must not change the chosen 3-collinear triplet."""
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
+        from app.pipeline.stages.s1_detect import run_detect
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        e_x = float(calibrator.col_coords[4])
+        ys = [float(calibrator.row_coords[i]) for i in (30, 31, 32)]
+        pitch = float(calibrator.row_coords[1] - calibrator.row_coords[0])
+
+        clean_slots: list[list[str]] | None = None
+        for jitter in (-0.4, 0.0, 0.4):
+            pot_det = MockComponentDetector([
+                {"class_name": "Potentiometer", "bbox": (e_x - 6.0, ys[0] - 4.0, e_x + 6.0, ys[2] + 4.0), "confidence": 0.9}
+            ])
+            pot_pin = MockPinDetector([
+                {"pin_id": 1, "pin_name": "terminal_a", "keypoint": (e_x + jitter * pitch, ys[0] + jitter * pitch * 0.5), "confidence": 0.9, "visibility": 2},
+                {"pin_id": 2, "pin_name": "wiper", "keypoint": (e_x - jitter * pitch, ys[1] + jitter * pitch * 0.3), "confidence": 0.9, "visibility": 2},
+                {"pin_id": 3, "pin_name": "terminal_b", "keypoint": (e_x, ys[2] - jitter * pitch * 0.4), "confidence": 0.9, "visibility": 2},
+            ])
+            s1 = run_detect(images_b64=[blank_image_b64], detector=pot_det)
+            result = run_pin_detect(
+                detections=s1["detections"], images_b64=[blank_image_b64], pin_detector=pot_pin, calibrator=calibrator,
+            )
+            pins = result["components"][0]["pins"]
+            slots = [list(s) for s in pins[0]["metadata"]["pot_logic_slots"]]
+            if clean_slots is None:
+                clean_slots = slots
+            else:
+                assert slots == clean_slots, f"jitter {jitter} changed triplet"
+
+    def test_ic_refused_without_calibrator(self, blank_image_b64):
+        """No calibrator → IC pin output is refused (empty pins, downstream skips)."""
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
+        from app.pipeline.stages.s1_detect import run_detect
+
+        ic_det = MockComponentDetector([
+            {"class_name": "IC", "package_type": "dip8", "bbox": (100, 200, 300, 260), "confidence": 0.9}
+        ])
+        s1 = run_detect(images_b64=[blank_image_b64], detector=ic_det)
+        result = run_pin_detect(
+            detections=s1["detections"],
+            images_b64=[blank_image_b64],
+            pin_detector=MockPinDetector([]),
+        )
+
+        comp = result["components"][0]
+        assert comp["pins"] == []
+        assert comp["ic_geometry"]["calibrator_used"] is False
+
+    def test_pot_snap_constrained_to_body_footprint(self, blank_image_b64):
+        """Pose keypoints that land on *visible* holes adjacent to the body must NOT
+        win the snap — physical 3296 pins are hidden under the body, so the chosen
+        triplet must lie inside the bbox footprint even if outside-body holes are
+        closer to the (misleading) model keypoints.
+        """
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
+        from app.pipeline.stages.s1_detect import run_detect
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        d_x = float(calibrator.col_coords[3])  # letter 'd'
+        e_x = float(calibrator.col_coords[4])  # letter 'e' (inside body)
+        f_x = float(calibrator.col_coords[5])  # letter 'f' (visible holes beside body)
+        ys_inside = [float(calibrator.row_coords[i]) for i in (19, 20, 21)]  # digits 20..22
+
+        # Body covers letters d..e, digits 20..22 (POT body footprint).
+        bbox = (d_x - 4.0, ys_inside[0] - 4.0, e_x + 4.0, ys_inside[2] + 4.0)
+        pot_det = MockComponentDetector([
+            {"class_name": "Potentiometer", "bbox": bbox, "confidence": 0.9}
+        ])
+        # Misleading model keypoints: on visible holes at letter 'f', OUTSIDE the body bbox.
+        pot_pin = MockPinDetector([
+            {"pin_id": 1, "pin_name": "terminal_a", "keypoint": (f_x, ys_inside[0]), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 2, "pin_name": "wiper", "keypoint": (f_x, ys_inside[1]), "confidence": 0.9, "visibility": 2},
+            {"pin_id": 3, "pin_name": "terminal_b", "keypoint": (f_x, ys_inside[2]), "confidence": 0.9, "visibility": 2},
+        ])
+        s1 = run_detect(images_b64=[blank_image_b64], detector=pot_det)
+        result = run_pin_detect(
+            detections=s1["detections"], images_b64=[blank_image_b64], pin_detector=pot_pin, calibrator=calibrator,
+        )
+
+        pins = result["components"][0]["pins"]
+        for pin in pins:
+            assert pin["metadata"]["pot_body_constrained"] is True
+            assert pin["metadata"]["pot_orientation"] == "horizontal"
+            # Snap must land on letter 'e' (inside body), NOT letter 'f' (visible holes outside body).
+            assert pin["metadata"]["row_lock"] == "e"
+        # Verify all 3 snapped board points sit on letter 'e' (X = e_x), not 'f'.
+        for pin in pins:
+            assert pin["metadata"]["board_2d_point"][0] == pytest.approx(e_x, abs=1e-3)
+
+    def test_pot_all_keypoints_missing_uses_board_fallback(self, blank_image_b64):
+        """All 3 pose keypoints missing: bbox + calibrator alone should produce a legal triplet."""
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
+        from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
+        from app.pipeline.stages.s1_detect import run_detect
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        e_x = float(calibrator.col_coords[4])
+        # bbox roughly covers digits 5..7 on letter 'e' (horizontal insert), no real keypoints provided.
+        ys = [float(calibrator.row_coords[i]) for i in (4, 5, 6)]
+        pot_det = MockComponentDetector([
+            {"class_name": "Potentiometer", "bbox": (e_x - 6.0, ys[0] - 3.0, e_x + 6.0, ys[2] + 3.0), "confidence": 0.9}
+        ])
+        pot_pin = MockPinDetector([
+            {"pin_id": 1, "pin_name": "terminal_a", "keypoint": None, "confidence": 0.0, "visibility": 0},
+            {"pin_id": 2, "pin_name": "wiper", "keypoint": None, "confidence": 0.0, "visibility": 0},
+            {"pin_id": 3, "pin_name": "terminal_b", "keypoint": None, "confidence": 0.0, "visibility": 0},
+        ])
+        s1 = run_detect(images_b64=[blank_image_b64], detector=pot_det)
+        result = run_pin_detect(
+            detections=s1["detections"], images_b64=[blank_image_b64], pin_detector=pot_pin, calibrator=calibrator,
+        )
+
+        pins = result["components"][0]["pins"]
+        # All three input keypoints came from the board-plane bbox fallback, so the
+        # 3 snapped holes form a legal triplet on letter 'e' across 3 adjacent digits.
+        for pin in pins:
+            assert pin["metadata"]["pot_orientation"] == "horizontal"
+            assert pin["metadata"]["row_lock"] == "e"
+        slots = pins[0]["metadata"]["pot_logic_slots"]
+        letters = [s[1] for s in slots]
+        digits = [int(s[0]) for s in slots]
+        assert letters == ["e", "e", "e"]
+        assert digits == [digits[0] + i for i in range(3)]
+        # Snap cost should be ~0 since fallback already lands on hole positions.
+        assert pins[0]["metadata"]["pot_snap_cost_sq"] < 1e-3
+
+    def test_pot_refused_without_calibrator(self, blank_image_b64):
+        """No calibrator → POT pin output is refused (no keypoints, degraded reason set)."""
         from app.pipeline.stages.s1b_pin_detect import run_pin_detect
         from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
         from app.pipeline.stages.s1_detect import run_detect
@@ -88,21 +330,22 @@ class TestPinDetectionMock:
         pot_pin = MockPinDetector([
             {"pin_id": 1, "pin_name": "terminal_a", "keypoint": (100.0, 240.0), "confidence": 0.9, "visibility": 2},
             {"pin_id": 2, "pin_name": "wiper", "keypoint": (200.0, 240.0), "confidence": 0.9, "visibility": 2},
-            {"pin_id": 3, "pin_name": "terminal_b", "keypoint": None, "confidence": 0.0, "visibility": 0},
+            {"pin_id": 3, "pin_name": "terminal_b", "keypoint": (300.0, 240.0), "confidence": 0.9, "visibility": 2},
         ])
-
         s1 = run_detect(images_b64=[blank_image_b64], detector=pot_det)
         result = run_pin_detect(
-            detections=s1["detections"],
-            images_b64=[blank_image_b64],
-            pin_detector=pot_pin,
+            detections=s1["detections"], images_b64=[blank_image_b64], pin_detector=pot_pin,
         )
 
         pins = result["components"][0]["pins"]
-        assert [pin["pin_name"] for pin in pins] == ["terminal_a", "wiper", "terminal_b"]
-        assert pins[1]["keypoints_by_view"]["top"] == [200.0, 240.0]
-        assert pins[2]["visibility_by_view"]["top"] == 0
-        assert pins[1]["metadata"]["potentiometer_role_degraded_reason"] == "one_potentiometer_terminal_missing"
+        assert [p["pin_name"] for p in pins] == ["terminal_a", "wiper", "terminal_b"]
+        for pin in pins:
+            assert pin["source"] == "unavailable"
+            assert pin["confidence"] == 0.0
+            assert pin["visibility_by_view"]["top"] == 0
+            assert pin["keypoints_by_view"]["top"] is None
+            assert pin["metadata"]["potentiometer_role_source"] == "refused"
+            assert pin["metadata"]["potentiometer_role_degraded_reason"] == "calibrator_unavailable"
 
     def test_t4_2b_mock_transistor_3pin(self, blank_image_b64):
         """模型新标签 transistor_3pin 会被解释为 3-pin Transistor."""
@@ -151,11 +394,19 @@ class TestPinDetectionMock:
     def test_t4_3_mock_ic_dip8(self, blank_image_b64):
         """IC DIP-8 走 e/f-bridge 几何路径, 不再走 anchor pair."""
         from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
         from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
         from app.pipeline.stages.s1_detect import run_detect
 
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        e_x = float(calibrator.col_coords[4])
+        f_x = float(calibrator.col_coords[5])
+        y_top = float(calibrator.row_coords[2]) - 1.0
+        y_bot = float(calibrator.row_coords[5]) + 1.0
+
         ic_det = MockComponentDetector([
-            {"class_name": "IC", "package_type": "dip8", "bbox": (100, 200, 300, 260), "confidence": 0.9}
+            {"class_name": "IC", "package_type": "dip8", "bbox": (e_x - 4.0, y_top, f_x + 4.0, y_bot), "confidence": 0.9}
         ])
         # Pin detector intentionally returns wrong data — IC path must ignore it.
         ic_pin = MockPinDetector([
@@ -167,6 +418,7 @@ class TestPinDetectionMock:
             detections=s1["detections"],
             images_b64=[blank_image_b64],
             pin_detector=ic_pin,
+            calibrator=calibrator,
         )
 
         comp = result["components"][0]
@@ -188,24 +440,33 @@ class TestPinDetectionMock:
         f_pin_ids = sorted(p["pin_id"] for p in pins if p["metadata"]["row_lock"] == "f")
         assert e_pin_ids == [1, 2, 3, 4]
         assert f_pin_ids == [5, 6, 7, 8]
-        # pin1 (notch-left side) should sit at the smaller X than pin4 on the e row.
+        # With board-logic layout: e-row pins all share X = letter 'e' X; spread along Y (digit axis).
         e_row = {p["pin_id"]: p["keypoints_by_view"]["top"] for p in pins if p["metadata"]["row_lock"] == "e"}
-        assert e_row[1][0] < e_row[4][0]
-        # pin5 is the f-row pin opposite pin4 → both should share the same X slot.
         f_row = {p["pin_id"]: p["keypoints_by_view"]["top"] for p in pins if p["metadata"]["row_lock"] == "f"}
-        assert abs(e_row[4][0] - f_row[5][0]) < 1e-6
-        assert abs(e_row[1][0] - f_row[8][0]) < 1e-6
-        # e row Y is above f row Y (smaller pixel Y is higher in image).
-        assert e_row[1][1] < f_row[8][1]
+        # notch=left: pin1 at lowest digit (smaller Y) → opposite end is pin4.
+        assert e_row[1][1] < e_row[4][1]
+        # pin5 is f-row pin at digit 6 (same as pin4); pin8 at digit 3 (same as pin1).
+        assert abs(e_row[4][1] - f_row[5][1]) < 1e-3
+        assert abs(e_row[1][1] - f_row[8][1]) < 1e-3
+        # e-row sits on the smaller-X side (letter 'e'); f-row on letter 'f' (larger X).
+        assert e_row[1][0] < f_row[8][0]
 
     def test_t4_3b_mock_ic_dip14(self, blank_image_b64):
         """DIP-14 应该输出 14 个引脚, e/f 行各 7 个."""
         from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
         from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
         from app.pipeline.stages.s1_detect import run_detect
 
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        e_x = float(calibrator.col_coords[4])
+        f_x = float(calibrator.col_coords[5])
+        y_top = float(calibrator.row_coords[2]) - 1.0
+        y_bot = float(calibrator.row_coords[8]) + 1.0  # 7 consecutive digits
+
         ic_det = MockComponentDetector([
-            {"class_name": "IC", "package_type": "dip14", "bbox": (80, 200, 400, 260), "confidence": 0.85}
+            {"class_name": "IC", "package_type": "dip14", "bbox": (e_x - 5.0, y_top, f_x + 5.0, y_bot), "confidence": 0.85}
         ])
         ic_pin = MockPinDetector([])
 
@@ -218,6 +479,7 @@ class TestPinDetectionMock:
             detections=s1["detections"],
             images_b64=[blank_image_b64],
             pin_detector=ic_pin,
+            calibrator=calibrator,
         )
 
         comp = result["components"][0]
@@ -236,14 +498,22 @@ class TestPinDetectionMock:
     def test_t4_3c_mock_ic_dip8_notch_right(self, blank_image_b64):
         """notch=right 时 pin1 应该落在 e 行靠右一端."""
         from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from app.pipeline.vision.calibrator import BreadboardCalibrator
         from tests.pipeline.mocks import MockComponentDetector, MockPinDetector
         from app.pipeline.stages.s1_detect import run_detect
+
+        calibrator = BreadboardCalibrator(rows=63, cols_per_side=5)
+        calibrator.build_synthetic_grid((480, 640))
+        e_x = float(calibrator.col_coords[4])
+        f_x = float(calibrator.col_coords[5])
+        y_top = float(calibrator.row_coords[2]) - 1.0
+        y_bot = float(calibrator.row_coords[5]) + 1.0
 
         ic_det = MockComponentDetector([
             {
                 "class_name": "IC",
                 "package_type": "dip8",
-                "bbox": (100, 200, 300, 260),
+                "bbox": (e_x - 4.0, y_top, f_x + 4.0, y_bot),
                 "confidence": 0.9,
                 "notch_direction": "right",
             }
@@ -259,12 +529,13 @@ class TestPinDetectionMock:
             detections=s1["detections"],
             images_b64=[blank_image_b64],
             pin_detector=ic_pin,
+            calibrator=calibrator,
         )
 
         pins = result["components"][0]["pins"]
         e_row = {p["pin_id"]: p["keypoints_by_view"]["top"] for p in pins if p["metadata"]["row_lock"] == "e"}
-        # notch=right → pin1 is rightmost on e row.
-        assert e_row[1][0] > e_row[4][0]
+        # notch=right → pin1 sits at the *higher* digit (larger Y on synthetic grid).
+        assert e_row[1][1] > e_row[4][1]
         for pin in pins:
             assert pin["metadata"]["notch_direction"] == "right"
 
@@ -863,6 +1134,21 @@ class _FakeFullImagePoseModel:
         ]
 
 
+class _FakeIcOnlyFullImagePoseModel:
+    names = {0: "IC"}
+
+    def __call__(self, image, verbose=False, device="cpu"):
+        return [
+            _FakeFullImagePoseResult(
+                xyxy=[[760.0, 260.0, 930.0, 390.0]],
+                cls_ids=[0],
+                box_confs=[0.93],
+                kpts_xy=[[[790.0, 300.0], [820.0, 315.0], [850.0, 315.0]]],
+                kpts_conf=[[0.95, 0.92, 0.91]],
+            )
+        ]
+
+
 class TestPinModelSchemaAlignment:
     def test_two_pin_components_ignore_third_padding_keypoint(self):
         from app.pipeline.vision.pin_model import PinRoiDetector
@@ -981,3 +1267,32 @@ class TestFullImagePoseMainPath:
         assert comp["roi"]["source"] == "full_image_pose"
         assert comp["pins"][0]["keypoints_by_view"]["top"] == [120.0, 240.0]
         assert comp["pins"][1]["keypoints_by_view"]["top"] == [280.0, 240.0]
+
+    def test_potentiometer_does_not_steal_ic_pose_instance(self, blank_image_b64):
+        from app.pipeline.stages.s1_detect import run_detect
+        from app.pipeline.stages.s1b_pin_detect import run_pin_detect
+        from app.pipeline.vision.pin_model import PinRoiDetector
+        from tests.pipeline.mocks import MockComponentDetector
+
+        det = MockComponentDetector([
+            {"class_name": "Potentiometer", "bbox": (580, 190, 675, 280), "confidence": 0.9}
+        ])
+        s1 = run_detect(images_b64=[blank_image_b64], detector=det)
+
+        pin_det = PinRoiDetector(model_path=None, device="cpu")
+        pin_det.model = _FakeIcOnlyFullImagePoseModel()
+
+        result = run_pin_detect(
+            detections=s1["detections"],
+            images_b64=[blank_image_b64],
+            pin_detector=pin_det,
+        )
+
+        pins = result["components"][0]["pins"]
+        assert [pin["pin_name"] for pin in pins] == ["terminal_a", "wiper", "terminal_b"]
+        # No calibrator → POT geometry path refuses output rather than stealing
+        # the IC's full-image pose keypoints.
+        for pin in pins:
+            assert pin["keypoints_by_view"]["top"] is None
+            assert pin["source_by_view"]["top"] == "unavailable"
+            assert pin["metadata"]["potentiometer_role_degraded_reason"] == "calibrator_unavailable"

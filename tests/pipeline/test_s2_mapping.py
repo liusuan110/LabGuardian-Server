@@ -1225,3 +1225,61 @@ class TestS2Mapping:
         candidates = calibrator.board_point_to_logic_candidates(10.0, 146.0, k=2)
 
         assert candidates[0] == ("1", "b")
+
+
+class TestS2PinConstraintFilter:
+    """Fix 4: S2 honors row_lock / column_lock / pot_logic_slots stamped by S1.5."""
+
+    def _candidates(self):
+        return [
+            (("3", "d"), 1.0),
+            (("3", "e"), 2.0),
+            (("4", "e"), 3.0),
+            (("3", "f"), 4.0),
+        ]
+
+    def test_row_lock_keeps_only_matching_letter(self):
+        from app.pipeline.stages.s2_mapping import _filter_candidates_by_pin_constraints
+
+        out = _filter_candidates_by_pin_constraints(
+            scored_candidates=self._candidates(),
+            pin_metadata={"row_lock": "e"},
+        )
+        assert [loc for loc, _ in out] == [("3", "e"), ("4", "e")]
+
+    def test_column_lock_keeps_only_matching_digit(self):
+        from app.pipeline.stages.s2_mapping import _filter_candidates_by_pin_constraints
+
+        out = _filter_candidates_by_pin_constraints(
+            scored_candidates=self._candidates(),
+            pin_metadata={"column_lock": "3"},
+        )
+        assert [loc for loc, _ in out] == [("3", "d"), ("3", "e"), ("3", "f")]
+
+    def test_pot_logic_slots_restricts_to_exact_holes(self):
+        from app.pipeline.stages.s2_mapping import _filter_candidates_by_pin_constraints
+
+        out = _filter_candidates_by_pin_constraints(
+            scored_candidates=self._candidates(),
+            pin_metadata={"pot_logic_slots": [["3", "e"], ["4", "e"], ["5", "e"]]},
+        )
+        assert [loc for loc, _ in out] == [("3", "e"), ("4", "e")]
+
+    def test_filter_returns_empty_when_no_candidate_matches(self):
+        """When constraints reject every candidate, the pin is left unmapped."""
+        from app.pipeline.stages.s2_mapping import _filter_candidates_by_pin_constraints
+
+        out = _filter_candidates_by_pin_constraints(
+            scored_candidates=self._candidates(),
+            pin_metadata={"row_lock": "j"},
+        )
+        assert out == []
+
+    def test_no_constraint_passes_through(self):
+        from app.pipeline.stages.s2_mapping import _filter_candidates_by_pin_constraints
+
+        candidates = self._candidates()
+        assert _filter_candidates_by_pin_constraints(
+            scored_candidates=candidates,
+            pin_metadata={},
+        ) == candidates
