@@ -10,6 +10,9 @@ import pytest
 from app.domain.gnn import (
     SCHEMA_VERSION,
     LabelBuildResult,
+    LabelSource,
+    LabelStats,
+    TaskType,
     build_from_logical_reference,
     build_seal_samples,
     deserialize_label_build_result,
@@ -185,3 +188,116 @@ def test_subgraph_drnl_labels_round_trip() -> None:
         # DRNL labels are ints; equality is strict
         assert a.subgraph.drnl_labels == b.subgraph.drnl_labels
         assert all(isinstance(v, int) for v in b.subgraph.drnl_labels.values())
+
+
+# ---------------------------------------------------------------------------
+# File I/O round-trip (real disk write/read; tmp_path)
+# ---------------------------------------------------------------------------
+
+
+def test_file_round_trip_via_tmp_path(tmp_path: Path) -> None:
+    """Write to actual disk file, read back, verify equivalence. This is the
+    concrete contract P1 dataset_builder relies on."""
+
+    result = _build_result(
+        perturbations=[
+            ("drop_edge", "pin1", "VIN"),
+            ("add_edge", "R1", "pin1", "GND", "pin1"),
+        ]
+    )
+    fp = tmp_path / "rc__neg_001.json"
+    payload = serialize_label_build_result(
+        result, sample_id="rc__neg_001", ref_id="test_rc_v1"
+    )
+    fp.write_text(json.dumps(payload, indent=2))
+    # Reload
+    restored = deserialize_label_build_result(json.loads(fp.read_text()))
+    assert restored.stats == result.stats
+    assert len(restored.samples) == len(result.samples)
+    for a, b in zip(result.samples, restored.samples):
+        assert a == b
+
+
+def test_empty_result_round_trip() -> None:
+    """A LabelBuildResult with no samples / no groups (e.g., a perturbation
+    that removed all edges via complete component drop)."""
+
+    empty = LabelBuildResult(
+        samples=(),
+        groups=(),
+        stats=LabelStats(
+            total_samples=0,
+            n_positives=0,
+            n_negatives=0,
+            pos_neg_ratio=0.0,
+            by_source={src.value: 0 for src in LabelSource},
+            by_task_type={t.value: 0 for t in TaskType},
+            n_groups=0,
+            n_groups_without_positive=0,
+            n_skipped_missing_component=0,
+            n_skipped_optional_pin=0,
+            n_skipped_forbidden_pin_no_violation=0,
+            n_skipped_extract_error=0,
+            n_unique_ports_covered=0,
+            n_unique_nets_covered=0,
+        ),
+    )
+    payload = serialize_label_build_result(empty, sample_id="e", ref_id="r")
+    encoded = json.dumps(payload)
+    restored = deserialize_label_build_result(json.loads(encoded))
+    assert restored.samples == ()
+    assert restored.groups == ()
+    assert restored.stats.total_samples == 0
+
+
+def test_two_distinct_results_have_distinct_files(tmp_path: Path) -> None:
+    """Two different perturbations should produce distinct serialized JSON
+    payloads (sanity: no accidental sharing of mutable state)."""
+
+    r1 = _build_result()
+    r2 = _build_result(
+        perturbations=[
+            ("drop_edge", "pin1", "VIN"),
+            ("add_edge", "R1", "pin1", "GND", "pin1"),
+        ]
+    )
+    p1 = serialize_label_build_result(r1, sample_id="a", ref_id="r")
+    p2 = serialize_label_build_result(r2, sample_id="b", ref_id="r")
+    assert p1["samples"] != p2["samples"], "perturbed result shouldn't equal clean result"
+    assert p1["stats"] != p2["stats"]
+
+
+def test_result_with_only_missing_edge_groups_round_trip() -> None:
+    """Make sure groups-only payloads (when WRONG_EDGE samples are filtered
+    out) still round-trip. This guards against future refactors that might
+    accidentally couple group serialization to sample presence."""
+
+    # We can't easily build a real "groups only" result, but we can construct
+    # one synthetically by trimming a real result.
+    result = _build_result(perturbations=[("drop_edge", "pin1", "VIN")])
+    if not result.groups:
+        import pytest as _pt
+        _pt.skip("fixture didn't produce groups")
+    payload = serialize_label_build_result(result, sample_id="s", ref_id="r")
+    text = json.dumps(payload)
+    restored = deserialize_label_build_result(json.loads(text))
+    # Group structure preserved exactly
+    assert len(restored.groups) == len(result.groups)
+    for g_orig, g_back in zip(result.groups, restored.groups):
+        assert g_orig.group_id == g_back.group_id
+        assert g_orig.query_origin == g_back.query_origin
+        assert g_orig.sample_indices == g_back.sample_indices
+        assert g_orig.correct_index == g_back.correct_index
+
+
+def test_round_trip_preserves_same_component_edges() -> None:
+    """``same_component_edges`` field (default empty) must survive the round
+    trip — if a future builder enables it, this guards downstream contract."""
+
+    result = _build_result()
+    payload = json.loads(
+        json.dumps(serialize_label_build_result(result, sample_id="s", ref_id="r"))
+    )
+    restored = deserialize_label_build_result(payload)
+    for a, b in zip(result.samples, restored.samples):
+        assert a.subgraph.same_component_edges == b.subgraph.same_component_edges

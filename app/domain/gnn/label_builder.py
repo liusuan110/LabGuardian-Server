@@ -705,6 +705,28 @@ def build_seal_samples(
 # ---------------------------------------------------------------------------
 
 
+class CoverageError(AssertionError):
+    """Raised when cur edges lack expected WRONG_EDGE sample coverage.
+
+    Inherits from ``AssertionError`` so legacy ``pytest.raises(AssertionError)``
+    patterns still catch it; ``except CoverageError`` is the preferred form
+    in dataset_builder for actionable error handling.
+
+    Carries the list of uncovered ``(port, net)`` pairs so dataset_builder
+    can log them, drop the sample, or escalate. **P1 dataset_builder MUST**
+    catch this and exclude the failing sample from the dataset (never write
+    a coverage-broken JSON to disk)."""
+
+    def __init__(self, missing: list[tuple[str, str]]):
+        self.missing = missing
+        n = len(missing)
+        preview = missing[:5]
+        super().__init__(
+            f"WRONG_EDGE coverage gap: {n} cur edges have no corresponding "
+            f"WRONG_EDGE sample (first 5: {preview})"
+        )
+
+
 def assert_observed_edges_covered(
     result: LabelBuildResult,
     cur_hcg: HeteroCircuitGraph,
@@ -716,8 +738,8 @@ def assert_observed_edges_covered(
     """断言 cur.edges 中每条非 OPTIONAL 非 ref-sym-correct 的边都有
     WRONG_EDGE 负样本对应（plan DoD 关键不变量）。
 
-    若违反则 raise AssertionError，列出缺失的边。供测试与 P1 dataset_builder
-    sanity check 使用。
+    若违反则 raise :class:`CoverageError`（``AssertionError`` 的子类，
+    便于 pytest.raises 仍可捕获）。dataset_builder 应捕获后丢样本。
     """
 
     sym_aware_correct = _compute_sym_aware_correct_cur_edges(
@@ -751,10 +773,31 @@ def assert_observed_edges_covered(
         if pair not in wrong_edge_negatives_pairs:
             missing.append(pair)
     if missing:
-        raise AssertionError(
-            f"WRONG_EDGE coverage gap: {len(missing)} cur edges have no "
-            f"corresponding WRONG_EDGE sample (first 5: {missing[:5]})"
-        )
+        raise CoverageError(missing)
+
+
+def build_seal_samples_with_coverage_check(
+    ref_hcg: HeteroCircuitGraph,
+    cur_hcg: HeteroCircuitGraph,
+    alignment: ComponentAlignment,
+    **kwargs,
+) -> LabelBuildResult:
+    """便利包装：build_seal_samples + assert_observed_edges_covered。
+
+    **P1 dataset_builder 必须使用此函数**（而非裸 build_seal_samples），
+    以免把 coverage gap 带进训练数据。失败时抛 :class:`CoverageError`，
+    dataset_builder 用 try/except 跳过 + manifest 记录失败原因即可。
+
+    ``include_optional`` 同步透传到 ``assert_observed_edges_covered``，
+    保持两步一致性。
+    """
+
+    include_optional = kwargs.get("include_optional", False)
+    result = build_seal_samples(ref_hcg, cur_hcg, alignment, **kwargs)
+    assert_observed_edges_covered(
+        result, cur_hcg, ref_hcg, alignment, include_optional=include_optional
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -956,7 +999,9 @@ __all__ = [
     "LabelBuildResult",
     # main API
     "build_seal_samples",
+    "build_seal_samples_with_coverage_check",
     "assert_observed_edges_covered",
+    "CoverageError",
     # serialization
     "SCHEMA_VERSION",
     "serialize_label_build_result",

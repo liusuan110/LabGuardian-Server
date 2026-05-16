@@ -52,6 +52,7 @@ from app.domain.gnn.hetero_circuit import (
 )
 from app.domain.gnn.label_builder import (
     SCHEMA_VERSION,
+    CoverageError,
     LabelBuildResult,
     LabelSource,
     LabelStats,
@@ -60,8 +61,13 @@ from app.domain.gnn.label_builder import (
     TaskType,
     assert_observed_edges_covered,
     build_seal_samples,
+    build_seal_samples_with_coverage_check,
     deserialize_label_build_result,
     serialize_label_build_result,
+)
+from app.domain.gnn.label_manifest import (
+    LabelManifest,
+    assert_manifest_healthy,
 )
 from app.domain.gnn.port_graph import (
     build_from_logical_reference,
@@ -145,7 +151,11 @@ __all__ = [
     "LabelStats",
     "LabelBuildResult",
     "build_seal_samples",
+    "build_seal_samples_with_coverage_check",
     "assert_observed_edges_covered",
+    "CoverageError",
+    "LabelManifest",
+    "assert_manifest_healthy",
     "SCHEMA_VERSION",
     "serialize_label_build_result",
     "deserialize_label_build_result",

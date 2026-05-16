@@ -66,7 +66,18 @@ integration) for the contract.
   coverage invariant for P1 dataset sanity checks.
 - `serialize_label_build_result()` / `deserialize_label_build_result()`
   define the on-disk JSON schema (v1.0) — P1 `dataset_builder` writes,
-  P2 `pyg_converter` reads.
+  P2 `pyg_converter` reads. File I/O round-trip + 4 edge cases tested.
+- `build_seal_samples_with_coverage_check()` — atomic wrapper, raises
+  `CoverageError` (subclass of `AssertionError`) when cur edges lack the
+  WRONG_OBSERVED 100% coverage invariant. **P1 dataset_builder MUST use
+  this wrapper** (not raw `build_seal_samples`) and drop any sample whose
+  build raises CoverageError — never write coverage-broken JSON to disk.
+- `LabelManifest` (in `label_manifest.py`) — cross-sample running counters,
+  per-source / per-task ratios, failure tracking, periodic checkpoints
+  (`checkpoint(every=100)`). `assert_manifest_healthy()` guards against
+  silent dataset drift before training (e.g., WRONG_OBSERVED dropping to
+  zero across an entire run). Ships with a documented dataset_builder
+  usage pattern in its docstring.
 - Performance: full UA741 buffer pipeline < 80 ms (CPU). All pure Python.
 
 ### ✅ P0.7 — SEAL enclosing subgraph + DRNL labeling
