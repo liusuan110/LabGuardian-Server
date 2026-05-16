@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from app.domain.gnn import (
+    ConnectionPolicy,
     SealSubgraph,
     build_from_logical_reference,
     extract_seal_subgraph,
@@ -31,7 +32,10 @@ from app.domain.gnn import (
     extract_subgraphs_for_observed_edges,
 )
 from app.domain.gnn.port_graph import build_hetero_circuit_graph
-from app.domain.gnn.seal_subgraph import _drnl_label
+from app.domain.gnn.seal_subgraph import (
+    _drnl_label,
+    _enumerate_same_component_edges,
+)
 
 FIXTURE_OPAMP = (
     Path(__file__).resolve().parents[2]
@@ -258,50 +262,105 @@ def test_observed_edge_batch_count_matches_hcg_edges() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_floating_batch_skips_forbidden_pins() -> None:
-    """UA741 has 3 floating pins (1/5/8). Pin 8 has policy=FORBIDDEN and
-    must NOT appear among the floating-port candidates."""
+def test_floating_batch_default_only_required() -> None:
+    """P0.7 follow-up audit: default policies={REQUIRED} only. UA741 buffer
+    has no REQUIRED-floating pins (pins 1/5 are OPTIONAL, pin 8 FORBIDDEN),
+    so the default call must return an empty list."""
 
     hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
     sgs = extract_subgraphs_for_floating_ports(hcg)
+    assert sgs == []
+
+
+def test_floating_batch_optional_only_yields_offset_null_pins() -> None:
+    """Explicitly requesting OPTIONAL surfaces pins 1 and 5; FORBIDDEN pin 8
+    stays out unless also requested."""
+
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    sgs = extract_subgraphs_for_floating_ports(
+        hcg, policies=frozenset({ConnectionPolicy.OPTIONAL})
+    )
     candidate_ports = {sg.target_port_id for sg in sgs}
-    # Pin 8 (FORBIDDEN) excluded; pin 1 / 5 (OPTIONAL) included.
+    assert candidate_ports == {"ref_port:U1.1", "ref_port:U1.5"}
     assert "ref_port:U1.8" not in candidate_ports
-    assert "ref_port:U1.1" in candidate_ports
-    assert "ref_port:U1.5" in candidate_ports
+    # 2 ports × 4 nets = 8 subgraphs
+    assert len(sgs) == 2 * 4
 
 
-def test_floating_batch_enumerates_port_x_net_pairs() -> None:
-    """2 floating-but-allowed ports (pin 1 + pin 5) × 4 nets = 8."""
+def test_floating_batch_required_plus_optional_includes_pin1_and_pin5() -> None:
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    sgs = extract_subgraphs_for_floating_ports(
+        hcg,
+        policies=frozenset({ConnectionPolicy.REQUIRED, ConnectionPolicy.OPTIONAL}),
+    )
+    # No REQUIRED-floating pins on this fixture, so still just pin 1 / 5 = 8.
+    assert len(sgs) == 8
+    assert all(sg.edge_present is False for sg in sgs)
+
+
+def test_floating_batch_all_three_policies_includes_forbidden() -> None:
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    sgs = extract_subgraphs_for_floating_ports(
+        hcg,
+        policies=frozenset(
+            {
+                ConnectionPolicy.REQUIRED,
+                ConnectionPolicy.OPTIONAL,
+                ConnectionPolicy.FORBIDDEN,
+            }
+        ),
+    )
+    candidate_ports = {sg.target_port_id for sg in sgs}
+    # All 3 floating pins surface: 1 (OPTIONAL), 5 (OPTIONAL), 8 (FORBIDDEN).
+    assert candidate_ports == {"ref_port:U1.1", "ref_port:U1.5", "ref_port:U1.8"}
+    # 3 ports × 4 nets = 12 subgraphs
+    assert len(sgs) == 3 * 4
+
+
+def test_floating_batch_policies_accept_string_values_too() -> None:
+    """Caller convenience: policies set may contain either ConnectionPolicy
+    enum members or their string values; both should work."""
 
     hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
-    sgs = extract_subgraphs_for_floating_ports(hcg)
-    assert len(sgs) == 2 * 4
-    # All have edge_present=False (these are suggested-target candidates)
-    assert all(sg.edge_present is False for sg in sgs)
+    sgs_enum = extract_subgraphs_for_floating_ports(
+        hcg, policies=frozenset({ConnectionPolicy.OPTIONAL})
+    )
+    sgs_str = extract_subgraphs_for_floating_ports(
+        hcg, policies=frozenset({"optional"})
+    )
+    assert len(sgs_enum) == len(sgs_str) == 8
+    assert {sg.target_port_id for sg in sgs_enum} == {
+        sg.target_port_id for sg in sgs_str
+    }
 
 
 def test_floating_batch_with_explicit_candidate_nets() -> None:
     hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
     only_gnd = ["ref_net:GND"]
-    sgs = extract_subgraphs_for_floating_ports(hcg, candidate_nets=only_gnd)
-    # 2 floating-allowed ports × 1 net = 2
+    sgs = extract_subgraphs_for_floating_ports(
+        hcg,
+        candidate_nets=only_gnd,
+        policies=frozenset({ConnectionPolicy.OPTIONAL}),
+    )
+    # 2 OPTIONAL-floating ports × 1 net = 2
     assert len(sgs) == 2
     for sg in sgs:
         assert sg.target_net_id == "ref_net:GND"
 
 
-def test_floating_batch_can_include_forbidden_when_disabled() -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
-    sgs = extract_subgraphs_for_floating_ports(hcg, exclude_forbidden=False)
-    candidate_ports = {sg.target_port_id for sg in sgs}
-    assert "ref_port:U1.8" in candidate_ports
-
-
 def test_floating_batch_when_no_floating_ports_returns_empty() -> None:
-    # RC fixture has no floating ports.
+    # RC fixture has no floating ports — empty under any policy combo.
     hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text()))
-    sgs = extract_subgraphs_for_floating_ports(hcg)
+    sgs = extract_subgraphs_for_floating_ports(
+        hcg,
+        policies=frozenset(
+            {
+                ConnectionPolicy.REQUIRED,
+                ConnectionPolicy.OPTIONAL,
+                ConnectionPolicy.FORBIDDEN,
+            }
+        ),
+    )
     assert sgs == []
 
 
@@ -333,6 +392,209 @@ def test_ua741_isinstance_and_immutable() -> None:
     assert isinstance(sg, SealSubgraph)
     with pytest.raises((AttributeError, TypeError)):
         sg.num_hops = 99  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# same_component_edges (P0.7 follow-up audit — schema reservation)
+# ---------------------------------------------------------------------------
+
+
+def test_same_component_edges_field_defaults_empty() -> None:
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    sg = extract_seal_subgraph(hcg, "ref_port:U1.2", "ref_net:VOUT")
+    assert sg.same_component_edges == ()
+
+
+def test_same_component_edges_populated_when_requested_on_ic() -> None:
+    """UA741 buffer's (U1.2, VOUT) feedback edge brings U1.6 into the
+    subgraph (both pins on U1). Asking for same-component edges should
+    surface the ``(U1.2, U1.6)`` pair."""
+
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    sg = extract_seal_subgraph(
+        hcg,
+        "ref_port:U1.2",
+        "ref_net:VOUT",
+        include_same_component_edges=True,
+    )
+    assert sg.same_component_edges == (("ref_port:U1.2", "ref_port:U1.6"),)
+
+
+def test_same_component_edges_do_not_affect_drnl_labels() -> None:
+    """The whole point of the flag being a P2-level decision: turning it on
+    must produce identical ``drnl_labels`` (DRNL stays bipartite-only)."""
+
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    sg_off = extract_seal_subgraph(hcg, "ref_port:U1.2", "ref_net:VOUT")
+    sg_on = extract_seal_subgraph(
+        hcg,
+        "ref_port:U1.2",
+        "ref_net:VOUT",
+        include_same_component_edges=True,
+    )
+    assert sg_off.drnl_labels == sg_on.drnl_labels
+    assert sg_off.port_ids == sg_on.port_ids
+    assert sg_off.net_ids == sg_on.net_ids
+    assert sg_off.edges == sg_on.edges  # (port, net) edges unchanged
+
+
+def test_same_component_edges_empty_when_single_port_per_component() -> None:
+    """RC fixture's (R1.pin1, VIN) candidate subgraph has only R1.pin1 as a
+    port (VIN's only neighbor was R1.pin1 — removed). No component has ≥ 2
+    ports in the subgraph, so the same-component list is empty even with
+    the flag on."""
+
+    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text()))
+    sg = extract_seal_subgraph(
+        hcg,
+        "ref_port:R1.pin1",
+        "ref_net:VIN",
+        include_same_component_edges=True,
+    )
+    assert sg.same_component_edges == ()
+
+
+def test_same_component_edges_no_cross_component_pairs() -> None:
+    """Hand-built two-resistor scenario where both pins of R1 and both pins
+    of R2 happen to be in the same subgraph. Output must contain pairs only
+    within R1 and within R2 — never an R1↔R2 pair."""
+
+    import networkx as nx
+
+    from app.domain.gnn.port_graph import build_hetero_circuit_graph
+
+    g = nx.Graph()
+    for ref in ("R1", "R2"):
+        g.add_node(f"ref_comp:{ref}", kind="comp", ctype="Resistor", source_id=ref)
+    for n in ("VIN", "MID", "OUT"):
+        g.add_node(f"ref_net:{n}", kind="net", role="signal", source_id=n)
+    # R1 between VIN-MID, R2 between MID-OUT (a 2-resistor divider chain)
+    g.add_edge("ref_comp:R1", "ref_net:VIN", pin="pin1", pin_role="pin1", comp_type="Resistor")
+    g.add_edge("ref_comp:R1", "ref_net:MID", pin="pin2", pin_role="pin2", comp_type="Resistor")
+    g.add_edge("ref_comp:R2", "ref_net:MID", pin="pin1", pin_role="pin1", comp_type="Resistor")
+    g.add_edge("ref_comp:R2", "ref_net:OUT", pin="pin2", pin_role="pin2", comp_type="Resistor")
+
+    hcg = build_hetero_circuit_graph(g, side="ref")
+    # Anchor on MID — its 2-hop neighborhood includes all 4 resistor pins.
+    sg = extract_seal_subgraph(
+        hcg,
+        "ref_port:R1.pin2",
+        "ref_net:MID",
+        include_same_component_edges=True,
+    )
+    pairs = set(sg.same_component_edges)
+    # R1's two pins: (R1.pin1, R1.pin2). R2's two pins: (R2.pin1, R2.pin2).
+    # No cross-component pair (e.g., R1.pin1 ↔ R2.pin1) should appear.
+    for a, b in pairs:
+        comp_a = hcg.ports[a].parent_component_id
+        comp_b = hcg.ports[b].parent_component_id
+        assert comp_a == comp_b, (a, b, comp_a, comp_b)
+
+
+def test_enumerate_same_component_helper_3pin_pairs_and_order() -> None:
+    """Unit test the helper directly: feed it a port_ids tuple containing all
+    3 pins of one Transistor and assert C(3,2)=3 pairs emitted in
+    lexicographic order (port_i < port_j; component-id sorted)."""
+
+    import networkx as nx
+
+    from app.domain.gnn.port_graph import build_hetero_circuit_graph
+
+    g = nx.Graph()
+    g.add_node("ref_comp:Q1", kind="comp", ctype="Transistor", source_id="Q1")
+    for n in ("NB", "NC", "NE"):
+        g.add_node(f"ref_net:{n}", kind="net", role="signal", source_id=n)
+    for pin_name in ("base", "collector", "emitter"):
+        net_name = {"base": "NB", "collector": "NC", "emitter": "NE"}[pin_name]
+        g.add_edge(
+            "ref_comp:Q1",
+            f"ref_net:{net_name}",
+            pin=pin_name,
+            pin_role=pin_name,
+            comp_type="Transistor",
+        )
+
+    hcg = build_hetero_circuit_graph(g, side="ref")
+    # Hand-construct port_ids covering all 3 Q1 pins (deliberately scrambled
+    # to verify the helper sorts deterministically).
+    pairs = _enumerate_same_component_edges(
+        hcg,
+        port_ids=(
+            "ref_port:Q1.emitter",
+            "ref_port:Q1.base",
+            "ref_port:Q1.collector",
+        ),
+    )
+    assert pairs == (
+        ("ref_port:Q1.base", "ref_port:Q1.collector"),
+        ("ref_port:Q1.base", "ref_port:Q1.emitter"),
+        ("ref_port:Q1.collector", "ref_port:Q1.emitter"),
+    )
+
+
+def test_enumerate_same_component_helper_groups_per_component() -> None:
+    """Two separate components with 2 pins each: 1 pair per component, no
+    cross-component pair. Component-id sort order must be deterministic."""
+
+    import networkx as nx
+
+    from app.domain.gnn.port_graph import build_hetero_circuit_graph
+
+    g = nx.Graph()
+    for ref in ("R1", "R2"):
+        g.add_node(f"ref_comp:{ref}", kind="comp", ctype="Resistor", source_id=ref)
+    g.add_node("ref_net:N", kind="net", role="signal", source_id="N")
+    g.add_edge("ref_comp:R1", "ref_net:N", pin="pin1", pin_role="pin1", comp_type="Resistor")
+    g.add_edge("ref_comp:R2", "ref_net:N", pin="pin1", pin_role="pin1", comp_type="Resistor")
+    # Add pin2's via separate nets (we only need them to materialize as ports;
+    # build_hetero_circuit_graph's materialize phase will add the pin2's as
+    # floating because Resistor spec demands them — but they're irrelevant
+    # for this helper test).
+
+    hcg = build_hetero_circuit_graph(g, side="ref")
+    # Feed the helper exactly the 4 pins (2 per component).
+    pairs = _enumerate_same_component_edges(
+        hcg,
+        port_ids=(
+            "ref_port:R2.pin2",
+            "ref_port:R1.pin1",
+            "ref_port:R1.pin2",
+            "ref_port:R2.pin1",
+        ),
+    )
+    # Expect 1 pair from each component, never an R1↔R2 pair.
+    assert pairs == (
+        ("ref_port:R1.pin1", "ref_port:R1.pin2"),
+        ("ref_port:R2.pin1", "ref_port:R2.pin2"),
+    )
+
+
+def test_batched_observed_edges_propagates_same_component_flag() -> None:
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    sgs_off = extract_subgraphs_for_observed_edges(hcg)
+    sgs_on = extract_subgraphs_for_observed_edges(
+        hcg, include_same_component_edges=True
+    )
+    assert len(sgs_off) == len(sgs_on)
+    # At least one subgraph must report a non-empty same_component_edges set
+    # when flag is on (UA741 has many pins on U1 sharing nets).
+    assert any(sg.same_component_edges for sg in sgs_on)
+    # And none when flag is off.
+    assert all(sg.same_component_edges == () for sg in sgs_off)
+
+
+def test_batched_floating_ports_propagates_same_component_flag() -> None:
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    sgs = extract_subgraphs_for_floating_ports(
+        hcg,
+        policies=frozenset({ConnectionPolicy.OPTIONAL}),
+        include_same_component_edges=True,
+    )
+    assert sgs, "expected at least one OPTIONAL-floating candidate"
+    # The pin 1 / pin 5 candidates anchor on U1 — when the surrounding net
+    # brings other U1 pins into the 2-hop subgraph, same-component pairs
+    # should appear.
+    assert any(sg.same_component_edges for sg in sgs)
 
 
 # ---------------------------------------------------------------------------

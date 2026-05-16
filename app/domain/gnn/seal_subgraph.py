@@ -52,6 +52,11 @@ class SealSubgraph:
         net_ids: 同上，net 节点；anchor 排第一。
         edges: 子图内 ``(port_id, net_id)`` 边元组；**候选边本身已被
             剔除**（per SEAL convention）。
+        same_component_edges: 子图内同属一个 component 的 ``(port, port)``
+            对，仅当 ``extract_seal_subgraph(..., include_same_component_edges=True)``
+            才填充；否则为空元组。**DRNL 距离始终在 bipartite (port, net)
+            底图上计算**，本字段不影响 ``drnl_labels`` —— 它是 P2 PyG
+            converter 与下游模型决定是否消费的"额外结构信号"。
         drnl_labels: ``node_id → int``。anchor → 1；不可达 → 0；其余按
             Zhang & Chen 2018 公式 ``1 + min(d_u, d_v) + d_half * (d_half +
             (d % 2) - 1)``，其中 ``d = d_u + d_v``、``d_half = d // 2``。
@@ -67,6 +72,9 @@ class SealSubgraph:
     edges: tuple[tuple[str, str], ...]
     drnl_labels: dict[str, int]
     is_target: dict[str, bool]
+    # P0.7 收尾：预留字段，默认空。开启 ``include_same_component_edges``
+    # 才填充，承载"同片 IC / 同只 BJT 的兄弟 pin"结构边。
+    same_component_edges: tuple[tuple[str, str], ...] = ()
 
     def num_nodes(self) -> int:
         return len(self.port_ids) + len(self.net_ids)
@@ -156,6 +164,35 @@ def _is_net(hcg: HeteroCircuitGraph, node_id: str) -> bool:
     return node_id in hcg.nets
 
 
+def _enumerate_same_component_edges(
+    hcg: HeteroCircuitGraph,
+    port_ids: tuple[str, ...],
+) -> tuple[tuple[str, str], ...]:
+    """For each component that has ≥ 2 of its ports inside ``port_ids``, emit
+    every ``(port_i, port_j)`` pair (i < j by sorted port id) as an
+    undirected structural edge.
+
+    Determinism: components processed in ``parent_component_id`` order; within
+    each component, ports sorted by id; pairs emitted in lexicographic order.
+    This guarantees stable test diffs and reproducible cache keys.
+    """
+
+    by_comp: dict[str, list[str]] = defaultdict(list)
+    for pid in port_ids:
+        port = hcg.ports.get(pid)
+        if port is None:
+            continue
+        by_comp[port.parent_component_id].append(pid)
+
+    edges: list[tuple[str, str]] = []
+    for comp_id in sorted(by_comp):
+        ports_in_comp = sorted(by_comp[comp_id])
+        for i in range(len(ports_in_comp)):
+            for j in range(i + 1, len(ports_in_comp)):
+                edges.append((ports_in_comp[i], ports_in_comp[j]))
+    return tuple(edges)
+
+
 # ---------------------------------------------------------------------------
 # 主接口
 # ---------------------------------------------------------------------------
@@ -168,6 +205,7 @@ def extract_seal_subgraph(
     num_hops: int = 2,
     *,
     edge_present: bool | None = None,
+    include_same_component_edges: bool = False,
 ) -> SealSubgraph:
     """Extract a SEAL h-hop enclosing subgraph around the candidate
     ``(port_node_id, net_node_id)`` edge.
@@ -180,6 +218,10 @@ def extract_seal_subgraph(
         edge_present: 候选边是否真存在。``None`` → 自动从 ``hcg.edges`` 推断。
             显式传 False 用于 missing/suggested 候选（即便恰好 hcg 中存在
             这条边，也按"不存在"处理 —— 用于负采样场景）。
+        include_same_component_edges: 是否填充 ``same_component_edges`` 字段。
+            默认 False。**开启不影响 DRNL 距离计算** —— 距离始终在 bipartite
+            (port, net) 底图上 BFS。开启同片边只是给下游模型多一路结构信号
+            （"这两个 pin 在同一片 IC 上"），是否消费由 P2 / P3 决定。
 
     Raises:
         KeyError: anchor 节点不在 ``hcg`` 中。
@@ -260,6 +302,11 @@ def extract_seal_subgraph(
 
     is_target = {n: (n == port_node_id or n == net_node_id) for n in in_subgraph}
 
+    if include_same_component_edges:
+        same_comp_edges = _enumerate_same_component_edges(hcg, port_ids)
+    else:
+        same_comp_edges = ()
+
     return SealSubgraph(
         target_port_id=port_node_id,
         target_net_id=net_node_id,
@@ -270,6 +317,7 @@ def extract_seal_subgraph(
         edges=tuple(subgraph_edges),
         drnl_labels=drnl,
         is_target=is_target,
+        same_component_edges=same_comp_edges,
     )
 
 
@@ -281,6 +329,8 @@ def extract_seal_subgraph(
 def extract_subgraphs_for_observed_edges(
     hcg: HeteroCircuitGraph,
     num_hops: int = 2,
+    *,
+    include_same_component_edges: bool = False,
 ) -> list[SealSubgraph]:
     """Enumerate every observed (port, net) edge in ``hcg`` and extract one
     SealSubgraph per edge with ``edge_present=True``. This is the input to
@@ -297,9 +347,22 @@ def extract_subgraphs_for_observed_edges(
                 edge.dst_net_id,
                 num_hops=num_hops,
                 edge_present=True,
+                include_same_component_edges=include_same_component_edges,
             )
         )
     return out
+
+
+# Default policy set for ``extract_subgraphs_for_floating_ports``: only
+# ``REQUIRED`` pins are surfaced as suggested-target / missing-edge candidates.
+# Rationale (P0.7 follow-up audit): OPTIONAL pins (e.g., UA741 offset_null)
+# legitimately may stay floating, so including them would inject systemic
+# label noise into P1 synthetic dataset construction (a positive ground-truth
+# label for "should connect" is ambiguous when the spec says "either-way").
+# Callers wanting OPTIONAL coverage must opt in explicitly.
+_DEFAULT_FLOATING_POLICIES: frozenset[ConnectionPolicy] = frozenset(
+    {ConnectionPolicy.REQUIRED}
+)
 
 
 def extract_subgraphs_for_floating_ports(
@@ -307,34 +370,42 @@ def extract_subgraphs_for_floating_ports(
     num_hops: int = 2,
     candidate_nets: list[str] | None = None,
     *,
-    exclude_forbidden: bool = True,
+    policies: frozenset[ConnectionPolicy] = _DEFAULT_FLOATING_POLICIES,
+    include_same_component_edges: bool = False,
 ) -> list[SealSubgraph]:
-    """For every floating port (``is_floating=True``), pair it with each
-    candidate net and extract a SealSubgraph (``edge_present=False``). This
-    is the input to the SEAL **suggested-target** head (and to
-    missing-connection detection when run on the ref-mapped current graph).
+    """For every floating port (``is_floating=True``) whose
+    ``connection_policy`` is in ``policies``, pair it with each candidate net
+    and extract a SealSubgraph (``edge_present=False``). This is the input
+    to the SEAL **suggested-target** head (and to missing-connection
+    detection when run on the ref-mapped current graph).
 
     Args:
         candidate_nets: list of ``net_node_id``. Defaults to **all** nets in
             ``hcg``. Caller may pass a narrower set (e.g., the cur side's
             nets mapped from the ref side).
-        exclude_forbidden: when True (default) skip ports whose
-            ``connection_policy == FORBIDDEN`` —— such pins must remain
-            disconnected (e.g., UA741 pin 8 NC); querying a target net for
-            them would generate spurious suggestions.
+        policies: which ``ConnectionPolicy`` values to include. Default is
+            ``frozenset({ConnectionPolicy.REQUIRED})`` —— only "must be
+            connected but isn't" pins. To also surface OPTIONAL or FORBIDDEN
+            candidates (typically for diagnostic / auditing pipelines), pass
+            an explicit set, e.g. ``frozenset({REQUIRED, OPTIONAL})``.
+        include_same_component_edges: forwarded to
+            :func:`extract_seal_subgraph`. Default False.
     """
 
     if candidate_nets is None:
         candidate_nets = list(hcg.nets.keys())
 
+    # Normalize policies to a set of string values so callers may pass either
+    # enum members or plain strings interchangeably.
+    allowed_values: set[str] = {
+        p.value if isinstance(p, ConnectionPolicy) else str(p) for p in policies
+    }
+
     out: list[SealSubgraph] = []
     for port_id, port in hcg.ports.items():
         if not port.is_floating:
             continue
-        if (
-            exclude_forbidden
-            and port.connection_policy == ConnectionPolicy.FORBIDDEN.value
-        ):
+        if port.connection_policy not in allowed_values:
             continue
         for net_id in candidate_nets:
             if net_id not in hcg.nets:
@@ -346,6 +417,7 @@ def extract_subgraphs_for_floating_ports(
                     net_id,
                     num_hops=num_hops,
                     edge_present=False,
+                    include_same_component_edges=include_same_component_edges,
                 )
             )
     return out

@@ -51,8 +51,17 @@ integration) for the contract.
   - `SealSubgraph` dataclass (immutable; deterministic node order)
   - `extract_seal_subgraph(hcg, port_id, net_id)` — single edge
   - `extract_subgraphs_for_observed_edges(hcg)` — feed wrong-edge head
-  - `extract_subgraphs_for_floating_ports(hcg, candidate_nets=None)` — feed
-    suggested-target head; auto-skips `FORBIDDEN` pins (UA741 pin 8 NC)
+  - `extract_subgraphs_for_floating_ports(hcg, candidate_nets=None, *, policies=frozenset({REQUIRED}), include_same_component_edges=False)` — feed
+    suggested-target head. **Default policies = `{REQUIRED}` only**
+    (OPTIONAL pins like UA741 offset_null legitimately stay floating, so
+    including them would inject systemic P1 label noise; opt-in via
+    `policies=frozenset({REQUIRED, OPTIONAL})`). FORBIDDEN pins (UA741
+    pin 8 NC) only appear when explicitly listed in `policies`.
+  - `SealSubgraph.same_component_edges` — schema slot reserved for "same
+    IC / same BJT pin pair" structural edges; default empty. Enabled via
+    `include_same_component_edges=True` on either extractor. **Does not
+    affect DRNL distances** (DRNL stays bipartite-only); P2 / P3 decides
+    whether to consume.
 - DRNL formula matches Zhang & Chen 2018: `1 + min(d_u, d_v) + d_half * (d_half + (d % 2) - 1)` with `d = d_u + d_v` and `d_half = d // 2`. Anchors → label 1; unreachable → label 0.
 - Performance budget (`plan §三.6` / DoD): 50 candidate edges < 30 ms on CPU. Measured: < 1 ms (synthetic 50-edge chain).
 - **Still no `torch`** — output is plain Python dataclasses; tensor packing belongs to P2 PyG converter.
