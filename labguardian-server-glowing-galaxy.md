@@ -161,13 +161,18 @@ LabGuardian-Server 当前的电路比较器（[app/domain/compare/orchestrator.p
 |  | `confidence` | 1 | scalar |
 |  | `is_reference` | 1 | binary |
 |  | **总计** | **30** | |
-| `port` 🆕 | `port_type`（Drain/Source/Gate/Base/Collector/Emitter/Anode/Cathode/Pin1/Pin2/VCC/GND/IO/NC/…） | 16 | one-hot |
-|  | `parent_ctype`（从 component 复制下来，方便 SEAL 局部使用） | 16 | one-hot |
+| `port` 🆕 | `port_type` —— P0.5 扩张到 23 类（含 op-amp INVERTING_INPUT / NON_INVERTING_INPUT / OUTPUT / OFFSET_NULL / NC / V_PLUS / V_MINUS） | **23** | one-hot |
+|  | `parent_ctype`（16 类 ComponentType） | 16 | one-hot |
 |  | `polarity_sensitive` | 1 | binary（该 port 是否极性关键，如 BJT base） |
 |  | `is_power_port` / `is_ground_port` | 2 | binary |
-|  | `is_floating`（是否连了 net，cur 侧用以标记浮空 pin） | 1 | binary |
+|  | `is_floating`（P0.6 后真正生效：cur 侧未接任何 net 时为 True） | 1 | binary |
 |  | `is_reference` | 1 | binary |
-|  | **总计** | **37** | |
+|  | `connection_policy` (REQUIRED / OPTIONAL / FORBIDDEN) —— **P0.6 新增** | **3** | one-hot |
+|  | `has_pin_number` —— **P0.6 新增** | 1 | binary |
+|  | `pin_number_log` ≈ log(1+n)/log(65) clip 0~1 —— **P0.6 新增** | 1 | scalar |
+|  | `symmetry_class_size_inverse` = 1/k where k = 同 component 同互换类的 port 数 —— **P0.6 新增** | 1 | scalar |
+|  | **总计** | **50** | |
+|  | （演进史：P0 = 37 → P0.5 扩 PortType → 44 → P0.6 加 policy/pin_number/symmetry → **50**；运行时 self-check 守住一致性） | | |
 | `net` | `role`（input/output/vcc/gnd/internal/unknown） | 6 | one-hot |
 |  | `degree` | 1 | scalar (log) |
 |  | `is_power_rail` | 1 | binary |
@@ -186,7 +191,7 @@ LabGuardian-Server 当前的电路比较器（[app/domain/compare/orchestrator.p
 |  | **总计** | **5** |
 | 所有反向边 | PyG `T.ToUndirected()` 自动添加 | — |
 
-**关键差别 vs 旧 schema**：pin_index / pin_role 不再是 edge 特征，而是直接进 **port 节点**特征（37 维）—— 这是 GNN-ACLP 的核心 insight：port 是一等公民。
+**关键差别 vs 旧 schema**：pin_index / pin_role 不再是 edge 特征，而是直接进 **port 节点**特征（**50 维**，含 P0.5 + P0.6 累积）—— 这是 GNN-ACLP 的核心 insight：port 是一等公民。
 
 ### 设计决策（已修订）
 
@@ -201,7 +206,7 @@ LabGuardian-Server 当前的电路比较器（[app/domain/compare/orchestrator.p
 
 1. **抽 2-hop enclosing subgraph** `G_e`：包含 `port_u`、`net_v` 及 2-hop 邻居（沿 port↔net 边交替走）。
 2. **DRNL 节点标签**：对 `G_e` 内每个节点 `w`，计算 `d_u(w) = dist(w, port_u)`、`d_v(w) = dist(w, net_v)`，按论文公式 `l(w) = 1 + min(d_u, d_v) + (d/2) * ((d/2) + (d%2) - 1)`（其中 `d=d_u+d_v`），结果做 one-hot（labels 0..15 + overflow bucket）= 17 维。
-3. **拼接特征**：节点最终特征 = DRNL[17] ⊕ 原 port/net 特征（37 或 11，按节点类型）。
+3. **拼接特征**：节点最终特征 = DRNL[17] ⊕ 原 port/net 特征（**50** 或 11，按节点类型；port 维度经 P0.5/P0.6 扩张）。
 4. **目标边方向**：标记 `e` 的两端点为 `target=True`（额外 1 维），其余为 `target=False`。
 
 **两类候选边**（决定 link-pred head 的两个任务）：
@@ -222,7 +227,7 @@ LabGuardian-Server 当前的电路比较器（[app/domain/compare/orchestrator.p
                             ▼                         ▼
 ─────────────── L1 · Shared Backbone (comp + port + net) ─────────────
 NodeEncoder.comp  [Nc, 30] → [Nc, 128]
-NodeEncoder.port  [Np, 37] → [Np, 128]
+NodeEncoder.port  [Np, 50] → [Np, 128]   # P0.5/P0.6 累积后 50 维（见 §三）
 NodeEncoder.net   [Nn, 11] → [Nn, 128]
 HeteroConv (SAGE) × 3   with edge_attr MLP, residual + LayerNorm
    edges traversed: comp↔port (structural), port↔net (electrical)
@@ -258,7 +263,7 @@ HeteroConv (SAGE) × 3   with edge_attr MLP, residual + LayerNorm
 
 | 层 | 输入 | 输出 |
 |---|---|---|
-| L1 NodeEncoder.comp / port / net | [Nc,30] / [Np,37] / [Nn,11] | 三者全部 → 128 |
+| L1 NodeEncoder.comp / port / net | [Nc,30] / [Np,**50**] / [Nn,11] | 三者全部 → 128 |
 | L1 HeteroConv (×3) | (z, edge_index per type, edge_attr[5]) | [N, 128] + residual + LN |
 | **L2 SEAL DGCNN** （主头） | per-edge enclosing subgraph (DRNL[17] ⊕ z[128] ⊕ flag[1]) | scalar P(edge_correct) |
 | **L3 Suggested-Target** （次头） | 对每个 wrong port 枚举候选 net 子图 | top-k (net, score) |
@@ -550,7 +555,7 @@ def should_use_gnn(ctx: CompareContext) -> bool:
 | **P0.5 · IC + Pot Port 语义** | 1.5 天 | PortType 16→23（含 op-amp 角色）、IC_PIN_MAPS、parallel-pin bypass | `graph_schema.py`、`port_graph.py`、`test_opamp_buffer_v1.json` | UA741 buffer 5 个连接 pin 全部拿到精细 PortType |
 | **P0.6 · Package Port Materialization** | 2 天 | ConnectionPolicy / PinSpec / 全 pin materialize + 自动 symmetry 组 | `graph_schema.py`、`hetero_circuit.py`、`port_graph.py` | UA741 fixture 8 port 全 materialize；is_floating + connection_policy 正确；R/Pot symmetry 组成立 |
 | **P0.7 · SEAL Subgraph Pipeline**（GNN-ACLP-inspired） | 4 天 | `seal_subgraph.py` 实现 2-hop enclosing subgraph 抽取 + DRNL labeling + batched 接口 | `seal_subgraph.py` | unit test：手算 DRNL 标签与论文公式一致；性能：50 条边 < 30 ms |
-| **P0.8 · Label Builder + Alignment** | 2.5 天 | `alignment.py` + `label_builder.py`：ComponentAlignment / SealSample / 6 类 LabelSource / 4 步算法（含 symmetric expansion + FORBIDDEN 强负） | `alignment.py`、`label_builder.py` | UA741 buffer 全套 SealSample 构造 < 50 ms；OPTIONAL 默认排除；R.pin1↔pin2 swap 双正样本；FORBIDDEN 默认 4 条合成负 |
+| **P0.8 · Label Builder + Alignment** | 3 天 | `alignment.py` + `label_builder.py`：ComponentAlignment / SealSample（含 task_type / candidate_edge / expected_edge / group_id）/ SealSampleGroup（query_origin: floating \| wrong_redirect）/ **8 类 LabelSource**（**含 WRONG_OBSERVED 强负 + HARD 占位**）/ TaskType / LabelStats / LabelBuildResult / **6 步算法**（WRONG_EDGE 点式 + MISSING_EDGE group [双触发: floating + wrong_redirect] + sym swap + **WRONG_OBSERVED 100% 覆盖** + FORBIDDEN 强负）+ JSON schema serialize/deserialize | `alignment.py`、`label_builder.py` | UA741 buffer 全套 LabelBuildResult < 80 ms；OPTIONAL 默认排除；R.pin1↔pin2 swap 双正样本；FORBIDDEN 默认 4 条合成负；MISSING_EDGE group 覆盖 floating + wrong_redirect；**cur 中每条非 OPTIONAL 非 ref-correct 边必有 WRONG_EDGE 负样本**；LabelStats.by_source/by_task_type 一致；serialize round-trip 等价 |
 | **P1 · Synthetic Dataset** | 5 天 | 5 ref × 600 样本 = 3000 样本（PyG + seal_edges），label 含 `suggested_target` 监督 | `perturbation.py`、`dataset_builder.py` | label 抽样 50 条人工核对；edge_labels / suggested_target 自动校验 |
 | **P2 · PyG Converter** | 3 天 | NetworkX → HeteroData + SEALEdgeBatch | `pyg_converter.py` | 往返一致性测试 |
 | **P2.5 · SpiceNetlist 预训练**（GNN-ACLP 范式） | 5 天 | 下载 SpiceNetlist 775 电路 + 转 port-level + 自监督训练 SEAL 主头，5-fold CV | `pretrain_seal.py` | edge AUC ≥ 0.95；对齐 GNN-ACLP 论文报告 |
@@ -621,14 +626,16 @@ tests/domain/gnn/
 
 仅包含**常量与枚举**，无运行逻辑。内容：
 
+> ⚠️ **下表是 P0 初始版本**。P0.5 把 PortType 扩到 23 项、P0.6 加 ConnectionPolicy + pin_number + symmetry_class_size_inverse、PORT_FEAT_DIM 从 37 演进到 50。当前实现以 §三 节点 schema 表为准，本附录仅保留历史路径供回溯。
+
 | 段 | 内容 |
 |---|---|
 | `ComponentType` enum | 16 类，与 `app/domain/circuit.py` 现有规范化值一一对齐：Resistor / Capacitor / CapacitorCeramic / CapacitorElectrolytic / Wire / LED / Diode / Transistor / IC / Potentiometer / OpAmp（IC 子类，预留）/ VoltageSource / CurrentSource / Switch / Sensor / UNKNOWN |
-| `PortType` enum | 16 类，复用现有 `PinRole` 13 项 + `Pin1` / `Pin2` / `PinN_generic` / `NC`。`PinRole.GENERIC` 映射到 `PortType.PIN_SYMMETRIC` |
+| `PortType` enum | ~~16 类~~（**P0.5 已扩到 23 类**，含 op-amp INVERTING_INPUT / NON_INVERTING_INPUT / OUTPUT / OFFSET_NULL / NC / V_PLUS / V_MINUS） |
 | `NetRole` enum | 6 类：input / output / vcc / gnd / signal / unknown（与 `normalize_net_role` 对齐） |
 | `PolarityClass` enum | 3 类：none / two_polar / multi_asymmetric |
 | `SourceType` enum | 3 类：dsl / vision / inferred |
-| 维度常量 | `COMPONENT_FEAT_DIM = 30`、`PORT_FEAT_DIM = 37`、`NET_FEAT_DIM = 11`、`PORT_NET_EDGE_FEAT_DIM = 5`、`DRNL_LABEL_DIM = 17` |
+| 维度常量 | `COMPONENT_FEAT_DIM = 30`、~~`PORT_FEAT_DIM = 37`~~（**当前 50**）、`NET_FEAT_DIM = 11`、`PORT_NET_EDGE_FEAT_DIM = 5`、`DRNL_LABEL_DIM = 17` |
 | 特征布局常量 | `COMPONENT_FEAT_LAYOUT: list[tuple[str, slice]]`、`PORT_FEAT_LAYOUT`、`NET_FEAT_LAYOUT` —— 让 encoder 后续按 slice 取子特征做调试 |
 | 类型映射工具 | `CTYPE_TO_INDEX: dict[str, int]`、`PORT_TYPE_TO_INDEX`、`NET_ROLE_TO_INDEX`，索引用于 one-hot |
 | 极性元数据 | `POLARITY_CLASS_OF: dict[ComponentType, PolarityClass]`，对齐 `circuit.py` 的 `POLARIZED_TYPES` / `NON_POLAR_TYPES` |
@@ -980,6 +987,10 @@ def extract_subgraphs_for_floating_ports(
     hcg, num_hops=2, candidate_nets: list[str] | None = None,
     exclude_forbidden: bool = True,
 ) -> list[SealSubgraph]: ...
+# ↑ ⚠️ 已修订（P0.7 收尾 audit）：`exclude_forbidden` 改为
+#   `policies: frozenset[ConnectionPolicy] = frozenset({REQUIRED})`，
+#   两个 batched 入口都接受 `include_same_component_edges` kwarg。
+#   见模块当前实现 app/domain/gnn/seal_subgraph.py。
 ```
 
 ### 算法要点
@@ -1058,7 +1069,7 @@ tests/domain/gnn/test_alignment.py       ← ≥ 6 测试
 tests/domain/gnn/test_label_builder.py   ← ≥ 15 测试
 ```
 
-### 公开 API
+### 公开 API（含 P0.8 二轮 audit 修订）
 
 ```python
 # alignment.py
@@ -1082,22 +1093,88 @@ def alignment_from_dicts(
 ) -> ComponentAlignment: ...
 
 # label_builder.py
+
+class TaskType(str, Enum):
+    """一个 SealSample 服务哪个模型 head（决定 P3 loss 形态）。
+
+    **WRONG_EDGE** 覆盖**所有**点式 P(edge_correct) 监督，**不仅是 cur 中实
+    际存在的边**：含 ref-present 正样本、cur 实际错边（WRONG_OBSERVED 强
+    负）、FORBIDDEN-violated、FORBIDDEN-合成、随机负、ref-absent-REQUIRED
+    （正样本，告诉模型该有边但 cur 没接）。
+
+    **MISSING_EDGE** 覆盖 per-port N-way ranking / softmax：给 REQUIRED-floating
+    或 REQUIRED-wrong_redirect 的 port 在候选 net 集合中选正确目标。推理时
+    suggested_target head 复用此训练。
+    """
+    WRONG_EDGE   = "wrong_edge"
+    MISSING_EDGE = "missing_edge"
+
 class LabelSource(str, Enum):
     REF_PRESENT          = "ref_present"
     REF_SYMMETRIC_SWAP   = "ref_symmetric_swap"
     REF_ABSENT_REQUIRED  = "ref_absent_required"
+    WRONG_OBSERVED       = "wrong_observed"   # **关键负样本**：cur 中实际存在的、
+                                              # 不在 ref-sym-aware 正集合中的边。
+                                              # 必须 100% 标负，不能依赖 NEGATIVE_RANDOM
+                                              # 偶然采到 —— 否则 WRONG_EDGE 主头被系统性弱监督
     FORBIDDEN_VIOLATED   = "forbidden_violated"
     FORBIDDEN_NEGATIVE   = "forbidden_negative"
     NEGATIVE_RANDOM      = "negative_random"
+    NEGATIVE_HARD        = "negative_hard"    # 预留 slot；P0.8 不生成
 
 @dataclass(frozen=True)
 class SealSample:
+    """单个 (subgraph, label) 训练样本。
+
+    P0.8 二轮 audit 修订：candidate_edge / expected_edge / task_type / group_id
+    全部上提到顶层，避免下游 dataloader 再去 unwrap subgraph。
+    """
     subgraph: SealSubgraph
     label: int                                   # 0 or 1
-    label_source: str
-    ref_edge_origin: tuple[str, str] | None      # (ref port source_id, ref net source_id)
+    label_source: str                            # LabelSource.value
+    task_type: str                               # TaskType.value
+    candidate_edge: tuple[str, str]              # (cur_port_id, cur_net_id) — 该 sample 评分的对象
+    expected_edge: tuple[str, str] | None = None # 该 port 本应连接的"对的" net；MISSING_EDGE 正样本时填
+    ref_edge_origin: tuple[str, str] | None = None  # (ref port source_id, ref net source_id) 来源溯源
     confidence: float = 1.0
-    is_symmetric_equivalent: bool = False        # 用于 P3 loss 端可选 down-weight
+    is_symmetric_equivalent: bool = False        # sibling pin sym-swap 产生的合成正样本
+    group_id: str | None = None                  # 同 group_id 的 sample 属于同一个 MISSING_EDGE ranking 组
+
+@dataclass(frozen=True)
+class SealSampleGroup:
+    """多个候选 SealSample 构成的"互斥候选集"，用于 ranking 任务
+    （MISSING_EDGE 与推理 suggested_target）。WRONG_EDGE 任务不需要。"""
+    group_id: str
+    task_type: str                              # 必为 TaskType.MISSING_EDGE
+    query_port_id: str                          # 该组要回答 "这个 port 该接到哪个 net"
+    sample_indices: tuple[int, ...]             # 指向 LabelBuildResult.samples 列表的 index
+    correct_index: int | None                   # 哪个 sample.label==1（None 表示组内无正样本，训练时跳过）
+
+@dataclass(frozen=True)
+class LabelStats:
+    """构造过程的可观测性指标 —— P1 dataset_builder 每个 perturbation 后
+    应记录到日志 / 数据集 manifest，便于发现 silent failure（如某天
+    FORBIDDEN_VIOLATED 突然降到 0）。"""
+    total_samples: int
+    n_positives: int
+    n_negatives: int
+    pos_neg_ratio: float                        # n_positives / max(1, n_negatives)
+    by_source: dict[str, int]                   # LabelSource.value → count
+    by_task_type: dict[str, int]                # TaskType.value → count
+    n_groups: int                               # SealSampleGroup 数量（MISSING_EDGE only）
+    n_groups_without_positive: int              # ref expected 但 cur 中 spec 限制无法 surface 的 group
+    n_skipped_missing_component: int            # 决策 3：silently skip 的次数
+    n_skipped_optional_pin: int
+    n_skipped_forbidden_pin_no_violation: int
+    n_skipped_extract_error: int
+    n_unique_ports_covered: int
+    n_unique_nets_covered: int
+
+@dataclass(frozen=True)
+class LabelBuildResult:
+    samples: tuple[SealSample, ...]
+    groups: tuple[SealSampleGroup, ...]
+    stats: LabelStats
 
 def build_seal_samples(
     ref_hcg, cur_hcg, alignment,
@@ -1105,76 +1182,258 @@ def build_seal_samples(
     negatives_per_positive: float = 1.0,
     include_optional: bool = False,
     forbidden_negative_samples: int = 4,
+    missing_edge_group_size: int = 5,           # 每个 MISSING_EDGE 组内候选 net 数
+    enable_hard_negative_mining: bool = False,  # P0.8 永远 False；预留
     seed: int = 0,
     num_hops: int = 2,
     include_same_component_edges: bool = False,
-) -> list[SealSample]: ...
+) -> LabelBuildResult: ...
 ```
 
-### 算法 4 步
+### Hard-negative 策略（P3 启用前文档化，P0.8 不实现）
 
-**Step 1 · ref-driven positives（含 symmetric expansion）**
+`NEGATIVE_HARD` enum slot 已留。未来 3 种候选策略，按优先级：
+
+| 策略 | 生成规则 | 适用场景 |
+|---|---|---|
+| **same_port_wrong_net** | 对每个正 `(p, n_correct)`，采样 `(p, n_wrong)` where `n_wrong ∈ cur.nets \ correct_nets_for_p` | 教模型在 port 上分辨"该接哪个 net"；R-divider 极有效 |
+| **same_net_wrong_port** | 对每个正 `(p_correct, n)`，采样 `(p_wrong, n)` where `p_wrong` 是其它 REQUIRED port | 教模型在 net 上分辨"该接哪个 port"；多 R 并联场景关键 |
+| **1_hop_perturbation** | 把正边的一个端点替换为它在 bipartite 图中的 1-hop 邻居 | 通用 hard mining；保留拓扑相似但语义不同 |
+
+P0.8 只暴露 `enable_hard_negative_mining` kwarg 占位；P3 训练曲线指导启用哪一种。
+
+### 算法 5 步（含 group 构造与 stats 累积）
+
+构建过程用一个 `_Builder` 上下文对象累积 samples / groups / counters，最后
+冻结成 `LabelBuildResult`。
+
+**Step 1 · WRONG_EDGE samples from ref edges（含 sym swap 展开 — 决策 1）**
 ```
 for ref_edge in ref.edges:
     cur_port = alignment.map_ref_port(ref_edge.src, ref, cur)
     cur_net  = alignment.map_ref_net(ref_edge.dst)
-    if cur_port is None: log_debug("missing_component skip"); continue   # 决策 3
-    if cur.ports[cur_port].policy == OPTIONAL and not include_optional: continue
-    if cur.ports[cur_port].policy == FORBIDDEN: continue   # 防御，正常不该发生
+    if cur_port is None:
+        stats.n_skipped_missing_component += 1; continue        # 决策 3
+    port = cur.ports[cur_port]
+    if port.policy == OPTIONAL and not include_optional:
+        stats.n_skipped_optional_pin += 1; continue
+    if port.policy == FORBIDDEN:
+        # ref 说应该连，但 cur policy 禁 → spec 矛盾，记 warn 后跳
+        log.warning(...); continue
 
     actually_present = (cur_port, cur_net) in cur_edges
-    siblings = sym_class_siblings(cur, cur_port)   # 同 component 同 symmetry_class
-    sym_present = any((sib, cur_net) in cur_edges for sib in siblings)
-
-    # 决策 1：both edges = label 1
-    anchors = {cur_port}
-    if sym_present or siblings:   # 即便没观测，也合成 sibling positive
-        anchors.update(siblings)
+    siblings = sym_class_siblings(cur, cur_port)
+    anchors = [cur_port] + list(siblings)
     for anchor in anchors:
-        sg = extract_seal_subgraph(cur, anchor, cur_net, ...)
-        source = (REF_SYMMETRIC_SWAP if anchor != cur_port else
+        is_sym = (anchor != cur_port)
+        edge_present = (anchor, cur_net) in cur_edges
+        sg = extract_seal_subgraph(cur, anchor, cur_net, edge_present=edge_present, ...)
+        source = (REF_SYMMETRIC_SWAP if is_sym else
                   REF_PRESENT if actually_present else REF_ABSENT_REQUIRED)
-        samples.append(SealSample(sg, 1, source, ref_origin, is_sym_equiv=(anchor!=cur_port)))
+        builder.add_sample(SealSample(
+            subgraph=sg, label=1, label_source=source.value,
+            task_type=TaskType.WRONG_EDGE.value,
+            candidate_edge=(anchor, cur_net),
+            expected_edge=(cur_port, cur_net),
+            ref_edge_origin=(ref_edge.src_source_id, ref_edge.dst_source_id),
+            is_symmetric_equivalent=is_sym,
+        ))
 ```
 
-**Step 2 · FORBIDDEN violated 边作强负**
+**Step 2 · MISSING_EDGE / suggested-target groups（统一两种来源）**
+
+**两种触发场景**（来自二轮 audit）：
+- `floating`：REQUIRED port 漏接 —— 对应 missing_connection 错误
+- `wrong_redirect`：REQUIRED port 已接，但接到了**错误的 net** —— 对应
+  wrong_connection 错误，suggested_target head 应推荐把它移到哪个 net。
+  **同一个 port 也可能 wrong-edge + missing 同时存在**（学生接错了一个 net
+  漏掉另一个 net），各自独立成 group。
+
+```
+for ref_edge in ref.edges:
+    cur_port = alignment.map_ref_port(ref_edge.src, ref, cur)
+    if cur_port is None:
+        stats.n_skipped_missing_component += 1; continue
+    port = cur.ports[cur_port]
+    if port.policy != REQUIRED: continue          # MISSING 任务仅 REQUIRED
+
+    cur_net_correct = alignment.map_ref_net(ref_edge.dst)
+    if cur_net_correct is None: continue
+
+    cur_nets_actual = {e.dst_net_id for e in cur.edges if e.src_port_id == cur_port}
+    if cur_net_correct in cur_nets_actual:
+        continue                                  # 已经接对了，无需 group
+
+    # 决定 query_origin：cur 中该 port 是否完全没接
+    query_origin = "floating" if not cur_nets_actual else "wrong_redirect"
+
+    # 候选 net 集合：cur_net_correct 必入；其余从 cur.nets 中按种子采样
+    # 对 wrong_redirect 还必入 cur 上已接的错 net（让模型在"留 / 移"间选择）
+    must_include = {cur_net_correct, *cur_nets_actual}
+    distractors = sample_candidate_nets(
+        cur, exclude=must_include,
+        k=missing_edge_group_size - len(must_include), rng=rng,
+    )
+    candidate_nets = list(must_include) + list(distractors)
+
+    group_id = f"miss_{cur_port}_{ref_edge.src_source_id}_{ref_edge.dst_source_id}"
+    group_sample_indices = []
+    correct_idx = None
+    for i, net_id in enumerate(candidate_nets):
+        is_correct = (net_id == cur_net_correct)
+        sg = extract_seal_subgraph(
+            cur, cur_port, net_id,
+            edge_present=(net_id in cur_nets_actual),    # ← 当前接到的错 net 也是 edge_present=True
+        )
+        idx = builder.add_sample(SealSample(
+            subgraph=sg,
+            label=int(is_correct),
+            label_source=(REF_ABSENT_REQUIRED if is_correct
+                          else NEGATIVE_RANDOM).value,
+            task_type=TaskType.MISSING_EDGE.value,
+            candidate_edge=(cur_port, net_id),
+            expected_edge=(cur_port, cur_net_correct),
+            ref_edge_origin=(ref_edge.src_source_id, ref_edge.dst_source_id),
+            group_id=group_id,
+        ))
+        if is_correct: correct_idx = i
+        group_sample_indices.append(idx)
+    builder.add_group(SealSampleGroup(
+        group_id=group_id, task_type=TaskType.MISSING_EDGE.value,
+        query_port_id=cur_port,
+        query_origin=query_origin,                # "floating" | "wrong_redirect"
+        sample_indices=tuple(group_sample_indices),
+        correct_index=correct_idx,
+    ))
+```
+
+`SealSampleGroup` 多一个 `query_origin: str` 字段：
+
+```python
+@dataclass(frozen=True)
+class SealSampleGroup:
+    group_id: str
+    task_type: str
+    query_port_id: str
+    query_origin: str                             # "floating" | "wrong_redirect"
+    sample_indices: tuple[int, ...]
+    correct_index: int | None
+```
+
+**Step 2.5 · WRONG_OBSERVED — cur 中实际存在但 ref-sym-aware 不期望的边（强负）**
+
+这是 **WRONG_EDGE 主头的核心负样本**。**100% 覆盖**，不留给 NEGATIVE_RANDOM
+偶然采样。**必须** 在 NEGATIVE_RANDOM 之前执行，否则比例计算错位。
+
+```
+sym_aware_correct_cur_edges = compute_sym_equivalent_correct_edge_set(ref, cur, alignment)
+
+for e in cur.edges:
+    cur_port_id, cur_net_id = e.src_port_id, e.dst_net_id
+    if (cur_port_id, cur_net_id) in sym_aware_correct_cur_edges:
+        continue                           # 已在 Step 1 标 positive
+    port = cur.ports[cur_port_id]
+    if port.policy == FORBIDDEN:
+        continue                           # 留给 Step 3 FORBIDDEN_VIOLATED
+    if port.policy == OPTIONAL and not include_optional:
+        stats.n_skipped_optional_pin += 1; continue
+    # REQUIRED 但接到了错 net（最常见的"哪根线接错了"场景）
+    sg = extract_seal_subgraph(cur, cur_port_id, cur_net_id, edge_present=True, ...)
+    # 该 port 在 ref 中应该接到哪个 net（如有）
+    expected = infer_expected_net_for_port_via_alignment(cur_port_id, ref, alignment, cur)
+    builder.add_sample(SealSample(
+        subgraph=sg, label=0, label_source=LabelSource.WRONG_OBSERVED.value,
+        task_type=TaskType.WRONG_EDGE.value,
+        candidate_edge=(cur_port_id, cur_net_id),
+        expected_edge=expected,            # (cur_port_id, cur_correct_net) 或 None
+    ))
+```
+
+**Step 3 · FORBIDDEN_VIOLATED — cur 中实际接的 FORBIDDEN 边 → 强负 WRONG_EDGE**
 ```
 for port in cur.ports.values():
     if port.policy != FORBIDDEN: continue
+    has_violation = False
     for e in cur.edges:
         if e.src_port_id == port.node_id:
-            sg = extract(cur, e.src, e.dst, edge_present=True, ...)
-            samples.append(SealSample(sg, 0, FORBIDDEN_VIOLATED, None))
+            has_violation = True
+            sg = extract(cur, e.src_port_id, e.dst_net_id, edge_present=True, ...)
+            builder.add_sample(SealSample(
+                subgraph=sg, label=0, label_source=FORBIDDEN_VIOLATED.value,
+                task_type=TaskType.WRONG_EDGE.value,
+                candidate_edge=(e.src_port_id, e.dst_net_id),
+                expected_edge=None,
+            ))
+    if not has_violation:
+        stats.n_skipped_forbidden_pin_no_violation += 1  # not really skipped, but tracked
 ```
 
-**Step 3 · FORBIDDEN 合成负样本（决策 2：默认 N=4）**
+**Step 4 · FORBIDDEN_NEGATIVE — 每个 FORBIDDEN pin 合成 N 条非边（决策 2）**
 ```
-rng = random.Random(seed)
 for port in cur.ports.values():
     if port.policy != FORBIDDEN: continue
-    nets_sample = rng.sample(list(cur.nets), k=min(forbidden_negative_samples, len(cur.nets)))
-    for net_id in nets_sample:
-        if (port.node_id, net_id) already in samples: continue   # 去重
+    already_paired_nets = {e.dst_net_id for e in cur.edges if e.src_port_id == port.node_id}
+    candidate_nets = [n for n in cur.nets if n not in already_paired_nets]
+    sampled = rng.sample(candidate_nets, k=min(forbidden_negative_samples, len(candidate_nets)))
+    for net_id in sampled:
         sg = extract(cur, port.node_id, net_id, edge_present=False, ...)
-        samples.append(SealSample(sg, 0, FORBIDDEN_NEGATIVE, None))
+        builder.add_sample(SealSample(
+            subgraph=sg, label=0, label_source=FORBIDDEN_NEGATIVE.value,
+            task_type=TaskType.WRONG_EDGE.value,
+            candidate_edge=(port.node_id, net_id),
+            expected_edge=None,
+        ))
 ```
 
-**Step 4 · 随机负样本，避开 sym-equivalent 正集合**
+**Step 5 · NEGATIVE_RANDOM — 凑齐 negatives_per_positive 比例，避开正集合 + 已 emit 的负**
+
+注意：此时 WRONG_OBSERVED + FORBIDDEN_VIOLATED + FORBIDDEN_NEGATIVE 已先全部
+emit，已计入 negatives 总数。Random 只补差。
+
 ```
-expected_cur_edges = {sym-aware ref-mapped edge set}
-n_pos = sum(s.label==1 for s in samples)
-n_need = int(n_pos * negatives_per_positive) - sum(s.label==0 for s in samples)
+wrong_edge_positives = sum(1 for s in builder.samples
+                            if s.task_type == WRONG_EDGE and s.label == 1)
+wrong_edge_negatives = sum(1 for s in builder.samples
+                            if s.task_type == WRONG_EDGE and s.label == 0)
+# 含 WRONG_OBSERVED / FORBIDDEN_VIOLATED / FORBIDDEN_NEGATIVE
+n_need = max(0, int(wrong_edge_positives * negatives_per_positive) - wrong_edge_negatives)
+
 candidates = [
-    (p.node_id, n.node_id)
-    for p in cur.ports.values() if p.policy == REQUIRED
-    for n in cur.nets.values()
-    if (p.node_id, n.node_id) not in expected_cur_edges
+    (p_id, n_id)
+    for p_id, p in cur.ports.items() if p.policy == REQUIRED
+    for n_id in cur.nets
+    if (p_id, n_id) not in sym_aware_positive_edges
+    and (p_id, n_id) not in builder.already_emitted_pairs(task=WRONG_EDGE)
 ]
 rng.shuffle(candidates)
 for p_id, n_id in candidates[:n_need]:
-    sg = extract(cur, p_id, n_id, edge_present=(p_id,n_id) in cur_edges, ...)
-    samples.append(SealSample(sg, 0, NEGATIVE_RANDOM, None))
+    sg = extract(cur, p_id, n_id, edge_present=(p_id, n_id) in cur_edges, ...)
+    builder.add_sample(SealSample(
+        subgraph=sg, label=0, label_source=LabelSource.NEGATIVE_RANDOM.value,
+        task_type=TaskType.WRONG_EDGE.value,
+        candidate_edge=(p_id, n_id),
+        expected_edge=None,
+    ))
+
+# (Hard-negative 留 enable_hard_negative_mining=True 触发；P0.8 保持 False)
 ```
+
+**重要不变量**（在 builder 的 finalize 检查并写进 stats）：
+
+```
+assert all(
+    (e.src_port_id, e.dst_net_id) in sym_aware_correct_cur_edges
+    or any(s.candidate_edge == (e.src_port_id, e.dst_net_id)
+           and s.task_type == WRONG_EDGE and s.label == 0
+           for s in builder.samples)
+    for e in cur.edges
+    if cur.ports[e.src_port_id].policy != OPTIONAL or include_optional
+), "every observed cur edge must be either ref-correct positive or labeled negative"
+```
+
+—— 即：**cur 中每条非 OPTIONAL 边要么是正样本要么是负样本，没有漏网**。
+
+**Finalize**：builder 把累积的 counters 冻结为 LabelStats，返回 LabelBuildResult。
 
 ### 显式不在范围（推到 P0.9 / P1）
 
@@ -1196,7 +1455,7 @@ for p_id, n_id in candidates[:n_need]:
 - `app/domain/compare/orchestrator.py:compare_logical_graphs` —— **不直接调用**，
   但 P5 评估时会用 rule comparator 输出做 label 一致性 sanity check
 
-### 测试覆盖（≥ 21 项）
+### 测试覆盖（≥ 30 项，按层组织）
 
 - `test_alignment.py`（≥ 6）
   - identity_alignment 同名 ref/cur → 完整对齐 + 反向索引正确
@@ -1206,46 +1465,202 @@ for p_id, n_id in candidates[:n_need]:
   - map_ref_net 命中 / 缺失
   - alignment 序列化（dict-ish）便于 P1 perturbation log
 
-- `test_label_builder.py`（≥ 15，按 LabelSource 一一覆盖）
-  - 完美 cur copy → 所有 sample label=1, source=REF_PRESENT
-  - cur 缺一条 REQUIRED 边 → label=1, source=REF_ABSENT_REQUIRED
-  - R.pin1↔pin2 swap → 决策 1：两边都 label=1，其中合成的 sibling 边
-    `is_symmetric_equivalent=True`
-  - UA741 fixture 默认（include_optional=False）→ pin 1/5 完全不出现在
-    任何 sample 中
-  - include_optional=True → pin 1/5 作为 candidate 出现
-  - cur 接 pin 8 → GND → label=0, source=FORBIDDEN_VIOLATED
-  - pin 8 floating + forbidden_negative_samples=3 → 3 个 FORBIDDEN_NEGATIVE
-  - 默认 forbidden_negative_samples=4 时数量正确
-  - NEGATIVE_RANDOM 全部 port.policy == REQUIRED（不命中 OPTIONAL/FORBIDDEN）
-  - NEGATIVE_RANDOM 不命中 sym-equivalent 正集合
-  - 同 seed 重复调用 → samples 完全一致
-  - missing_component（cur 缺 R1）→ 对应 ref 边 silently skip，无 raise
-  - negatives_per_positive=2.0 → 总负数 ≈ 2× 正数（含 FORBIDDEN 已计入）
-  - extract_seal_subgraph 抛 KeyError 时 → 跳过 + 日志，不影响其它 sample
-  - 集成：UA741 buffer + pin_reversed perturbation cur → 期望 sample 集合
+- `test_label_builder.py`（≥ 24）
+  - **TaskType + 字段（4 项）**
+    - 每个 SealSample 有非空 `task_type` ∈ {wrong_edge, missing_edge}
+    - 每个 WRONG_EDGE sample 的 `candidate_edge` 与 `subgraph.target_*` 一致
+    - REF_PRESENT 的 sample `expected_edge` 等于 candidate（自指）
+    - REF_SYMMETRIC_SWAP 的 sample `is_symmetric_equivalent=True` 且
+      `expected_edge` 指向原 ref 对齐结果（不是 sibling）
+  - **LabelSource 一一覆盖（10 项）**
+    - REF_PRESENT：完美 cur copy
+    - REF_ABSENT_REQUIRED：cur 缺一条 REQUIRED 边
+    - REF_SYMMETRIC_SWAP：R.pin1↔pin2 swap 双正样本
+    - **WRONG_OBSERVED（关键）**：cur 把 R1.pin1 接到 GND（应接 VIN）→ 必出现一条 `label=0, source=WRONG_OBSERVED, candidate_edge=(R1.pin1, GND), expected_edge=(R1.pin1, VIN)`，**不能**依赖 NEGATIVE_RANDOM
+    - **WRONG_OBSERVED 全覆盖不变量**：cur.edges 中每条非 OPTIONAL、非 ref-sym-correct 的边，**必有**对应的 WRONG_EDGE 负样本（断言 `builder.assert_observed_edges_covered()`）
+    - FORBIDDEN_VIOLATED：cur 接 pin 8 → GND（与 WRONG_OBSERVED 互斥：FORBIDDEN 走 Step 3，REQUIRED 错边走 Step 2.5）
+    - FORBIDDEN_NEGATIVE：pin 8 floating + forbidden_negative_samples=3 → 3 条
+    - 默认 forbidden_negative_samples=4 时数量正确
+    - NEGATIVE_RANDOM：全部 port.policy == REQUIRED，不命中 sym-equivalent 正集合，**不重复覆盖 WRONG_OBSERVED 已 emit 的 (port, net) 对**
+    - NEGATIVE_HARD enum slot 存在但 P0.8 不生成（断言计数 == 0）
+  - **SealSampleGroup（6 项）**
+    - 每个 REQUIRED-floating 且 ref 期望连接的 port 产出 1 个 group，`query_origin == "floating"`
+    - **wrong_redirect**：cur 把 R1.pin1 接到错误 net 时，仍产生 group 且 `query_origin == "wrong_redirect"`；候选集合必含当前错 net + 正确 net
+    - 同一 port 上同时 wrong + missing 多个 ref 边 → 多个 group 各自独立
+    - group.sample_indices 全部指向有效 SealSample，task_type 都是 MISSING_EDGE
+    - group.correct_index 不为 None 时，对应 sample.label==1
+    - missing_edge_group_size=5 → 每个 group 内 ≤ 5 samples
+  - **LabelStats（5 项）**
+    - by_source 与按 source filter 数量一致
+    - by_task_type 与按 task filter 数量一致
+    - pos_neg_ratio = n_positives / max(1, n_negatives)
+    - n_skipped_missing_component 在 cur 缺 R1 时 ≥ 1
+    - n_unique_ports_covered / n_unique_nets_covered 单调正确
+  - **行为 / 边界（3 项）**
+    - 同 seed 两次 build → samples + groups + stats 完全一致
+    - OPTIONAL 默认 → 计入 n_skipped_optional_pin，不进 samples
+    - extract_seal_subgraph 抛 KeyError 时 → n_skipped_extract_error 递增，不 raise
+
+- `test_label_serialization.py`（≥ 4）
+  - serialize round-trip：`build → serialize → deserialize` 与原 result 完全相等
+  - schema_version 字段存在且为 "1.0"
+  - serialize 输出全部可被 `json.dumps` / `json.loads` 处理（无 enum/tuple 漏网）
+  - 文件级不变量校验：`len(samples) == stats.total_samples`、`stats.by_source / by_task_type` 计数自洽、group.sample_indices 都是合法 index 且 correct_index 对应 label==1
 
 ### DoD
-- [ ] pytest 全绿（既有 157 + 新 ≥ 21 = ≥ 178）
+- [ ] pytest 全绿（既有 157 + 新 ≥ 36 = ≥ 193）
 - [ ] 既有 29 比较器测试零回归
 - [ ] ruff / mypy clean
-- [ ] README 加 P0.8 段；包含 LabelSource 含义表
+- [ ] README 加 P0.8 段；含 LabelSource × TaskType 矩阵表 + LabelStats 字段表 + JSON schema 示例
 - [ ] 不引入 torch / torch_geometric
-- [ ] 一次构造 UA741 buffer 全套 SealSample（pos+neg）耗时 < 50 ms
+- [ ] 一次构造 UA741 buffer 全套 LabelBuildResult（pos+neg+groups+stats）耗时 < 80 ms
+- [ ] LabelStats.by_source / by_task_type 与按 filter 的 sample 计数严格对应（防 silent drift）
+- [ ] `serialize → deserialize` round-trip 等价（hash-equal）
+- [ ] **MISSING_EDGE group 覆盖 floating + wrong_redirect 两种来源**
+- [ ] **WRONG_OBSERVED 全覆盖不变量**：cur.edges 中每条非 OPTIONAL、非 ref-sym-correct 的边必有 WRONG_EDGE 负样本（builder.assert_observed_edges_covered() 通过）
 
 ### 时间盒
 | 子任务 | 预估 |
 |---|---|
 | 1. ComponentAlignment + 2 个 constructor + 测试 | 2 h |
-| 2. SealSample + LabelSource + dataclass 测试 | 1 h |
-| 3. build_seal_samples 4 步算法 | 4 h |
-| 4. symmetric sibling 展开 + 防去重 | 1.5 h |
-| 5. label builder 主测试 (≥ 15) + cur fixture 手搓 | 4 h |
-| 6. ruff / mypy / README / 调试余量 | 2 h |
-| **合计** | **~14.5 h（≈ 2-2.5 工作日）** |
+| 2. SealSample (含 task_type/candidate/expected/group_id) + SealSampleGroup（query_origin） + LabelSource + TaskType + LabelStats + LabelBuildResult + dataclass 测试 | 2 h |
+| 3. _Builder 上下文 + counters | 1.5 h |
+| 4. build_seal_samples **6 步**算法（Step 1 ref-positive · Step 2 MISSING_EDGE group [floating + wrong_redirect] · **Step 2.5 WRONG_OBSERVED 强负 100% 覆盖** · Step 3 FORBIDDEN_VIOLATED · Step 4 FORBIDDEN_NEGATIVE · Step 5 NEGATIVE_RANDOM 补差） | 6.5 h |
+| 5. symmetric sibling 展开 + 防去重 + sym-aware 正集合 | 2 h |
+| 6. NEGATIVE_HARD 占位 + hard-neg 策略文档 | 0.5 h |
+| 7. JSON schema serialize / deserialize + round-trip 测试 | 2 h |
+| 8. label builder 主测试 (≥ 30 含 wrong_redirect + serialization) + cur fixture 手搓 | 6 h |
+| 9. ruff / mypy / README / 调试余量 | 2 h |
+| **合计** | **~24 h（≈ 3 工作日）** |
 
 完成后 P1 perturbation 只需关心"如何生成 cur HeteroCircuitGraph + 一个
 ComponentAlignment"，label 全权由 label_builder 接管。两层完全解耦。
+
+### Label 落盘 JSON Schema（dataset_builder 在 P1 写盘契约）
+
+P0.8 同时定下 LabelBuildResult 序列化为 JSON 的最终格式 —— P1 dataset_builder
+按此写文件，P2 PyG converter 按此读文件。**所有数值字段保持 plain JSON 类型**
+（int / float / string / list / dict）；torch 张量化推到 P2。
+
+文件命名约定：`datasets/circuit_compare/processed/labels/<ref_id>/<sample_id>.json`
+（与 plan §五 目录结构一致）。
+
+```json
+{
+  "schema_version": "1.0",
+  "sample_id": "rc_lowpass__neg_pinrev_0042",
+  "ref_id": "rc_lowpass",
+  "cur_metadata": {
+    "perturbation_chain": ["pin_reversed:C1"],
+    "alignment": {
+      "ref_to_cur_component": {"R1": "U_R_3", "C1": "U_C_1"},
+      "ref_to_cur_net": {"VIN": "n_07", "GND": "n_03", "VOUT": "n_05"},
+      "notes": {"perturbation_seed": 42}
+    }
+  },
+  "stats": {
+    "total_samples": 28,
+    "n_positives": 12,
+    "n_negatives": 16,
+    "pos_neg_ratio": 0.75,
+    "by_source": {
+      "ref_present": 8,
+      "ref_symmetric_swap": 2,
+      "ref_absent_required": 2,
+      "wrong_observed": 6,
+      "forbidden_violated": 0,
+      "forbidden_negative": 0,
+      "negative_random": 10,
+      "negative_hard": 0
+    },
+    "by_task_type": {"wrong_edge": 24, "missing_edge": 4},
+    "n_groups": 1,
+    "n_groups_without_positive": 0,
+    "n_skipped_missing_component": 0,
+    "n_skipped_optional_pin": 0,
+    "n_skipped_forbidden_pin_no_violation": 0,
+    "n_skipped_extract_error": 0,
+    "n_unique_ports_covered": 4,
+    "n_unique_nets_covered": 3
+  },
+  "samples": [
+    {
+      "index": 0,
+      "label": 1,
+      "label_source": "ref_present",
+      "task_type": "wrong_edge",
+      "candidate_edge": ["cur_port:U_R_3.pin1", "cur_net:n_07"],
+      "expected_edge": ["cur_port:U_R_3.pin1", "cur_net:n_07"],
+      "ref_edge_origin": ["R1.pin1", "VIN"],
+      "confidence": 1.0,
+      "is_symmetric_equivalent": false,
+      "group_id": null,
+      "subgraph": {
+        "target_port_id": "cur_port:U_R_3.pin1",
+        "target_net_id": "cur_net:n_07",
+        "edge_present": true,
+        "num_hops": 2,
+        "port_ids": ["cur_port:U_R_3.pin1", "cur_port:U_C_1.cathode"],
+        "net_ids": ["cur_net:n_07", "cur_net:n_05"],
+        "edges": [["cur_port:U_C_1.cathode", "cur_net:n_05"]],
+        "same_component_edges": [],
+        "drnl_labels": {
+          "cur_port:U_R_3.pin1": 1,
+          "cur_net:n_07": 1,
+          "cur_port:U_C_1.cathode": 3,
+          "cur_net:n_05": 2
+        },
+        "is_target": {
+          "cur_port:U_R_3.pin1": true,
+          "cur_net:n_07": true,
+          "cur_port:U_C_1.cathode": false,
+          "cur_net:n_05": false
+        }
+      }
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "miss_cur_port:U_C_1.cathode_C1.cathode_GND",
+      "task_type": "missing_edge",
+      "query_port_id": "cur_port:U_C_1.cathode",
+      "query_origin": "wrong_redirect",
+      "sample_indices": [24, 25, 26, 27],
+      "correct_index": 0
+    }
+  ]
+}
+```
+
+**关键不变量**（dataset_builder 必须验证）：
+
+- `len(samples) == stats.total_samples`
+- 每个 sample 的 `index` 字段等于它在 `samples` 列表中的位置
+- `groups[*].sample_indices` 都是有效 index，且这些 sample 的 `task_type ==
+  group.task_type` 且 `group_id == group.group_id`
+- 对每个 group：`correct_index` 不为 null 时，`samples[group.sample_indices[correct_index]].label == 1`
+- `stats.by_source` / `stats.by_task_type` 计数与 samples 实际分布一致
+
+**版本管理**：`schema_version` 字段保证 P2/P3 演进时 dataset 可识别。
+breaking change 必须 bump major（"2.0"）；纯加字段可 minor（"1.1"）。
+
+### 序列化辅助函数（P0.8 内提供）
+
+```python
+# label_builder.py
+def serialize_label_build_result(
+    result: LabelBuildResult,
+    *,
+    sample_id: str,
+    ref_id: str,
+    cur_metadata: dict | None = None,
+) -> dict: ...
+
+def deserialize_label_build_result(payload: dict) -> LabelBuildResult: ...
+```
+
+两者**互逆**（round-trip 在 P0.8 测试中验证），P1 dataset_builder 调
+serialize 写盘，P2 PyG converter 调 deserialize 读盘。
 
 ---
 
