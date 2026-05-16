@@ -547,7 +547,10 @@ def should_use_gnn(ctx: CompareContext) -> bool:
 | Phase | 时长 | 交付物 | 关键文件 | 验收 |
 |---|---|---|---|---|
 | **P0 · Schema** | 3 天 | graph_schema.py（含 port 节点）+ HeteroCircuitGraph + 添加 torch / torch_geometric 到 pyproject extras `[gnn]` | `app/domain/gnn/graph_schema.py`、`graph_builder.py`、`port_graph.py` | unit test：现有 fixture 全部能转 component+port+net schema |
+| **P0.5 · IC + Pot Port 语义** | 1.5 天 | PortType 16→23（含 op-amp 角色）、IC_PIN_MAPS、parallel-pin bypass | `graph_schema.py`、`port_graph.py`、`test_opamp_buffer_v1.json` | UA741 buffer 5 个连接 pin 全部拿到精细 PortType |
+| **P0.6 · Package Port Materialization** | 2 天 | ConnectionPolicy / PinSpec / 全 pin materialize + 自动 symmetry 组 | `graph_schema.py`、`hetero_circuit.py`、`port_graph.py` | UA741 fixture 8 port 全 materialize；is_floating + connection_policy 正确；R/Pot symmetry 组成立 |
 | **P0.7 · SEAL Subgraph Pipeline**（GNN-ACLP-inspired） | 4 天 | `seal_subgraph.py` 实现 2-hop enclosing subgraph 抽取 + DRNL labeling + batched 接口 | `seal_subgraph.py` | unit test：手算 DRNL 标签与论文公式一致；性能：50 条边 < 30 ms |
+| **P0.8 · Label Builder + Alignment** | 2.5 天 | `alignment.py` + `label_builder.py`：ComponentAlignment / SealSample / 6 类 LabelSource / 4 步算法（含 symmetric expansion + FORBIDDEN 强负） | `alignment.py`、`label_builder.py` | UA741 buffer 全套 SealSample 构造 < 50 ms；OPTIONAL 默认排除；R.pin1↔pin2 swap 双正样本；FORBIDDEN 默认 4 条合成负 |
 | **P1 · Synthetic Dataset** | 5 天 | 5 ref × 600 样本 = 3000 样本（PyG + seal_edges），label 含 `suggested_target` 监督 | `perturbation.py`、`dataset_builder.py` | label 抽样 50 条人工核对；edge_labels / suggested_target 自动校验 |
 | **P2 · PyG Converter** | 3 天 | NetworkX → HeteroData + SEALEdgeBatch | `pyg_converter.py` | 往返一致性测试 |
 | **P2.5 · SpiceNetlist 预训练**（GNN-ACLP 范式） | 5 天 | 下载 SpiceNetlist 775 电路 + 转 port-level + 自监督训练 SEAL 主头，5-fold CV | `pretrain_seal.py` | edge AUC ≥ 0.95；对齐 GNN-ACLP 论文报告 |
@@ -589,6 +592,755 @@ def should_use_gnn(ctx: CompareContext) -> bool:
 - Report 增强：`app/domain/compare/diff_report.py:13` (schema 常量)、`_enrich_result`
 - 既有 fixture：`tests/fixtures/references/`、`tests/fixtures/netlist_v2/`、`tests/fixtures/validator_error_codes/`（35+ 错误用例可直接做 GNN ground truth）
 - 测试范式：`tests/domain/test_graph_compare.py`、`test_graph_compare_detailed.py`
+
+---
+
+## 附录 A · P0 执行细则（Schema · 3 天）
+
+### 目标
+建立 GNN 模块的"地基"：包目录、依赖声明、schema 常量、中间数据结构、port-level 图构建器。**不写模型、不写训练、不写推理。** 所有代码必须能被现有 fixture 喂入并产出符合预期的中间结构。
+
+### 新建文件清单
+
+```
+app/domain/gnn/
+├── __init__.py            ← 暂仅占位 + 公开未来 API 名（暂时 raise NotImplementedError）
+├── graph_schema.py        ← 枚举 + 特征常量 + 维度常量
+├── hetero_circuit.py      ← @dataclass HeteroCircuitGraph（中间结构）
+├── port_graph.py          ← 把 NetworkX bipartite → HeteroCircuitGraph
+└── README.md              ← 模块说明（≤ 1 页）
+
+tests/domain/gnn/
+├── __init__.py
+├── test_graph_schema.py
+├── test_port_graph.py
+└── conftest.py            ← 复用 tests/fixtures/* 的 helper
+```
+
+### 文件 1 · `app/domain/gnn/graph_schema.py`
+
+仅包含**常量与枚举**，无运行逻辑。内容：
+
+| 段 | 内容 |
+|---|---|
+| `ComponentType` enum | 16 类，与 `app/domain/circuit.py` 现有规范化值一一对齐：Resistor / Capacitor / CapacitorCeramic / CapacitorElectrolytic / Wire / LED / Diode / Transistor / IC / Potentiometer / OpAmp（IC 子类，预留）/ VoltageSource / CurrentSource / Switch / Sensor / UNKNOWN |
+| `PortType` enum | 16 类，复用现有 `PinRole` 13 项 + `Pin1` / `Pin2` / `PinN_generic` / `NC`。`PinRole.GENERIC` 映射到 `PortType.PIN_SYMMETRIC` |
+| `NetRole` enum | 6 类：input / output / vcc / gnd / signal / unknown（与 `normalize_net_role` 对齐） |
+| `PolarityClass` enum | 3 类：none / two_polar / multi_asymmetric |
+| `SourceType` enum | 3 类：dsl / vision / inferred |
+| 维度常量 | `COMPONENT_FEAT_DIM = 30`、`PORT_FEAT_DIM = 37`、`NET_FEAT_DIM = 11`、`PORT_NET_EDGE_FEAT_DIM = 5`、`DRNL_LABEL_DIM = 17` |
+| 特征布局常量 | `COMPONENT_FEAT_LAYOUT: list[tuple[str, slice]]`、`PORT_FEAT_LAYOUT`、`NET_FEAT_LAYOUT` —— 让 encoder 后续按 slice 取子特征做调试 |
+| 类型映射工具 | `CTYPE_TO_INDEX: dict[str, int]`、`PORT_TYPE_TO_INDEX`、`NET_ROLE_TO_INDEX`，索引用于 one-hot |
+| 极性元数据 | `POLARITY_CLASS_OF: dict[ComponentType, PolarityClass]`，对齐 `circuit.py` 的 `POLARIZED_TYPES` / `NON_POLAR_TYPES` |
+
+**禁止**在该文件 import torch / torch_geometric（保持纯 Python，便于在无 GPU 环境单元测试）。
+
+### 文件 2 · `app/domain/gnn/hetero_circuit.py`
+
+```python
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import Literal
+
+NodeKind = Literal["component", "port", "net"]
+Side = Literal["ref", "cur"]
+
+@dataclass(frozen=True)
+class ComponentNode:
+    node_id: str               # "<side>_comp:<source_id>"
+    side: Side
+    source_id: str
+    ctype: str                 # ComponentType.value
+    package: str | None
+    polarity_class: str        # PolarityClass.value
+    pin_count: int
+    value: float | None
+    confidence: float
+
+@dataclass(frozen=True)
+class PortNode:
+    node_id: str               # "<side>_port:<comp_source_id>.<port_key>"
+    side: Side
+    parent_component_id: str   # ComponentNode.node_id
+    port_key: str              # 原始 pin_name 或 normalized pin_role
+    port_type: str             # PortType.value
+    parent_ctype: str          # 复制自 component
+    polarity_sensitive: bool
+    is_power_port: bool
+    is_ground_port: bool
+    is_floating: bool          # cur 侧若该 port 没连任何 net 则 True
+
+@dataclass(frozen=True)
+class NetNode:
+    node_id: str               # "<side>_net:<source_id>"
+    side: Side
+    source_id: str
+    role: str                  # NetRole.value
+    role_label: str | None
+    is_power_rail: bool
+    voltage_hint: float | None
+    aliases: tuple[str, ...] = ()
+
+@dataclass(frozen=True)
+class PortConnectsNetEdge:
+    src_port_id: str
+    dst_net_id: str
+    connection_confidence: float
+    source_type: str           # SourceType.value
+    is_observed_in_cur: bool
+
+@dataclass
+class HeteroCircuitGraph:
+    side: Side
+    components: dict[str, ComponentNode] = field(default_factory=dict)
+    ports: dict[str, PortNode] = field(default_factory=dict)
+    nets: dict[str, NetNode] = field(default_factory=dict)
+    port_of_component: dict[str, list[str]] = field(default_factory=dict)
+    edges: list[PortConnectsNetEdge] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
+
+    def summary(self) -> dict[str, int]:
+        return {
+            "n_components": len(self.components),
+            "n_ports": len(self.ports),
+            "n_nets": len(self.nets),
+            "n_edges": len(self.edges),
+        }
+```
+
+设计要点：所有节点 frozen（hash 友好，便于映射）；`HeteroCircuitGraph` 本身可变，便于增量构造；不依赖 torch（torch 转换在 P2 `pyg_converter.py`）。
+
+### 文件 3 · `app/domain/gnn/port_graph.py`
+
+主函数：`build_hetero_circuit_graph(nx_graph: nx.Graph, side: Side) -> HeteroCircuitGraph`。
+
+**算法**（直接消费 `logical_reference_to_graph` / `current_netlist_v2_to_graph` 的输出）：
+
+1. 遍历 `nx_graph.nodes(data=True)`：
+   - `kind == "comp"` → 构造 `ComponentNode`，`pin_count` 通过该节点的度数推断（先放 0，第 3 步回填），`polarity_class` 用 `POLARITY_CLASS_OF[ctype]`，`package` 暂从 `data.get("package")` 取（缺则 None）
+   - `kind == "net"` → 构造 `NetNode`，`is_power_rail = role in {"power","ground"}`
+2. 遍历 `nx_graph.edges(data=True)` —— 每条 `(comp_node, net_node, attrs)`：
+   - 抽出 `pin = attrs["pin"]`、`pin_role = attrs["pin_role"]`、`comp_type = attrs["comp_type"]`
+   - **构造 PortNode**，node_id = `f"{side}_port:{comp.source_id}.{pin}"`（pin 为字符串，先做 slugify：`pin.replace(' ','_')`）
+   - port_type 由 `_normalize_port_type(pin_role, comp_type)` 给出（小工具函数：先查 PinRole 直接映射，否则 fallback 到 PIN_SYMMETRIC / 数字 pin → PIN1/PIN2/PINn_generic）
+   - `polarity_sensitive` 由 `POLARITY_CLASS_OF[comp_type] != "none"` 决定，且 port_type ∈ {ANODE, CATHODE, BASE, COLLECTOR, EMITTER, POSITIVE, NEGATIVE}
+   - 加入 `port_of_component[comp_node_id]`
+   - 构造 `PortConnectsNetEdge(src_port_id=port_id, dst_net_id=net_node_id, connection_confidence=1.0, source_type=...)` —— 参考侧 `source_type="dsl"`、当前侧 `"vision"`，`connection_confidence` 暂固定 1.0（cur 侧若 nx_graph 上携带 `confidence` 属性则采用之）
+3. 回填 `ComponentNode.pin_count = len(port_of_component[comp_id])`
+4. 对 `cur` 侧：扫描所有 ComponentInstance 的 declared pins（这一步**先不做**，留 P0 末尾用 TODO 注释标记 `is_floating` 永远为 False；P1 接 netlist_v2 原始数据时再回填）
+5. 把 `nx_graph.graph["format"]` / `reference_id` 复制到 `HeteroCircuitGraph.metadata`
+6. 返回
+
+**便利函数**：
+- `build_from_logical_reference(payload: dict) -> HeteroCircuitGraph`（内部调 `logical_reference_to_graph` 再调 `build_hetero_circuit_graph(_, "ref")`）
+- `build_from_netlist_v2(netlist_v2: dict) -> HeteroCircuitGraph`（同理）
+
+**禁止**：在 P0 阶段引入 torch；不做特征向量化（向量化是 P2 的事）。
+
+### 文件 4 · `app/domain/gnn/__init__.py`
+
+```python
+from .graph_schema import (
+    ComponentType, PortType, NetRole, PolarityClass, SourceType,
+    COMPONENT_FEAT_DIM, PORT_FEAT_DIM, NET_FEAT_DIM,
+)
+from .hetero_circuit import (
+    HeteroCircuitGraph, ComponentNode, PortNode, NetNode, PortConnectsNetEdge,
+)
+from .port_graph import (
+    build_hetero_circuit_graph,
+    build_from_logical_reference,
+    build_from_netlist_v2,
+)
+
+__all__ = [
+    "ComponentType", "PortType", "NetRole", "PolarityClass", "SourceType",
+    "COMPONENT_FEAT_DIM", "PORT_FEAT_DIM", "NET_FEAT_DIM",
+    "HeteroCircuitGraph", "ComponentNode", "PortNode", "NetNode",
+    "PortConnectsNetEdge",
+    "build_hetero_circuit_graph",
+    "build_from_logical_reference", "build_from_netlist_v2",
+]
+
+# 推理 API（P4 实现）
+class GNNAdvisor:
+    @classmethod
+    def get(cls):
+        raise NotImplementedError("GNNAdvisor will be implemented in P4")
+
+def should_use_gnn(ctx) -> bool:
+    return False  # P0 stub；P4 替换为真实实现
+```
+
+### 文件 5 · `pyproject.toml` 改动
+
+在 `[project.optional-dependencies]` 末尾新增：
+
+```toml
+gnn = [
+    "torch>=2.2",
+    "torch-geometric>=2.5",
+]
+```
+
+**只声明，不安装**。本机如需调试可 `pip install -e ".[gnn]"`，但 P0 自身的单元测试不依赖 torch（schema + dataclass 是纯 Python）。
+
+### 文件 6 · 测试
+
+#### `tests/domain/gnn/conftest.py`
+
+```python
+import json
+from pathlib import Path
+import pytest
+
+FIXTURE_ROOT = Path(__file__).parents[2] / "fixtures"
+
+@pytest.fixture
+def rc_reference_payload():
+    return json.loads((FIXTURE_ROOT / "references" / "test_rc_v1.json").read_text())
+
+@pytest.fixture
+def all_reference_payloads():
+    return {
+        p.stem: json.loads(p.read_text())
+        for p in (FIXTURE_ROOT / "references").glob("*.json")
+    }
+
+@pytest.fixture
+def simple_netlist_v2():
+    return json.loads((FIXTURE_ROOT / "netlist_v2" / "mapped_components_simple.json").read_text())
+```
+
+#### `tests/domain/gnn/test_graph_schema.py` · 至少 4 个用例
+
+1. `test_component_type_enum_covers_circuit_module` —— 断言 `ComponentType` 的 value 集合是 `circuit.py` 中 `norm_component_type` 所有可能输出的超集。
+2. `test_feature_dimensions_are_consistent` —— 断言 `COMPONENT_FEAT_DIM == sum(width for _, sl in COMPONENT_FEAT_LAYOUT)`，对 PORT/NET 同理。
+3. `test_polarity_class_table_complete` —— `POLARITY_CLASS_OF` 必须覆盖所有 `ComponentType`。
+4. `test_port_type_includes_all_pin_roles` —— `PortType` value 集合 ⊇ `PinRole` value 集合。
+
+#### `tests/domain/gnn/test_port_graph.py` · 至少 6 个用例
+
+1. `test_build_from_rc_reference_basic_shape(rc_reference_payload)`：
+   - 期望 `summary()` = `{n_components: 2, n_ports: 4, n_nets: 3, n_edges: 4}`
+   - R1 应该有 2 个 port（pin1/pin2），C1 同理
+2. `test_port_node_ids_are_deterministic_and_unique`：node_id 全局唯一，命名形如 `ref_port:R1.1`、`ref_port:R1.2`
+3. `test_polarity_sensitive_flag`：LED 电路中 LED 的 anode/cathode port `polarity_sensitive=True`；R 的两个 port `polarity_sensitive=False`
+4. `test_metadata_propagated`：`hcg.metadata["format"] == "logical_reference_v1"`
+5. `test_all_reference_fixtures_convert(all_reference_payloads)`：遍历 `tests/fixtures/references/*.json`，每个都能成功转换且 `n_ports >= n_components`、`n_edges == n_ports`
+6. `test_build_from_netlist_v2_smoke(simple_netlist_v2)`：调 `current_netlist_v2_to_graph` → `build_hetero_circuit_graph(_, "cur")`，断言 side="cur" 且 node_id 前缀为 `cur_*`
+
+### 验收清单（DoD）
+
+- [ ] `pytest tests/domain/gnn/` 全绿
+- [ ] `pytest tests/domain/test_graph_compare*.py` 仍全绿（**零回归**，没动现有 compare 模块）
+- [ ] `python -c "from app.domain.gnn import build_from_logical_reference, HeteroCircuitGraph; print('ok')"` 不报错
+- [ ] `ruff check app/domain/gnn/ tests/domain/gnn/` 无 violation
+- [ ] `mypy app/domain/gnn/` 通过（仅本目录范围）
+- [ ] `app/domain/gnn/README.md` ≤ 1 页，说明：模块定位、当前阶段、与 logical_reference.py 的关系图（一段文字即可）
+- [ ] 新增文件总行数（不含测试）≤ 600，避免过早抽象
+
+### 不在 P0 范围（明确推出）
+
+- ❌ torch / torch_geometric 的实际 import 与使用
+- ❌ HeteroData 转换（→ P2）
+- ❌ SEAL 子图抽取（→ P0.7）
+- ❌ DRNL 标签 / 任何特征向量化（→ P2）
+- ❌ 模型、训练、推理（→ P3 / P4）
+- ❌ 修改 `app/domain/compare/orchestrator.py` 或 `diff_report.py`（→ P4）
+
+### 复用既有工具
+
+- `app/domain/logical_reference.py:156` `logical_reference_to_graph(payload)` —— **不要重新实现**，直接调
+- `app/domain/logical_reference.py:215` `current_netlist_v2_to_graph(netlist_v2)` —— 同上
+- `app/domain/circuit.py` `norm_component_type`、`PinRole` enum、`POLARIZED_TYPES`、`NON_POLAR_TYPES`、`THREE_PIN_TYPES` —— P0 schema 必须与之对齐
+- `app/domain/net_normalization.py` `normalize_net_role` —— net role 字符串来源
+- 测试 fixture：`tests/fixtures/references/*.json`、`tests/fixtures/netlist_v2/*.json`
+
+### 时间盒
+
+| 子任务 | 预估 |
+|---|---|
+| 1. 起目录骨架 + `__init__.py` + pyproject extras | 0.5 h |
+| 2. `graph_schema.py`（枚举 + 维度常量 + 类型映射） | 2 h |
+| 3. `hetero_circuit.py` dataclasses | 1 h |
+| 4. `port_graph.py` 构建器 + 工具函数 | 4 h |
+| 5. conftest + 10 个单元测试 | 4 h |
+| 6. README + ruff/mypy 通关 | 1 h |
+| 7. 验收 / 调试余量 | 3.5 h |
+| **合计** | **~16 h（≈ 2 个工作日）** |
+
+完成后即可推进 **P0.5**（IC + Pot port 语义稳定化），再到 P0.7（SEAL 子图抽取）。
+
+---
+
+## 附录 A.5 · P0.5 执行细则（IC + Pot port 语义稳定化 · 2 天）
+
+### 触发原因
+P0 落地的 16-class `PortType` 对两类元件描述不足：
+1. **IC（UA741 等运放）** —— 8 个 pin 全部归入 `PIN_N_GENERIC`，SEAL 拿到的 port 嵌入无法区分"反相输入 / 同相输入 / 输出 / 电源 / NC"。一旦在不稳的 port schema 上跑 P0.7（DRNL + SEAL）和 P1（合成数据），所有缓存的 `seal_edges/*.pt` 都得重做。
+2. **Potentiometer** —— wiper 与 terminal_a/b 在结构上不可互换，但当前 `polarity_sensitive` 仅在 `POLARITY_SENSITIVE_PORT_TYPES` 列了 anode/cathode/base/collector/emitter/positive/negative，wiper 漏了。
+
+P0.5 在动 SEAL 前一次性补齐。
+
+### 改动清单
+
+**1. `app/domain/gnn/graph_schema.py`** —— 扩 `PortType` 至 23 项：
+- 新增 `INVERTING_INPUT` / `NON_INVERTING_INPUT` / `OUTPUT` / `OFFSET_NULL` / `NC` / `V_PLUS` / `V_MINUS`
+- 与 ``app.domain.ic_models.UA741_PIN_ROLES`` 严格同步（`offset_null_1` / `offset_null_2` 在 GNN 层合并为 `OFFSET_NULL`，其它一一对齐）
+- 重算 `PORT_FEAT_DIM = 23 + 16 + 5 = 44`（旧 37）。**运行时 self-check 会自动验证；不更新就 import 失败**
+- 新增 `POLARITY_SENSITIVE_PORT_TYPES ⊇ {WIPER, INVERTING_INPUT, NON_INVERTING_INPUT, OUTPUT, V_PLUS, V_MINUS}`
+- 新增 `POWER_PORT_TYPES ⊇ {V_PLUS, V_MINUS}`
+- 新增 `IC_PIN_MAPS: dict[str, dict[str, str]]` 注册表：键是 `part_subtype.upper()`，值是 `pin_name_or_number → PortType.value`。首批支持：`UA741`、`LM358`、`NE555`（MVP 5 电路只用到 UA741；其余预留）
+- 新增 `_OPAMP_PIN_ALIASES: dict[str, str]`：覆盖 DSL 用人话写引脚的常见写法（如 `"in-"` / `"inv"` / `"-in"` → `inverting_input`；`"v+"` / `"vcc"` 对 op-amp 上下文 → `v_plus`）
+- 重构 `normalize_port_type(pin_role, *, component_type=None, part_subtype=None, pin_raw=None)`：
+  1. 若 `component_type ∈ {IC, OpAmp}` 且 `(part_subtype, pin_raw)` 命中 IC_PIN_MAPS → 返回映射
+  2. 否则查 `_OPAMP_PIN_ALIASES`
+  3. 否则走原 PinRole 直查 / pin1/pin2 / 数字 → pin_n_generic / generic 兜底
+
+**2. `app/domain/gnn/port_graph.py`** —— 让 subtype 流到 normalizer：
+- `build_hetero_circuit_graph(nx_graph, side, *, subtype_by_source_id: dict[str, str] | None = None)` 新增 kwarg
+- `build_from_logical_reference(payload)`：从 `payload["components"][*]["subtype"]` 抽 dict，传入
+- `build_from_netlist_v2(netlist_v2)`：从 `netlist_v2["components"][*]["part_subtype"]` 抽 dict，传入
+- 边循环时把 subtype + pin 原始名一并喂给 `normalize_port_type`
+- ⚠️ 不动 `app/domain/logical_reference.py`（保持零侵入）；subtype 通过 payload 旁路传递
+
+**3. 新增 fixture** —— `tests/fixtures/references/test_opamp_buffer_v1.json`：UA741 单位增益缓冲器（V+ / V- / IN+ → in / IN- → out / OUT → out / OFFSET ×2 / NC），8 个 pin 全部出场。P1 合成数据集会复用。
+
+**4. 测试** —— 扩 `test_graph_schema.py`、新增 `tests/domain/gnn/test_ic_pot_semantics.py`：
+- `test_port_type_extended_to_23_members`
+- `test_port_feat_dim_updated`
+- `test_ic_pin_maps_ua741_complete`（8 个 pin 全有映射，且每个映射值 ∈ PortType.values）
+- `test_normalize_port_type_ua741_by_number`：`(pin_role="2", ctype="IC", subtype="UA741", pin_raw="2")` → `inverting_input`
+- `test_normalize_port_type_opamp_alias`：`(pin_role="in-", ctype="OpAmp")` → `inverting_input`
+- `test_wiper_is_polarity_sensitive`
+- `test_build_opamp_buffer_fixture_ports`：fixture → HeteroCircuitGraph 后断言每个 pin 的 port_type 与 UA741_PIN_ROLES 对齐；输入 / 输出 pin polarity_sensitive=True
+- `test_build_handcrafted_potentiometer_graph`：wiper port polarity_sensitive=True，terminal_a / terminal_b 各 polarity_sensitive=False
+- 现有 RC / LED 测试不回归
+
+### 复用既有模块（**不要造轮子**）
+- `app/domain/ic_models.py:9` `UA741_PIN_ROLES` —— 直接 import，构造 IC_PIN_MAPS["UA741"]
+- `app/domain/netlist_models.py:91` `ComponentInstance.part_subtype` —— cur 侧字段来源
+- `app/domain/dsl/compile.py:67` —— 证明 DSL 已经在序列化 `subtype` 字段
+
+### DoD
+- [ ] `pytest tests/domain/gnn/` 全绿（含新测试）
+- [ ] 既有 29 个 compare 测试零回归
+- [ ] `ruff check` / `mypy` 仍然 clean
+- [ ] PORT_FEAT_DIM 一致性 self-check 在 import 期通过
+- [ ] UA741 fixture 通过完整 DSL → HeteroCircuitGraph 路径，8 个 port 各拿到正确 port_type
+
+### 时间盒
+| 子任务 | 预估 |
+|---|---|
+| 1. PortType 扩张 + 维度重算 + 自检 | 1 h |
+| 2. IC_PIN_MAPS + alias 表 + normalize_port_type 重构 | 2 h |
+| 3. port_graph subtype 旁路传递 | 1 h |
+| 4. UA741 fixture（手写 JSON） | 0.5 h |
+| 5. 测试（5 schema + 3 integration） | 3 h |
+| 6. ruff / mypy / 调试余量 | 1.5 h |
+| **合计** | **~9 h（≈ 1.5 个工作日）** |
+
+完成后推进 **P0.6**（Package port materialization + symmetry policy），再到 P0.7（SEAL）。
+
+---
+
+## 附录 A.7 · P0.7 执行细则（SEAL Enclosing Subgraph + DRNL · 2 天）
+
+### 目标
+在 P0/0.5/0.6 已稳定的 `HeteroCircuitGraph` 之上，实现 **GNN-ACLP 范式的 SEAL 子图抽取与 DRNL 标签计算**。这是 SEAL link-prediction head 的输入流水线 —— 把整张电路图按"目标候选边"拆成一组独立的小子图。**不引入 torch**（向量化推到 P2 PyG converter）。
+
+### 新建文件
+```
+app/domain/gnn/seal_subgraph.py
+tests/domain/gnn/test_seal_subgraph.py
+```
+
+### 公开 API
+```python
+@dataclass(frozen=True)
+class SealSubgraph:
+    target_port_id: str
+    target_net_id: str
+    edge_present: bool                # 是 cur 中已存在 (wrong 检测) 还是缺连 (suggested_target)
+    num_hops: int
+    port_ids: tuple[str, ...]         # 包含的 port 节点，anchor 排第一
+    net_ids: tuple[str, ...]
+    edges: tuple[tuple[str, str], ...]   # (port, net) 边；候选边本身已排除
+    drnl_labels: dict[str, int]
+    is_target: dict[str, bool]
+
+def extract_seal_subgraph(
+    hcg, port_node_id, net_node_id, num_hops=2, *,
+    edge_present: bool | None = None,
+) -> SealSubgraph: ...
+
+def extract_subgraphs_for_observed_edges(hcg, num_hops=2) -> list[SealSubgraph]: ...
+def extract_subgraphs_for_floating_ports(
+    hcg, num_hops=2, candidate_nets: list[str] | None = None,
+    exclude_forbidden: bool = True,
+) -> list[SealSubgraph]: ...
+```
+
+### 算法要点
+1. **底图是 (port, net) 二分图**：component 节点不进 SEAL 子图，但每个 port 的 component 上下文已在 port 特征里（parent_ctype, polarity_class）。
+2. **候选边必须在 BFS 与最终子图边集中都剔除**（SEAL 守则：模型不可窥见目标）。
+3. **DRNL 公式**（Zhang & Chen 2018）：
+   - 锚点 `port_u` / `net_v` → 标签 1
+   - 不可达节点 → 标签 0
+   - 其它：`d = d_u + d_v; d_half = d // 2; label = 1 + min(d_u, d_v) + d_half * (d_half + (d % 2) - 1)`
+4. **节点顺序**：anchor port 首位、anchor net 首位，其余按 node_id 字典序，**确定性**（便于测试与缓存键）。
+5. **`suggested_target` 候选 net 集合**：默认是 cur 中**所有 net**。
+6. **`extract_subgraphs_for_floating_ports` 的 ConnectionPolicy 过滤策略**（**P0.7 收尾审计修订**）：默认仅 `policies={REQUIRED}` —— OPTIONAL pin（如 UA741 offset_null）允许保持 floating，把它打成"应该接"会给 P1 合成标签注入系统性噪声；FORBIDDEN（UA741 pin 8 NC）默认排除。需要审计 / 教学增强场景显式传 `policies={REQUIRED, OPTIONAL}` 或全集。
+7. **`same_component_edges` 字段**（**P0.7 收尾审计预留**）：默认空。开启 `include_same_component_edges=True` 才填充"同片 IC / 同只 BJT 的兄弟 pin"成对边。**DRNL 距离始终在 bipartite (port, net) 底图上 BFS**，本字段只是 P2/P3 模型的可选结构信号，是否消费由后续阶段决定。
+
+### 测试覆盖
+1. DRNL 公式手算（du=1,dv=1→2；du=1,dv=2→3；du=2,dv=2→5；du=2,dv=3→7）
+2. 锚点 → 1；不可达 → 0
+3. 2-hop 边界正确（3-hop 节点不在子图）
+4. 候选边在 `edges` 中已剔除；BFS 也用了去边图
+5. UA741 fixture：为某条已存在边抽取，断言子图大小合理、anchors 正确
+6. `extract_subgraphs_for_observed_edges`：边数恰好等于 hcg.edges
+7. `extract_subgraphs_for_floating_ports`：FORBIDDEN 的 pin 8 不在候选；OPTIONAL/REQUIRED 的浮空 port 会出现
+8. 性能：UA741 全图（≤ 50 边）抽取 < 30 ms
+
+### DoD
+- [ ] pytest 全绿，新增 ≥ 12 项 SEAL 测试
+- [ ] ruff / mypy clean
+- [ ] 既有 119+29 测试零回归
+- [ ] README 新增 P0.7 段
+- [ ] 不引入 torch / torch_geometric
+
+### 时间盒
+| 子任务 | 预估 |
+|---|---|
+| 1. SealSubgraph dataclass + BFS / DRNL 实现 | 3 h |
+| 2. extract_seal_subgraph + 两个 batched helper | 3 h |
+| 3. 测试 (≥ 12 项含手算 DRNL + UA741 集成) | 4 h |
+| 4. README + ruff/mypy + 性能验证 | 2 h |
+| **合计** | **~12 h（≈ 2 工作日）** |
+
+完成后推进 **P0.8**（label builder + ref↔cur alignment），再到 P1。
+
+---
+
+## 附录 A.8 · P0.8 执行细则（Label Builder + Alignment · 2-2.5 天）
+
+### 触发原因（外审 + GNN-ACLP 数据集对比）
+P0.7 把抽图层做干净后，**打标签层**完全空白。直接进 P1 perturbation 会被迫在
+perturbation 代码里穿插 label 逻辑，污染两个关心点。
+
+GNN-ACLP（arxiv 2504.10240v5）的标签方式审计发现 3 处他们做错 / 没做、我们必须做对：
+
+1. **k-fold 在 edge 上 split** —— 把 94 个电路合并成一张大图后 random
+   split，test edge 与 train edge 来自同电路 → 隐性数据泄漏。**我们必须按
+   ref 电路 split**（plan §五 早已定）。
+2. **无 ConnectionPolicy** —— 随机非边都被采样为负，把 UA741 offset_null
+   "可不接"的边也当负样本，标签语义模糊。**我们 OPTIONAL 默认排除**。
+3. **无 symmetry** —— R.pin1↔pin2 swap 在他们框架里会被打成"wrong edge"。**我们
+   必须把 sibling pin swap 识别为合法**（pin_symmetry_groups + symmetry_class_id
+   在 P0.6 已落库，但 P0.7 没用过；P0.8 是首次消费）。
+
+### 已决策（本次确认）
+
+| 决策点 | 选择 |
+|---|---|
+| Symmetric swap 标签 | **Both edges = label 1**（cur 实际边 + sibling 合成边都作 positive） |
+| FORBIDDEN pin 负样本 | **默认 4 条合成负** + violated 边各自一条 |
+| missing_component perturbation | **Silently skip + log**（不在 edge level 表达，留给 graph-level error_type 头） |
+
+### 新建文件
+
+```
+app/domain/gnn/alignment.py             ← ComponentAlignment + identity / explicit constructors
+app/domain/gnn/label_builder.py         ← SealSample, LabelSource, build_seal_samples
+tests/domain/gnn/test_alignment.py       ← ≥ 6 测试
+tests/domain/gnn/test_label_builder.py   ← ≥ 15 测试
+```
+
+### 公开 API
+
+```python
+# alignment.py
+@dataclass(frozen=True)
+class ComponentAlignment:
+    """ref ↔ cur 的 source_id 对齐表。component 与 net 各一份。"""
+    ref_to_cur_component: dict[str, str]
+    ref_to_cur_net: dict[str, str]
+    cur_to_ref_component: dict[str, str]      # 反向缓存
+    cur_to_ref_net: dict[str, str]
+    notes: dict = field(default_factory=dict) # perturbation 写"做了什么改动"
+
+    def map_ref_port_to_cur_port_id(
+        self, ref_port_id: str, ref_hcg, cur_hcg
+    ) -> str | None: ...
+    def map_ref_net(self, ref_net_id: str) -> str | None: ...
+
+def identity_alignment(ref, cur) -> ComponentAlignment: ...     # 同 source_id 自动对齐
+def alignment_from_dicts(
+    ref, cur, component_map: dict[str, str], net_map: dict[str, str]
+) -> ComponentAlignment: ...
+
+# label_builder.py
+class LabelSource(str, Enum):
+    REF_PRESENT          = "ref_present"
+    REF_SYMMETRIC_SWAP   = "ref_symmetric_swap"
+    REF_ABSENT_REQUIRED  = "ref_absent_required"
+    FORBIDDEN_VIOLATED   = "forbidden_violated"
+    FORBIDDEN_NEGATIVE   = "forbidden_negative"
+    NEGATIVE_RANDOM      = "negative_random"
+
+@dataclass(frozen=True)
+class SealSample:
+    subgraph: SealSubgraph
+    label: int                                   # 0 or 1
+    label_source: str
+    ref_edge_origin: tuple[str, str] | None      # (ref port source_id, ref net source_id)
+    confidence: float = 1.0
+    is_symmetric_equivalent: bool = False        # 用于 P3 loss 端可选 down-weight
+
+def build_seal_samples(
+    ref_hcg, cur_hcg, alignment,
+    *,
+    negatives_per_positive: float = 1.0,
+    include_optional: bool = False,
+    forbidden_negative_samples: int = 4,
+    seed: int = 0,
+    num_hops: int = 2,
+    include_same_component_edges: bool = False,
+) -> list[SealSample]: ...
+```
+
+### 算法 4 步
+
+**Step 1 · ref-driven positives（含 symmetric expansion）**
+```
+for ref_edge in ref.edges:
+    cur_port = alignment.map_ref_port(ref_edge.src, ref, cur)
+    cur_net  = alignment.map_ref_net(ref_edge.dst)
+    if cur_port is None: log_debug("missing_component skip"); continue   # 决策 3
+    if cur.ports[cur_port].policy == OPTIONAL and not include_optional: continue
+    if cur.ports[cur_port].policy == FORBIDDEN: continue   # 防御，正常不该发生
+
+    actually_present = (cur_port, cur_net) in cur_edges
+    siblings = sym_class_siblings(cur, cur_port)   # 同 component 同 symmetry_class
+    sym_present = any((sib, cur_net) in cur_edges for sib in siblings)
+
+    # 决策 1：both edges = label 1
+    anchors = {cur_port}
+    if sym_present or siblings:   # 即便没观测，也合成 sibling positive
+        anchors.update(siblings)
+    for anchor in anchors:
+        sg = extract_seal_subgraph(cur, anchor, cur_net, ...)
+        source = (REF_SYMMETRIC_SWAP if anchor != cur_port else
+                  REF_PRESENT if actually_present else REF_ABSENT_REQUIRED)
+        samples.append(SealSample(sg, 1, source, ref_origin, is_sym_equiv=(anchor!=cur_port)))
+```
+
+**Step 2 · FORBIDDEN violated 边作强负**
+```
+for port in cur.ports.values():
+    if port.policy != FORBIDDEN: continue
+    for e in cur.edges:
+        if e.src_port_id == port.node_id:
+            sg = extract(cur, e.src, e.dst, edge_present=True, ...)
+            samples.append(SealSample(sg, 0, FORBIDDEN_VIOLATED, None))
+```
+
+**Step 3 · FORBIDDEN 合成负样本（决策 2：默认 N=4）**
+```
+rng = random.Random(seed)
+for port in cur.ports.values():
+    if port.policy != FORBIDDEN: continue
+    nets_sample = rng.sample(list(cur.nets), k=min(forbidden_negative_samples, len(cur.nets)))
+    for net_id in nets_sample:
+        if (port.node_id, net_id) already in samples: continue   # 去重
+        sg = extract(cur, port.node_id, net_id, edge_present=False, ...)
+        samples.append(SealSample(sg, 0, FORBIDDEN_NEGATIVE, None))
+```
+
+**Step 4 · 随机负样本，避开 sym-equivalent 正集合**
+```
+expected_cur_edges = {sym-aware ref-mapped edge set}
+n_pos = sum(s.label==1 for s in samples)
+n_need = int(n_pos * negatives_per_positive) - sum(s.label==0 for s in samples)
+candidates = [
+    (p.node_id, n.node_id)
+    for p in cur.ports.values() if p.policy == REQUIRED
+    for n in cur.nets.values()
+    if (p.node_id, n.node_id) not in expected_cur_edges
+]
+rng.shuffle(candidates)
+for p_id, n_id in candidates[:n_need]:
+    sg = extract(cur, p_id, n_id, edge_present=(p_id,n_id) in cur_edges, ...)
+    samples.append(SealSample(sg, 0, NEGATIVE_RANDOM, None))
+```
+
+### 显式不在范围（推到 P0.9 / P1）
+
+| 范围外项 | 影响 | 缓解 |
+|---|---|---|
+| **Net-level swap**（DSL `symmetry_groups` 中 VCC↔VEE） | 模型把 swapped supply 当 wrong | MVP 5 电路 DSL 不使用；文档化为已知限制 |
+| **Component-level swap**（R1↔R2 in divider） | 同上 | perturbation 阶段不生成此类样本 |
+| **跨电路 alignment**（学生用了不同的 component 命名） | alignment 需 fuzzy match | P1 perturbation 已知 ref，直接传 explicit map |
+| **noisy labels**（视觉低置信时降权） | 训练偶尔被错样本污染 | SealSample.confidence 字段已留位，P3 实际写 loss 时再决定 |
+
+### 复用既有
+
+- `app/domain/gnn/seal_subgraph.py:extract_seal_subgraph` —— 每个 SealSample
+  内部子图都通过它生成；本次 P0.7 收尾验证的 `include_same_component_edges`
+  与 policies 设计直接被 label builder 调用
+- `app/domain/gnn/graph_schema.py:ConnectionPolicy` + `IC_PIN_POLICIES`
+- `app/domain/gnn/hetero_circuit.py:PortNode.symmetry_class_id` /
+  `ComponentNode.pin_symmetry_groups`
+- `app/domain/compare/orchestrator.py:compare_logical_graphs` —— **不直接调用**，
+  但 P5 评估时会用 rule comparator 输出做 label 一致性 sanity check
+
+### 测试覆盖（≥ 21 项）
+
+- `test_alignment.py`（≥ 6）
+  - identity_alignment 同名 ref/cur → 完整对齐 + 反向索引正确
+  - identity_alignment 部分 ref id 在 cur 缺失 → notes 记录
+  - alignment_from_dicts 显式覆盖
+  - map_ref_port 命中 / 缺失返回 None
+  - map_ref_net 命中 / 缺失
+  - alignment 序列化（dict-ish）便于 P1 perturbation log
+
+- `test_label_builder.py`（≥ 15，按 LabelSource 一一覆盖）
+  - 完美 cur copy → 所有 sample label=1, source=REF_PRESENT
+  - cur 缺一条 REQUIRED 边 → label=1, source=REF_ABSENT_REQUIRED
+  - R.pin1↔pin2 swap → 决策 1：两边都 label=1，其中合成的 sibling 边
+    `is_symmetric_equivalent=True`
+  - UA741 fixture 默认（include_optional=False）→ pin 1/5 完全不出现在
+    任何 sample 中
+  - include_optional=True → pin 1/5 作为 candidate 出现
+  - cur 接 pin 8 → GND → label=0, source=FORBIDDEN_VIOLATED
+  - pin 8 floating + forbidden_negative_samples=3 → 3 个 FORBIDDEN_NEGATIVE
+  - 默认 forbidden_negative_samples=4 时数量正确
+  - NEGATIVE_RANDOM 全部 port.policy == REQUIRED（不命中 OPTIONAL/FORBIDDEN）
+  - NEGATIVE_RANDOM 不命中 sym-equivalent 正集合
+  - 同 seed 重复调用 → samples 完全一致
+  - missing_component（cur 缺 R1）→ 对应 ref 边 silently skip，无 raise
+  - negatives_per_positive=2.0 → 总负数 ≈ 2× 正数（含 FORBIDDEN 已计入）
+  - extract_seal_subgraph 抛 KeyError 时 → 跳过 + 日志，不影响其它 sample
+  - 集成：UA741 buffer + pin_reversed perturbation cur → 期望 sample 集合
+
+### DoD
+- [ ] pytest 全绿（既有 157 + 新 ≥ 21 = ≥ 178）
+- [ ] 既有 29 比较器测试零回归
+- [ ] ruff / mypy clean
+- [ ] README 加 P0.8 段；包含 LabelSource 含义表
+- [ ] 不引入 torch / torch_geometric
+- [ ] 一次构造 UA741 buffer 全套 SealSample（pos+neg）耗时 < 50 ms
+
+### 时间盒
+| 子任务 | 预估 |
+|---|---|
+| 1. ComponentAlignment + 2 个 constructor + 测试 | 2 h |
+| 2. SealSample + LabelSource + dataclass 测试 | 1 h |
+| 3. build_seal_samples 4 步算法 | 4 h |
+| 4. symmetric sibling 展开 + 防去重 | 1.5 h |
+| 5. label builder 主测试 (≥ 15) + cur fixture 手搓 | 4 h |
+| 6. ruff / mypy / README / 调试余量 | 2 h |
+| **合计** | **~14.5 h（≈ 2-2.5 工作日）** |
+
+完成后 P1 perturbation 只需关心"如何生成 cur HeteroCircuitGraph + 一个
+ComponentAlignment"，label 全权由 label_builder 接管。两层完全解耦。
+
+---
+
+---
+
+## 附录 A.6 · P0.6 执行细则（Package port materialization + symmetry policy · 2 天）
+
+### 触发原因（外审反馈 + 内审补充）
+P0.5 把"已连接 port 的语义"补齐了，但下列 5 项仍是 SEAL **次头（suggested_target）** 和 **missing_connection 检测** 的硬阻塞：
+
+1. UA741 的 pin 1/5/8 等未连接（NC）pin 完全不在图中 —— 候选边集合连 pin 1 都生成不了
+2. `PortNode.is_floating` 永远是 False（死代码）
+3. R / Pot 等元件的可互换 pin 关系（symmetric policy）从 DSL / netlist_v2 全部丢弃
+4. NC（必不接） vs OPTIONAL（可不接） vs REQUIRED（必接）三态未区分
+5. `PortNode.pin_number` 没有显字段，下游需要再 str→int 解析
+
+cur 侧另有一处对称性问题：`electrical_net_id=None` 的"学生没接"pin 被静默丢弃。
+
+### 决策（已与用户对齐）
+- UA741 pin 8 (NC) → `FORBIDDEN`
+- `pin_number` 现在加（P0.6）
+- `NetNode.swappable_with`（DSL 顶层 net swap）推迟到 P0.7 之后做
+
+### 改动清单
+
+**1. `graph_schema.py`**
+- 新增 `class ConnectionPolicy(str, Enum)`：`REQUIRED` / `OPTIONAL` / `FORBIDDEN`
+- 新增 `class PinSpec(NamedTuple)`：`pin_key, port_type, connection_policy, symmetry_class, pin_number`
+- 新增 `PACKAGE_PIN_SPECS: dict[str, list[PinSpec]]` 覆盖 9 个非 IC component type（Resistor/Capacitor/CapacitorCeramic/CapacitorElectrolytic/Wire/LED/Diode/Transistor/Potentiometer）
+- 新增 `IC_PIN_POLICIES: dict[str, dict[str, ConnectionPolicy]]` 覆盖 UA741（pin 1/5 = OPTIONAL，pin 8 = FORBIDDEN，其它 REQUIRED）
+- 新增 `IC_PIN_SYMMETRY: dict[str, list[list[str]]]` 覆盖 UA741（`[["1","5"]]` —— offset_null_1↔2 可互换）
+- 新增 `make_ic_pin_specs(subtype) -> list[PinSpec]` 从 IC_PIN_MAPS + POLICIES + SYMMETRY 合成
+- 新增 `get_expected_pin_specs(ctype, subtype) -> list[PinSpec]`：调用方统一入口
+- 扩 PORT_FEAT_LAYOUT 加 6 维 → `PORT_FEAT_DIM = 50`（44 + 3 policy_one_hot + 1 has_pin_number + 1 pin_number_log + 1 symmetry_class_size_inverse）
+- self-check 守住一致性
+
+**2. `hetero_circuit.py`** —— PortNode / ComponentNode 字段扩张：
+- `PortNode` 新增 `pin_number: int | None` / `connection_policy: str` / `symmetry_class_id: int`
+- `ComponentNode` 新增 `pin_symmetry_groups: tuple[tuple[str, ...], ...]`
+
+**3. `port_graph.py`**
+- 边路径扫完后新增 **materialize phase**：
+  - 对每个 component 查 `get_expected_pin_specs(ctype, subtype)`
+  - 对未出现的 expected pin，创建 `is_floating=True` 的 PortNode，填 spec 派生字段
+  - 对已存在 port，**回填** pin_number / connection_policy / symmetry_class_id（从 spec 查；spec 没有则按 default `REQUIRED` / 唯一 symmetry class 派生）
+- `_payload_raw_pin_edges_cur` **不再 skip** `electrical_net_id=None` 的 pin —— 而是把它们记录为"已观测但 floating"（保留 pin_raw / pin_role 但 net_source_id=None）；materialize phase 把这些 + IC spec 缺口合并
+- ComponentNode.pin_symmetry_groups 在 materialize phase 末尾根据 symmetry_class_id 分组后回填（用 dataclasses.replace 风格）
+
+**4. `__init__.py`**：导出 `ConnectionPolicy` / `PACKAGE_PIN_SPECS` / `get_expected_pin_specs`
+
+**5. `README.md`** 重写为 P0 / P0.5 / P0.6 三段进度 + 一张 port lifecycle 图
+
+**6. 测试** —— `tests/domain/gnn/test_package_materialization.py`，≥ 12 项：
+- UA741 fixture：n_ports = **8**（5 connected + 3 floating），pin 8 policy=FORBIDDEN，pin 1/5 policy=OPTIONAL，pin 2/3/4/6/7 policy=REQUIRED
+- UA741 offset_null pin 1/5 同 symmetry_class_id（且其它 pin 各自独立）
+- Resistor 手搓：2 port 同 symmetry_class_id（互换组）
+- Capacitor 陶瓷：2 port 同 class
+- LED / Diode / 电解 Cap：anode/cathode 不同 class（极性）
+- Transistor：3 个 pin 各自独立 class
+- Pot：terminal_a/b 同 class，wiper 独立
+- cur 侧 netlist_v2 floating pin：构造 `electrical_net_id=None` 测试 floating port 出现
+- ComponentNode.pin_symmetry_groups 与 PortNode.symmetry_class_id 自洽
+- 全部 floating port `is_floating=True`，全部 connected port `is_floating=False`
+- pin_number：UA741 pin "3" → port.pin_number=3；R pin "pin1" → port.pin_number=1；anode → None
+- 既有 65+29 测试零回归
+
+### 复用既有模块
+- `app/domain/netlist_models.py:94` `ComponentInstance.symmetry_group` —— cur 侧 pin 互换组来源（v1 仅作为参考校验，不覆盖 spec）
+- `app/domain/ic_models.py:9` `UA741_PIN_ROLES` —— 仍是 IC 模板事实源
+- P0.5 的 `IC_PIN_MAPS` —— make_ic_pin_specs 直接读
+
+### DoD
+- [ ] UA741 fixture：n_ports=8（先前 5 → 8）
+- [ ] pin 8 connection_policy=FORBIDDEN，pin 1/5=OPTIONAL，其它=REQUIRED
+- [ ] is_floating 在 3 个 NC pin 上为 True，其它为 False
+- [ ] symmetry_class_id 正确划分（R/Pot/UA741 offset_null）
+- [ ] PORT_FEAT_DIM=50 且 self-check 通过
+- [ ] 既有 RC fixture 仍 4 ports（R/C 都 2 pin 全连，不应新增 floating）
+- [ ] 既有 29+65 测试零回归
+- [ ] ruff / mypy 仍 clean
+- [ ] README 更新到 P0.6
+- [ ] plan §九 MVP 表插入 P0.6 行
+
+### 时间盒
+| 子任务 | 预估 |
+|---|---|
+| 1. ConnectionPolicy + PinSpec + PACKAGE_PIN_SPECS + IC overlay | 2 h |
+| 2. PortNode / ComponentNode 字段扩 + dim self-check | 1 h |
+| 3. port_graph materialize phase | 3 h |
+| 4. cur 侧 floating pin 检测 | 1 h |
+| 5. 测试 (≥ 12 项) | 3 h |
+| 6. README + ruff/mypy + 调试余量 | 2 h |
+| **合计** | **~12 h（≈ 2 个工作日）** |
+
+完成后所有 port 节点（含 NC 与 floating）齐全、symmetric / connection policy 显式标注，SEAL P0.7 可以放心生成完整候选边集合。
 
 ---
 
