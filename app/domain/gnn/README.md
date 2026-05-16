@@ -1,6 +1,6 @@
 # `app.domain.gnn` · GNN-assisted Graph Comparator
 
-**Status: P0.7 complete (SEAL subgraph + DRNL).**
+**Status: P0.8 complete (label builder + ref↔cur alignment).**
 Full plan: `~/.claude/plans/labguardian-server-glowing-galaxy.md`.
 
 ## What this module is
@@ -41,6 +41,33 @@ integration) for the contract.
 - `raw_pin_edges` bypass in `build_from_*` preserves parallel pin edges
   (e.g., UA741 pin2↔pin6 both wired to VOUT in a unity-gain buffer; the
   underlying `nx.Graph` would otherwise collapse them).
+
+### ✅ P0.8 — Label builder + ref↔cur alignment
+- `alignment.py` — `ComponentAlignment` carries ref↔cur `source_id` maps for
+  both components and nets. Constructors: `identity_alignment` (same-name
+  auto-match) and `alignment_from_dicts` (explicit; for perturbations that
+  rename). `to_dict()` / `alignment_from_dict_payload()` round-trip via JSON.
+- `label_builder.py` — `build_seal_samples(ref, cur, alignment, ...)` runs
+  a deterministic 6-step pipeline:
+  1. **Ref-driven WRONG_EDGE positives** + symmetric sibling expansion
+     (R.pin1↔pin2 swap → both labeled 1)
+  2. **MISSING_EDGE groups** for REQUIRED ports that are `floating` OR
+     `wrong_redirect` (correct net is mandatory candidate)
+  3. **WRONG_OBSERVED strong negatives** — 100% coverage of cur edges that
+     aren't ref-correct; not delegated to random sampling
+  4. **FORBIDDEN_VIOLATED** — every actual edge on a FORBIDDEN pin
+  5. **FORBIDDEN_NEGATIVE** — N synthetic non-edges per FORBIDDEN pin
+     (default N=4)
+  6. **NEGATIVE_RANDOM** — fills the `negatives_per_positive` budget,
+     avoiding sym-equivalent positives + already-emitted pairs
+- Returns `LabelBuildResult(samples, groups, stats)`. `LabelStats` records
+  per-source / per-task counts + 5 skip reasons for silent-drift monitoring.
+- `assert_observed_edges_covered()` provides the WRONG_OBSERVED 100%
+  coverage invariant for P1 dataset sanity checks.
+- `serialize_label_build_result()` / `deserialize_label_build_result()`
+  define the on-disk JSON schema (v1.0) — P1 `dataset_builder` writes,
+  P2 `pyg_converter` reads.
+- Performance: full UA741 buffer pipeline < 80 ms (CPU). All pure Python.
 
 ### ✅ P0.7 — SEAL enclosing subgraph + DRNL labeling
 - `seal_subgraph.py` — GNN-ACLP-style SEAL pipeline. For any candidate

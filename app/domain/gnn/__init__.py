@@ -22,6 +22,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.domain.gnn.alignment import (
+    ComponentAlignment,
+    alignment_from_dict_payload,
+    alignment_from_dicts,
+    identity_alignment,
+)
 from app.domain.gnn.graph_schema import (
     COMPONENT_FEAT_DIM,
     IC_PIN_MAPS,
@@ -43,6 +49,19 @@ from app.domain.gnn.hetero_circuit import (
     NetNode,
     PortConnectsNetEdge,
     PortNode,
+)
+from app.domain.gnn.label_builder import (
+    SCHEMA_VERSION,
+    LabelBuildResult,
+    LabelSource,
+    LabelStats,
+    SealSample,
+    SealSampleGroup,
+    TaskType,
+    assert_observed_edges_covered,
+    build_seal_samples,
+    deserialize_label_build_result,
+    serialize_label_build_result,
 )
 from app.domain.gnn.port_graph import (
     build_from_logical_reference,
@@ -114,6 +133,22 @@ __all__ = [
     "extract_seal_subgraph",
     "extract_subgraphs_for_observed_edges",
     "extract_subgraphs_for_floating_ports",
+    # Alignment + Label Builder (P0.8)
+    "ComponentAlignment",
+    "identity_alignment",
+    "alignment_from_dicts",
+    "alignment_from_dict_payload",
+    "TaskType",
+    "LabelSource",
+    "SealSample",
+    "SealSampleGroup",
+    "LabelStats",
+    "LabelBuildResult",
+    "build_seal_samples",
+    "assert_observed_edges_covered",
+    "SCHEMA_VERSION",
+    "serialize_label_build_result",
+    "deserialize_label_build_result",
     # P4 stubs
     "GNNAdvisor",
     "should_use_gnn",
