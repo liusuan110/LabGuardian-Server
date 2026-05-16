@@ -74,6 +74,13 @@ embedding-build = [
     "transformers>=4.40",
     "huggingface_hub>=0.23",
 ]
+# GNN-assisted graph comparator (plan §一, app/domain/gnn/). Heavy ML deps —
+# install only on a dev / training box, never on the breadboard. The base
+# install runs the rule-based comparator without any GNN code paths.
+gnn = [
+    "torch>=2.2",
+    "torch-geometric>=2.5",
+]
 
 [build-system]
 requires = ["hatchling"]

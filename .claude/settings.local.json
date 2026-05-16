@@ -19,7 +19,11 @@
       "Bash(.venv/bin/python -m pytest tests/pipeline/test_s2_mapping.py tests/pipeline/test_s1b_pin_detect.py -q)",
       "Bash(.venv/bin/python -m pytest tests/pipeline/test_s1b_pin_detect.py tests/pipeline/test_s2_mapping.py -q)",
       "Bash(.venv/bin/python -m pytest tests/pipeline/ -q --no-header)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(python3 -c \"import json; d=json.load\\(open\\('/Users/liusuan/Desktop/LabGuardian-Server/tests/fixtures/netlist_v2/reference_simple_v4.json'\\)\\); print\\(list\\(d.keys\\(\\)\\)\\); print\\('components:', len\\(d.get\\('components', []\\)\\)\\); print\\('nets:', len\\(d.get\\('nets', []\\)\\)\\)\")",
+      "Bash(python3 -m pytest tests/domain/gnn/ -x --tb=short)",
+      "Bash(python3 -m pytest tests/domain/test_graph_compare.py tests/domain/test_graph_compare_detailed.py)",
+      "Bash(python3 -m ruff check /Users/liusuan/Desktop/LabGuardian-Server/app/domain/risk.py)"
     ]
   }
 }
