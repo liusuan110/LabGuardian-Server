@@ -49,6 +49,12 @@ from app.domain.gnn.port_graph import (
     build_from_netlist_v2,
     build_hetero_circuit_graph,
 )
+from app.domain.gnn.seal_subgraph import (
+    SealSubgraph,
+    extract_seal_subgraph,
+    extract_subgraphs_for_floating_ports,
+    extract_subgraphs_for_observed_edges,
+)
 
 
 class GNNAdvisor:
@@ -103,6 +109,11 @@ __all__ = [
     "build_hetero_circuit_graph",
     "build_from_logical_reference",
     "build_from_netlist_v2",
+    # SEAL pipeline (P0.7)
+    "SealSubgraph",
+    "extract_seal_subgraph",
+    "extract_subgraphs_for_observed_edges",
+    "extract_subgraphs_for_floating_ports",
     # P4 stubs
     "GNNAdvisor",
     "should_use_gnn",

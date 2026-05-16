@@ -1,6 +1,6 @@
 # `app.domain.gnn` · GNN-assisted Graph Comparator
 
-**Status: P0.6 complete (schema + package port materialization).**
+**Status: P0.7 complete (SEAL subgraph + DRNL).**
 Full plan: `~/.claude/plans/labguardian-server-glowing-galaxy.md`.
 
 ## What this module is
@@ -41,6 +41,21 @@ integration) for the contract.
 - `raw_pin_edges` bypass in `build_from_*` preserves parallel pin edges
   (e.g., UA741 pin2↔pin6 both wired to VOUT in a unity-gain buffer; the
   underlying `nx.Graph` would otherwise collapse them).
+
+### ✅ P0.7 — SEAL enclosing subgraph + DRNL labeling
+- `seal_subgraph.py` — GNN-ACLP-style SEAL pipeline. For any candidate
+  `(port, net)` edge, extract its h-hop enclosing subgraph on the bipartite
+  port↔net graph (h=2 by default), drop the candidate edge from BFS and
+  output edge list (SEAL convention), and label every node with its
+  Double-Radius Node Labeling.
+  - `SealSubgraph` dataclass (immutable; deterministic node order)
+  - `extract_seal_subgraph(hcg, port_id, net_id)` — single edge
+  - `extract_subgraphs_for_observed_edges(hcg)` — feed wrong-edge head
+  - `extract_subgraphs_for_floating_ports(hcg, candidate_nets=None)` — feed
+    suggested-target head; auto-skips `FORBIDDEN` pins (UA741 pin 8 NC)
+- DRNL formula matches Zhang & Chen 2018: `1 + min(d_u, d_v) + d_half * (d_half + (d % 2) - 1)` with `d = d_u + d_v` and `d_half = d // 2`. Anchors → label 1; unreachable → label 0.
+- Performance budget (`plan §三.6` / DoD): 50 candidate edges < 30 ms on CPU. Measured: < 1 ms (synthetic 50-edge chain).
+- **Still no `torch`** — output is plain Python dataclasses; tensor packing belongs to P2 PyG converter.
 
 ### ✅ P0.6 — Package port materialization + symmetry / connection policy
 - `ConnectionPolicy` enum: `REQUIRED` / `OPTIONAL` / `FORBIDDEN`.
@@ -119,7 +134,6 @@ integration) for the contract.
 
 - ❌ `torch` / `torch_geometric` imports (declared as `[gnn]` extras only)
 - ❌ Feature vectorisation, padding, tensor packing → P2
-- ❌ SEAL enclosing subgraph extraction & DRNL labelling → P0.7
 - ❌ Model definition, training, inference → P3 / P4
 - ❌ Any modification of `app/domain/compare/` → P4
 - ❌ `NetNode.swappable_with` (DSL top-level net swap groups) → P0.7+
@@ -127,7 +141,7 @@ integration) for the contract.
 ## Running tests
 
 ```bash
-pytest tests/domain/gnn/                       # P0 + P0.5 + P0.6 unit tests
+pytest tests/domain/gnn/                       # P0 + P0.5 + P0.6 + P0.7 unit tests
 pytest tests/domain/test_graph_compare.py      # rule comparator (zero regression expected)
 ruff check app/domain/gnn/ tests/domain/gnn/
 mypy app/domain/gnn/
