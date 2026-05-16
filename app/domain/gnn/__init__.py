@@ -24,6 +24,7 @@ from typing import Any
 
 from app.domain.gnn.graph_schema import (
     COMPONENT_FEAT_DIM,
+    IC_PIN_MAPS,
     NET_FEAT_DIM,
     PORT_FEAT_DIM,
     ComponentType,
@@ -81,6 +82,8 @@ __all__ = [
     "COMPONENT_FEAT_DIM",
     "PORT_FEAT_DIM",
     "NET_FEAT_DIM",
+    # IC metadata
+    "IC_PIN_MAPS",
     # data classes
     "HeteroCircuitGraph",
     "ComponentNode",

@@ -1,0 +1,29 @@
+{
+  "format": "logical_reference_v1",
+  "reference_id": "test_opamp_buffer_v1",
+  "name": "UA741 Unity-Gain Buffer (single supply)",
+  "description": "UA741 connected as a unity-gain voltage follower; OFFSET pins and NC pin unused. Exercises every PortType added in P0.5: V_PLUS, V_MINUS, INVERTING_INPUT, NON_INVERTING_INPUT, OUTPUT.",
+  "components": [
+    {
+      "ref_id": "U1",
+      "type": "IC",
+      "subtype": "UA741",
+      "pins": [
+        { "pin": "1", "nc": true },
+        { "pin": "2", "net": "VOUT" },
+        { "pin": "3", "net": "VIN" },
+        { "pin": "4", "net": "GND" },
+        { "pin": "5", "nc": true },
+        { "pin": "6", "net": "VOUT" },
+        { "pin": "7", "net": "VCC" },
+        { "pin": "8", "nc": true }
+      ]
+    }
+  ],
+  "nets": [
+    { "net": "VIN", "role": "input" },
+    { "net": "VOUT", "role": "output" },
+    { "net": "VCC", "role": "power" },
+    { "net": "GND", "role": "ground" }
+  ]
+}

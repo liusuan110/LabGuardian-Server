@@ -61,11 +61,17 @@ class ComponentType(str, Enum):  # noqa: UP042 — keep (str, Enum) for py<3.11 
 
 
 class PortType(str, Enum):  # noqa: UP042 — keep (str, Enum) for py<3.11 compat
-    """16 类 port 类型 (one-hot 编码用)。
+    """23 类 port 类型 (one-hot 编码用) — P0.5 IC + Pot 语义稳定化后。
 
-    覆盖 ``app.domain.circuit.PinRole`` 的全部 13 个取值，外加 PIN1 / PIN2 /
-    PIN_N_GENERIC（对应 normalize_pin_role fallback 的 "pin1" / "pin2" / 其
-    它）以及 NC（not connected，预留）。
+    覆盖：
+    - ``app.domain.circuit.PinRole`` 的全部 13 个取值（含 wiper /
+      terminal_a / terminal_b for Potentiometer）。
+    - ``app.domain.ic_models.UA741_PIN_ROLES`` 的 5 个运放专属角色：
+      ``INVERTING_INPUT`` / ``NON_INVERTING_INPUT`` / ``OUTPUT`` /
+      ``OFFSET_NULL``（合并 offset_null_1/2）/ ``NC``，以及通用 IC 电源
+      ``V_PLUS`` / ``V_MINUS`` 区分于 VCC/GND（运放可能用双电源）。
+    - ``PIN1`` / ``PIN2`` / ``PIN_N_GENERIC`` 兜底，对应 normalize_pin_role
+      fallback 的 ``pin1`` / ``pin2`` / 数字 pin。
     """
 
     GENERIC = "generic"  # PinRole.GENERIC fallback
@@ -84,8 +90,14 @@ class PortType(str, Enum):  # noqa: UP042 — keep (str, Enum) for py<3.11 compa
     PIN1 = "pin1"
     PIN2 = "pin2"
     PIN_N_GENERIC = "pin_n_generic"
-    # NC 单独保留为字符串常量而非 enum 成员，避免占用 16 维 one-hot 槽位。
-    # 未连接 pin 由 PortNode.is_floating 标记，PortType 仍走原 pin role。
+    # ---- P0.5 新增：IC / op-amp 专属角色 ----
+    INVERTING_INPUT = "inverting_input"
+    NON_INVERTING_INPUT = "non_inverting_input"
+    OUTPUT = "output"
+    OFFSET_NULL = "offset_null"
+    NC = "nc"
+    V_PLUS = "v_plus"
+    V_MINUS = "v_minus"
 
 
 class NetRole(str, Enum):  # noqa: UP042 — keep (str, Enum) for py<3.11 compat
@@ -127,7 +139,9 @@ class SourceType(str, Enum):  # noqa: UP042 — keep (str, Enum) for py<3.11 com
 # ---------------------------------------------------------------------------
 
 COMPONENT_FEAT_DIM = 30
-PORT_FEAT_DIM = 37
+# Bumped from 37 → 44 in P0.5 after expanding PortType to 23 members (16 → 23
+# adds 7 op-amp / IC roles). Recomputed: 23 + 16 + 1+1+1+1+1 = 44.
+PORT_FEAT_DIM = 44
 NET_FEAT_DIM = 11
 PORT_NET_EDGE_FEAT_DIM = 5
 DRNL_LABEL_DIM = 17  # 0..15 + overflow bucket，由 P0.7 SEAL pipeline 使用
@@ -237,18 +251,33 @@ _seed_polarity_table()
 
 POLARITY_SENSITIVE_PORT_TYPES: frozenset[str] = frozenset(
     {
+        # 两脚极性元件
         PortType.ANODE.value,
         PortType.CATHODE.value,
+        PortType.POSITIVE.value,
+        PortType.NEGATIVE.value,
+        # BJT 三脚（不可任意互换）
         PortType.BASE.value,
         PortType.COLLECTOR.value,
         PortType.EMITTER.value,
-        PortType.POSITIVE.value,
-        PortType.NEGATIVE.value,
+        # Potentiometer wiper（与 terminal 不可互换；terminal_a ↔ terminal_b
+        # 通常可互换，故仅 wiper 列入）
+        PortType.WIPER.value,
+        # Op-amp 核心引脚 —— 反相 / 同相输入互换会反转极性
+        PortType.INVERTING_INPUT.value,
+        PortType.NON_INVERTING_INPUT.value,
+        PortType.OUTPUT.value,
+        # IC 电源引脚 —— 接反 = 烧片
+        PortType.V_PLUS.value,
+        PortType.V_MINUS.value,
     }
 )
 
 # 电源 / 地相关的 PortType（is_power_port / is_ground_port 判定）。
-POWER_PORT_TYPES: frozenset[str] = frozenset({PortType.VCC.value})
+# V_PLUS / V_MINUS 均视为 power 端口（V_MINUS 在双电源场景是负供电而非地）。
+POWER_PORT_TYPES: frozenset[str] = frozenset(
+    {PortType.VCC.value, PortType.V_PLUS.value, PortType.V_MINUS.value}
+)
 GROUND_PORT_TYPES: frozenset[str] = frozenset({PortType.GND.value})
 
 
@@ -295,23 +324,155 @@ _PIN_ROLE_TO_PORT_TYPE: dict[str, str] = {
     "pin2": PortType.PIN2.value,
 }
 
+# ---------------------------------------------------------------------------
+# IC pin maps —— part_subtype → {pin name/number → PortType.value}
+#
+# 这是 P0.5 的核心：让 GNN 在看到 UA741 的 pin "3" 时不再得到无意义的
+# pin_n_generic，而是直接得到 non_inverting_input。
+#
+# 引用 ``app.domain.ic_models.UA741_PIN_ROLES``（顺序 = pin1..pin8）使得 IC
+# 模板的唯一事实源仍在 ic_models.py；本表只是把那里的字符串重映射到 GNN
+# 的 PortType vocabulary，并合并 offset_null_1 / offset_null_2 为 OFFSET_NULL。
+# ---------------------------------------------------------------------------
 
-def normalize_port_type(pin_role: str | None, _component_type: str | None = None) -> str:
-    """把 ``logical_reference.normalize_pin_role`` 的输出转成 PortType.value。
 
-    Fallback 策略：
-    - 已知 PinRole/pin1/pin2 字符串 → 直接命中查表
-    - 纯数字（"3" / "5" 等多脚 IC pin） → ``pin_n_generic``
-    - 其它 → ``generic``
+def _build_ua741_pin_map() -> dict[str, str]:
+    """Construct UA741 pin → PortType map from ``ic_models.UA741_PIN_ROLES``.
+
+    Imports locally to keep ``graph_schema`` free of upstream domain
+    dependencies during module load order.
     """
 
-    if pin_role is None or pin_role == "":
-        return PortType.GENERIC.value
-    key = pin_role.strip().lower()
-    if key in _PIN_ROLE_TO_PORT_TYPE:
-        return _PIN_ROLE_TO_PORT_TYPE[key]
-    if key.isdigit():
+    # Late import: ic_models 不依赖 gnn 模块；此处仅延迟加载以减小耦合。
+    from app.domain.ic_models import UA741_PIN_ROLES
+
+    # ic_models 字符串 → PortType.value（offset_null_1/2 合并）
+    _alias = {
+        "offset_null_1": PortType.OFFSET_NULL.value,
+        "offset_null_2": PortType.OFFSET_NULL.value,
+        "inverting_input": PortType.INVERTING_INPUT.value,
+        "non_inverting_input": PortType.NON_INVERTING_INPUT.value,
+        "v_minus": PortType.V_MINUS.value,
+        "v_plus": PortType.V_PLUS.value,
+        "output": PortType.OUTPUT.value,
+        "nc": PortType.NC.value,
+    }
+    pin_map: dict[str, str] = {}
+    for idx, role in enumerate(UA741_PIN_ROLES, start=1):
+        pt = _alias.get(role, PortType.PIN_N_GENERIC.value)
+        # 同时接受 "3" 和 "pin3" 两种 pin 写法
+        pin_map[str(idx)] = pt
+        pin_map[f"pin{idx}"] = pt
+    return pin_map
+
+
+IC_PIN_MAPS: dict[str, dict[str, str]] = {
+    "UA741": _build_ua741_pin_map(),
+    # 占位：LM358 / NE555 在后续阶段补；不影响 MVP 的 5 教学电路。
+}
+
+
+# Op-amp 友好别名 —— 当 DSL 直接写人话而非 pin 号时（"in-" / "INV" / "v+"）
+# 映射到 PortType.value。键统一小写。
+_OPAMP_PIN_ALIASES: dict[str, str] = {
+    "in-": PortType.INVERTING_INPUT.value,
+    "-in": PortType.INVERTING_INPUT.value,
+    "inv": PortType.INVERTING_INPUT.value,
+    "minus": PortType.INVERTING_INPUT.value,
+    "inverting": PortType.INVERTING_INPUT.value,
+    "inverting_input": PortType.INVERTING_INPUT.value,
+    "in+": PortType.NON_INVERTING_INPUT.value,
+    "+in": PortType.NON_INVERTING_INPUT.value,
+    "noninv": PortType.NON_INVERTING_INPUT.value,
+    "plus": PortType.NON_INVERTING_INPUT.value,
+    "non_inverting": PortType.NON_INVERTING_INPUT.value,
+    "non_inverting_input": PortType.NON_INVERTING_INPUT.value,
+    "out": PortType.OUTPUT.value,
+    "output": PortType.OUTPUT.value,
+    "v+": PortType.V_PLUS.value,
+    "vplus": PortType.V_PLUS.value,
+    "v_plus": PortType.V_PLUS.value,
+    "vs+": PortType.V_PLUS.value,
+    "v-": PortType.V_MINUS.value,
+    "vminus": PortType.V_MINUS.value,
+    "v_minus": PortType.V_MINUS.value,
+    "vee": PortType.V_MINUS.value,
+    "vs-": PortType.V_MINUS.value,
+    "offset": PortType.OFFSET_NULL.value,
+    "offset_null": PortType.OFFSET_NULL.value,
+    "nc": PortType.NC.value,
+}
+
+# 哪些 ctype 视为 op-amp / IC 上下文（触发 IC_PIN_MAPS + alias 查询）。
+_IC_LIKE_CTYPES: frozenset[str] = frozenset(
+    {ComponentType.IC.value, ComponentType.OPAMP.value}
+)
+
+
+def normalize_port_type(
+    pin_role: str | None,
+    component_type: str | None = None,
+    *,
+    part_subtype: str | None = None,
+    pin_raw: str | None = None,
+) -> str:
+    """把"原始 pin 描述"映射到 ``PortType.value``。
+
+    优先级（P0.5）：
+
+    1. **IC pin map**: 若 ``component_type`` 是 IC/OpAmp 且 ``part_subtype``
+       命中 ``IC_PIN_MAPS``，按 ``pin_raw`` （pin 名或编号，原始未小写也
+       OK）查表。这是最强证据。
+    2. **Op-amp 别名**: 若 ``component_type`` 是 IC/OpAmp（即便 subtype 未
+       知），按 ``pin_role`` / ``pin_raw`` 查 ``_OPAMP_PIN_ALIASES``。
+    3. **PinRole 直查 / pin1 / pin2**：兼容现有 ``normalize_pin_role`` 输出。
+    4. **数字 pin → ``pin_n_generic``**：未知 IC 的高 pin 号兜底。
+    5. **其它 → ``generic``**。
+
+    Args:
+        pin_role: 来自 ``logical_reference.normalize_pin_role`` 的归一化字符串。
+        component_type: 元件类型字符串（``ComponentType.value`` 之一），用
+            于触发 IC / op-amp 路径。位置参数，保持向后兼容。
+        part_subtype: IC 具体型号，区分大小写无关。例如 ``"UA741"`` /
+            ``"LM358"``。**仅在 IC pin map 查表时使用**。
+        pin_raw: 原始 pin 名字（如 ``"2"`` 或 ``"pin2"`` 或 ``"in-"``）。
+            优先于 ``pin_role`` 用于 IC 查表与 op-amp 别名 —— 因为
+            normalize_pin_role 已经会把数字 pin 改写为 ``"pin2"`` 之类的
+            语义占位，丢失了原始数字。
+    """
+
+    ctype_norm = (component_type or "").strip()
+    subtype_key = (part_subtype or "").strip().upper()
+    raw_key = (pin_raw or "").strip().lower()
+    role_key = (pin_role or "").strip().lower()
+
+    is_ic_like = ctype_norm in _IC_LIKE_CTYPES
+
+    # 1. IC pin map（最强证据）
+    if is_ic_like and subtype_key in IC_PIN_MAPS:
+        pinmap = IC_PIN_MAPS[subtype_key]
+        # 优先 raw（保留 "2" / "pin2" 形态），其次 role
+        for candidate in (raw_key, role_key):
+            if candidate and candidate in pinmap:
+                return pinmap[candidate]
+
+    # 2. Op-amp 别名（subtype 未知或 pin 名是人话写法）
+    if is_ic_like:
+        for candidate in (raw_key, role_key):
+            if candidate and candidate in _OPAMP_PIN_ALIASES:
+                return _OPAMP_PIN_ALIASES[candidate]
+
+    # 3. PinRole / pin1 / pin2 直查
+    if role_key and role_key in _PIN_ROLE_TO_PORT_TYPE:
+        return _PIN_ROLE_TO_PORT_TYPE[role_key]
+    if raw_key and raw_key in _PIN_ROLE_TO_PORT_TYPE:
+        return _PIN_ROLE_TO_PORT_TYPE[raw_key]
+
+    # 4. 数字 pin
+    if role_key.isdigit() or raw_key.isdigit():
         return PortType.PIN_N_GENERIC.value
+
+    # 5. 兜底
     return PortType.GENERIC.value
 
 
@@ -346,6 +507,7 @@ __all__ = [
     "POLARITY_SENSITIVE_PORT_TYPES",
     "POWER_PORT_TYPES",
     "GROUND_PORT_TYPES",
+    "IC_PIN_MAPS",
     # tools
     "normalize_port_type",
 ]
