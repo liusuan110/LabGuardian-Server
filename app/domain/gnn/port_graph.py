@@ -1,4 +1,4 @@
-"""GNN 模块 · NetworkX 二分图 → HeteroCircuitGraph 三元异构图（P0）
+"""GNN 模块 · NetworkX 二分图 → HeteroCircuitGraph 三元异构图（P0 / P0.5 / P0.6）
 
 本模块的唯一职责：把现有 ``app.domain.logical_reference`` 产出的
 ``component-net`` bipartite NetworkX 图升级为 GNN-ACLP 风格的
@@ -7,8 +7,24 @@
 **重要约束**：
 - 不依赖 torch / torch_geometric（向量化推到 P2 ``pyg_converter.py``）。
 - 不重新实现 logical_reference / netlist_v2 解析，只消费其输出。
-- 边语义保持 1:1（每条原图 (comp, net) edge 对应**新建一个 port 节点** +
-  一条 (port, net) 边），所以 ``n_edges == n_ports``。
+
+**P0.5 改动**：
+- 入口 ``build_from_logical_reference`` / ``build_from_netlist_v2`` 旁路
+  payload 重建原始 pin 边表，绕过 ``nx.Graph`` 折叠平行边（如 UA741 单位
+  增益缓冲器里 pin2/pin6 同接 VOUT）。
+- 子类型（part_subtype，如 ``"UA741"``）流到 ``normalize_port_type``，
+  让 IC pin 拿到精细的 PortType（``inverting_input`` 而非 ``pin_n_generic``）。
+
+**P0.6 改动 —— 边-port 关系不再 1:1**：
+- 边路径完成后追加 **materialize phase**：对每个 component 查
+  ``get_expected_pin_specs(ctype, subtype)``，把 spec 期望但当前 side 未
+  观测到的 pin（DSL 中的 NC 引脚 / netlist_v2 中 ``electrical_net_id=None``
+  的引脚 / 完全缺失的 pin）补成 ``is_floating=True`` 的 PortNode。
+- 因此 **``n_edges ≤ n_ports``**：仅在没有 OPTIONAL / FORBIDDEN / 缺连引脚
+  的 fixture 上才有等号。
+- 同时把 spec 派生的 ``pin_number`` / ``connection_policy`` /
+  ``symmetry_class_id`` 写入 PortNode，并据此回填
+  ``ComponentNode.pin_symmetry_groups``。
 """
 
 from __future__ import annotations

@@ -27,7 +27,8 @@
       "Bash(python3 -m pytest tests/domain/gnn/ -v --tb=short)",
       "Bash(python3 -m pytest tests/domain/test_graph_compare.py tests/domain/test_graph_compare_detailed.py -q)",
       "Bash(python3 -m ruff check app/domain/gnn tests/domain/gnn)",
-      "Bash(python3 -m mypy app/domain/gnn --no-incremental --follow-imports=silent)"
+      "Bash(python3 -m mypy app/domain/gnn --no-incremental --follow-imports=silent)",
+      "Bash(python3 -m pytest tests/domain/gnn/ -q)"
     ]
   }
 }

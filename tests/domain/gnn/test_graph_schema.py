@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import inspect
 
+import pytest
+
 from app.domain.circuit import (
     NON_POLAR_TYPES,
     POLARIZED_TYPES,
@@ -17,18 +19,25 @@ from app.domain.gnn.graph_schema import (
     COMPONENT_FEAT_DIM,
     COMPONENT_FEAT_LAYOUT,
     DRNL_LABEL_DIM,
+    IC_PIN_POLICIES,
+    IC_PIN_SYMMETRY,
     NET_FEAT_DIM,
     NET_FEAT_LAYOUT,
+    PACKAGE_PIN_SPECS,
     POLARITY_CLASS_OF,
     PORT_FEAT_DIM,
     PORT_FEAT_LAYOUT,
     PORT_NET_EDGE_FEAT_DIM,
     PORT_NET_EDGE_FEAT_LAYOUT,
     ComponentType,
+    ConnectionPolicy,
     NetRole,
+    PinSpec,
     PolarityClass,
     PortType,
     SourceType,
+    get_expected_pin_specs,
+    make_ic_pin_specs,
     normalize_port_type,
 )
 
@@ -171,3 +180,186 @@ def test_normalize_port_type_unknown_falls_back_to_generic() -> None:
 
 def test_source_type_values() -> None:
     assert {s.value for s in SourceType} == {"dsl", "vision", "inferred"}
+
+
+# ---------------------------------------------------------------------------
+# ConnectionPolicy + PACKAGE_PIN_SPECS (P0.6)
+# ---------------------------------------------------------------------------
+
+
+def test_connection_policy_values() -> None:
+    assert {p.value for p in ConnectionPolicy} == {"required", "optional", "forbidden"}
+
+
+def test_package_pin_specs_covers_core_components() -> None:
+    # The 9 non-IC ctypes that have explicit specs in P0.6.
+    required = {
+        ComponentType.RESISTOR.value,
+        ComponentType.CAPACITOR.value,
+        ComponentType.CAPACITOR_CERAMIC.value,
+        ComponentType.CAPACITOR_ELECTROLYTIC.value,
+        ComponentType.WIRE.value,
+        ComponentType.LED.value,
+        ComponentType.DIODE.value,
+        ComponentType.TRANSISTOR.value,
+        ComponentType.POTENTIOMETER.value,
+    }
+    assert required.issubset(set(PACKAGE_PIN_SPECS.keys())), (
+        set(PACKAGE_PIN_SPECS.keys())
+    )
+
+
+def test_package_pin_specs_pin_keys_are_unique_per_component() -> None:
+    for ctype, specs in PACKAGE_PIN_SPECS.items():
+        keys = [s.pin_key for s in specs]
+        assert len(keys) == len(set(keys)), f"{ctype}: duplicate pin_key in spec"
+
+
+def test_package_pin_specs_all_port_types_are_known() -> None:
+    known = {pt.value for pt in PortType}
+    for ctype, specs in PACKAGE_PIN_SPECS.items():
+        for s in specs:
+            assert s.port_type in known, f"{ctype}.{s.pin_key}: {s.port_type}"
+
+
+def test_package_pin_specs_all_policies_valid() -> None:
+    valid = {p.value for p in ConnectionPolicy}
+    for ctype, specs in PACKAGE_PIN_SPECS.items():
+        for s in specs:
+            assert s.connection_policy in valid, (
+                f"{ctype}.{s.pin_key}: {s.connection_policy}"
+            )
+
+
+@pytest.fixture(scope="module")
+def resistor_spec() -> list[PinSpec]:
+    return PACKAGE_PIN_SPECS[ComponentType.RESISTOR.value]
+
+
+def test_resistor_two_pins_share_symmetry_class(resistor_spec: list[PinSpec]) -> None:
+    assert len(resistor_spec) == 2
+    assert resistor_spec[0].symmetry_class == resistor_spec[1].symmetry_class
+
+
+def test_led_anode_cathode_distinct_symmetry_classes() -> None:
+    specs = PACKAGE_PIN_SPECS[ComponentType.LED.value]
+    assert specs[0].symmetry_class != specs[1].symmetry_class
+
+
+def test_diode_matches_led_symmetry_topology() -> None:
+    led = PACKAGE_PIN_SPECS[ComponentType.LED.value]
+    diode = PACKAGE_PIN_SPECS[ComponentType.DIODE.value]
+    assert [s.pin_key for s in led] == [s.pin_key for s in diode]
+    assert [s.port_type for s in led] == [s.port_type for s in diode]
+
+
+def test_potentiometer_terminals_share_class_wiper_alone() -> None:
+    specs = PACKAGE_PIN_SPECS[ComponentType.POTENTIOMETER.value]
+    by_key = {s.pin_key: s for s in specs}
+    assert by_key["terminal_a"].symmetry_class == by_key["terminal_b"].symmetry_class
+    assert by_key["wiper"].symmetry_class != by_key["terminal_a"].symmetry_class
+
+
+def test_transistor_three_distinct_classes() -> None:
+    specs = PACKAGE_PIN_SPECS[ComponentType.TRANSISTOR.value]
+    classes = {s.symmetry_class for s in specs}
+    assert len(classes) == 3
+
+
+def test_capacitor_electrolytic_distinguishes_polarity() -> None:
+    specs = PACKAGE_PIN_SPECS[ComponentType.CAPACITOR_ELECTROLYTIC.value]
+    by_key = {s.pin_key: s for s in specs}
+    assert by_key["positive"].port_type == PortType.POSITIVE.value
+    assert by_key["negative"].port_type == PortType.NEGATIVE.value
+    assert by_key["positive"].symmetry_class != by_key["negative"].symmetry_class
+
+
+# ---------------------------------------------------------------------------
+# UA741 IC_PIN_POLICIES / IC_PIN_SYMMETRY (P0.6)
+# ---------------------------------------------------------------------------
+
+
+def test_ic_pin_policies_has_ua741() -> None:
+    assert "UA741" in IC_PIN_POLICIES
+
+
+def test_ua741_pin_8_is_forbidden() -> None:
+    assert IC_PIN_POLICIES["UA741"]["8"] == ConnectionPolicy.FORBIDDEN
+
+
+def test_ua741_offset_null_pins_are_optional() -> None:
+    assert IC_PIN_POLICIES["UA741"]["1"] == ConnectionPolicy.OPTIONAL
+    assert IC_PIN_POLICIES["UA741"]["5"] == ConnectionPolicy.OPTIONAL
+
+
+def test_ua741_signal_pins_inherit_required_default() -> None:
+    # Pins 2/3/4/6/7 not in the policy overlay → default REQUIRED.
+    overlay = IC_PIN_POLICIES["UA741"]
+    for pk in ("2", "3", "4", "6", "7"):
+        assert pk not in overlay, pk
+
+
+def test_ic_pin_symmetry_ua741_groups_offset_null_pair() -> None:
+    groups = IC_PIN_SYMMETRY["UA741"]
+    assert any(set(g) == {"1", "5"} for g in groups), groups
+
+
+# ---------------------------------------------------------------------------
+# make_ic_pin_specs + get_expected_pin_specs (composed table)
+# ---------------------------------------------------------------------------
+
+
+def test_make_ic_pin_specs_ua741_full_set() -> None:
+    specs = make_ic_pin_specs("UA741")
+    assert specs is not None
+    assert [s.pin_key for s in specs] == ["1", "2", "3", "4", "5", "6", "7", "8"]
+    assert [s.pin_number for s in specs] == list(range(1, 9))
+
+
+def test_make_ic_pin_specs_subtype_case_insensitive() -> None:
+    a = make_ic_pin_specs("ua741")
+    b = make_ic_pin_specs("UA741")
+    assert a == b
+
+
+def test_make_ic_pin_specs_offset_null_pair_shares_symmetry_class() -> None:
+    specs = make_ic_pin_specs("UA741")
+    by_key = {s.pin_key: s for s in specs}
+    assert by_key["1"].symmetry_class == by_key["5"].symmetry_class
+    # All other pins each in their own class
+    others = {by_key[k].symmetry_class for k in ("2", "3", "4", "6", "7", "8")}
+    assert by_key["1"].symmetry_class not in others
+    assert len(others) == 6
+
+
+def test_make_ic_pin_specs_symmetry_class_ids_are_zero_indexed_contiguous() -> None:
+    specs = make_ic_pin_specs("UA741")
+    classes = sorted({s.symmetry_class for s in specs})
+    # 7 distinct classes (offset_null pair + 6 unique pins), 0-indexed.
+    assert classes == list(range(len(classes)))
+
+
+def test_make_ic_pin_specs_returns_none_for_unknown_subtype() -> None:
+    assert make_ic_pin_specs(None) is None
+    assert make_ic_pin_specs("") is None
+    assert make_ic_pin_specs("LM386") is None  # not in IC_PIN_MAPS yet
+
+
+def test_get_expected_pin_specs_routes_ic_via_subtype() -> None:
+    via_ic = get_expected_pin_specs("IC", "UA741")
+    via_opamp = get_expected_pin_specs("OpAmp", "UA741")
+    assert via_ic == via_opamp
+    assert via_ic is not None
+    assert len(via_ic) == 8
+
+
+def test_get_expected_pin_specs_routes_non_ic_via_table() -> None:
+    direct = PACKAGE_PIN_SPECS["Resistor"]
+    via = get_expected_pin_specs("Resistor")
+    assert via == direct
+
+
+def test_get_expected_pin_specs_returns_none_for_unknown_components() -> None:
+    assert get_expected_pin_specs("Sensor") is None
+    assert get_expected_pin_specs("UNKNOWN") is None
+    assert get_expected_pin_specs("IC") is None  # no subtype → no spec
