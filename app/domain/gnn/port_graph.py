@@ -23,9 +23,12 @@ from app.domain.gnn.graph_schema import (
     POLARITY_CLASS_OF,
     POLARITY_SENSITIVE_PORT_TYPES,
     POWER_PORT_TYPES,
+    ConnectionPolicy,
+    PinSpec,
     PolarityClass,
     PortType,
     SourceType,
+    get_expected_pin_specs,
     normalize_port_type,
 )
 from app.domain.gnn.hetero_circuit import (
@@ -76,6 +79,35 @@ def _coerce_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _maybe_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _spec_lookup_by_key(
+    specs: list[PinSpec] | None, key: str
+) -> PinSpec | None:
+    """Find spec entry matching ``key`` (canonical port_key) or numeric
+    equivalent. Returns None if no spec or no match."""
+
+    if not specs or not key:
+        return None
+    for s in specs:
+        if s.pin_key == key:
+            return s
+    # numeric-key fallback: "pin3" → "3"
+    if key.startswith("pin"):
+        tail = key[3:]
+        for s in specs:
+            if s.pin_key == tail:
+                return s
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +309,20 @@ def build_hetero_circuit_graph(
             and port_type in POLARITY_SENSITIVE_PORT_TYPES
         )
 
+        # P0.6: 查 spec 回填 pin_number / policy / symmetry_class_id；spec 缺
+        # 时按 "REQUIRED + 唯一 class" 处理（symmetry_class 顺延 component 当
+        # 前 port 数量 —— 保证每个无 spec 的 port 各自一类）。
+        specs = get_expected_pin_specs(comp.ctype, part_subtype)
+        spec = _spec_lookup_by_key(specs, port_key)
+        if spec is not None:
+            pin_number_val: int | None = spec.pin_number
+            connection_policy_val = spec.connection_policy
+            symmetry_class_val = spec.symmetry_class
+        else:
+            pin_number_val = _maybe_int(port_key) or _maybe_int(pin_raw)
+            connection_policy_val = ConnectionPolicy.REQUIRED.value
+            symmetry_class_val = len(hcg.port_of_component[comp_node_id])
+
         port_node = PortNode(
             node_id=port_node_id,
             side=side,
@@ -287,10 +333,11 @@ def build_hetero_circuit_graph(
             polarity_sensitive=polarity_sensitive,
             is_power_port=port_type in POWER_PORT_TYPES,
             is_ground_port=port_type in GROUND_PORT_TYPES,
-            # P0: cur 侧若该 port 没连任何 net 标 True，但 nx_graph 已经按
-            # "edge 才注册 port" 的方式构造，所以走到这里的 port 必然连了
-            # net。is_floating 留作 P1 在直接消费 netlist_v2 raw 时的回填项。
+            # 该 port 来自一条真实的 (port, net) edge → 必然连接，不 floating
             is_floating=False,
+            pin_number=pin_number_val,
+            connection_policy=connection_policy_val,
+            symmetry_class_id=symmetry_class_val,
         )
         hcg.ports[port_node_id] = port_node
         hcg.port_of_component[comp_node_id].append(port_node_id)
@@ -307,12 +354,72 @@ def build_hetero_circuit_graph(
         )
         hcg.edges.append(edge)
 
-    # ---- 3. 回填 ComponentNode.pin_count ---------------------------------
+    # ---- 2.5 · Materialize phase (P0.6) ----------------------------------
+    # 对每个 component，查 spec → 把 spec 期望但当前未出现的 pin 作为
+    # ``is_floating=True`` 的 PortNode 补上，并把 spec 派生的 pin_symmetry
+    # 组合记到 ComponentNode 上。
+
+    for comp_id in list(hcg.components):
+        comp = hcg.components[comp_id]
+        part_subtype = subtype_by_source_id.get(comp.source_id, "")
+        specs = get_expected_pin_specs(comp.ctype, part_subtype)
+        if not specs:
+            continue
+        existing_keys = {
+            hcg.ports[pid].port_key for pid in hcg.port_of_component[comp_id]
+        }
+        # 处理同义 key（"pin3" / "3" 两种写法）：把 existing 的 "pin3" 也算
+        # 作覆盖了 spec 里的 "3"。
+        for k in list(existing_keys):
+            if k.startswith("pin"):
+                existing_keys.add(k[3:])
+
+        for spec in specs:
+            if spec.pin_key in existing_keys:
+                continue
+            # Spec 期待该 pin，但当前 side 没观测到 → materialize floating port
+            port_node_id = _port_node_id(side, comp.source_id, spec.pin_key)
+            polarity_sensitive = (
+                comp.polarity_class != PolarityClass.NONE.value
+                and spec.port_type in POLARITY_SENSITIVE_PORT_TYPES
+            )
+            port_node = PortNode(
+                node_id=port_node_id,
+                side=side,
+                parent_component_id=comp_id,
+                port_key=spec.pin_key,
+                port_type=spec.port_type,
+                parent_ctype=comp.ctype,
+                polarity_sensitive=polarity_sensitive,
+                is_power_port=spec.port_type in POWER_PORT_TYPES,
+                is_ground_port=spec.port_type in GROUND_PORT_TYPES,
+                is_floating=True,
+                pin_number=spec.pin_number,
+                connection_policy=spec.connection_policy,
+                symmetry_class_id=spec.symmetry_class,
+            )
+            hcg.ports[port_node_id] = port_node
+            hcg.port_of_component[comp_id].append(port_node_id)
+
+    # ---- 3. 回填 ComponentNode.pin_count + pin_symmetry_groups ----------
 
     for comp_id, port_ids in hcg.port_of_component.items():
         original = hcg.components[comp_id]
-        if original.pin_count != len(port_ids):
-            # frozen dataclass — 用替换的方式重新放入字典
+        # Group port_keys by symmetry_class_id, emit only groups of size ≥ 2.
+        by_class: dict[int, list[str]] = {}
+        for pid in port_ids:
+            port = hcg.ports[pid]
+            by_class.setdefault(port.symmetry_class_id, []).append(port.port_key)
+        sym_groups = tuple(
+            tuple(sorted(keys))
+            for cid, keys in sorted(by_class.items())
+            if len(keys) >= 2
+        )
+
+        if (
+            original.pin_count != len(port_ids)
+            or original.pin_symmetry_groups != sym_groups
+        ):
             hcg.components[comp_id] = ComponentNode(
                 node_id=original.node_id,
                 side=original.side,
@@ -323,6 +430,7 @@ def build_hetero_circuit_graph(
                 pin_count=len(port_ids),
                 value=original.value,
                 confidence=original.confidence,
+                pin_symmetry_groups=sym_groups,
             )
 
     # ---- 4. 透传图级元数据 ------------------------------------------------

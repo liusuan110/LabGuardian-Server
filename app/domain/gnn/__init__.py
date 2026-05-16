@@ -26,12 +26,16 @@ from app.domain.gnn.graph_schema import (
     COMPONENT_FEAT_DIM,
     IC_PIN_MAPS,
     NET_FEAT_DIM,
+    PACKAGE_PIN_SPECS,
     PORT_FEAT_DIM,
     ComponentType,
+    ConnectionPolicy,
     NetRole,
+    PinSpec,
     PolarityClass,
     PortType,
     SourceType,
+    get_expected_pin_specs,
 )
 from app.domain.gnn.hetero_circuit import (
     ComponentNode,
@@ -78,12 +82,17 @@ __all__ = [
     "NetRole",
     "PolarityClass",
     "SourceType",
+    "ConnectionPolicy",
     # dims
     "COMPONENT_FEAT_DIM",
     "PORT_FEAT_DIM",
     "NET_FEAT_DIM",
     # IC metadata
     "IC_PIN_MAPS",
+    # package specs (P0.6)
+    "PinSpec",
+    "PACKAGE_PIN_SPECS",
+    "get_expected_pin_specs",
     # data classes
     "HeteroCircuitGraph",
     "ComponentNode",

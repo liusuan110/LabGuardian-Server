@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import NamedTuple
 
 from app.domain.circuit import (
     NON_POLAR_TYPES,
@@ -134,14 +135,30 @@ class SourceType(str, Enum):  # noqa: UP042 — keep (str, Enum) for py<3.11 com
     INFERRED = "inferred"
 
 
+class ConnectionPolicy(str, Enum):  # noqa: UP042 — keep (str, Enum) for py<3.11 compat
+    """每个 package pin 的连接义务（P0.6 引入）。
+
+    - ``REQUIRED``：必须连接到某个 net；缺连为 ``missing_connection`` 错误。
+    - ``OPTIONAL``：可连可不连；不连不算错（如 UA741 offset_null 引脚）。
+    - ``FORBIDDEN``：必须不连任何 net；学生若接到任何 net 视为
+      ``extra_connection`` / wrong_connection 错误（如 UA741 pin 8 NC）。
+    """
+
+    REQUIRED = "required"
+    OPTIONAL = "optional"
+    FORBIDDEN = "forbidden"
+
+
 # ---------------------------------------------------------------------------
 # 维度常量（plan §三）
 # ---------------------------------------------------------------------------
 
 COMPONENT_FEAT_DIM = 30
-# Bumped from 37 → 44 in P0.5 after expanding PortType to 23 members (16 → 23
-# adds 7 op-amp / IC roles). Recomputed: 23 + 16 + 1+1+1+1+1 = 44.
-PORT_FEAT_DIM = 44
+# P0   : 37 = 16 (port_type) + 16 (parent_ctype) + 5 flags
+# P0.5 : 44 = expanded PortType to 23 members
+# P0.6 : 50 = + 3 ConnectionPolicy one-hot + 1 has_pin_number + 1 pin_number_log
+#              + 1 symmetry_class_size_inverse
+PORT_FEAT_DIM = 50
 NET_FEAT_DIM = 11
 PORT_NET_EDGE_FEAT_DIM = 5
 DRNL_LABEL_DIM = 17  # 0..15 + overflow bucket，由 P0.7 SEAL pipeline 使用
@@ -168,13 +185,22 @@ COMPONENT_FEAT_LAYOUT: list[tuple[str, int]] = [
 ]
 
 PORT_FEAT_LAYOUT: list[tuple[str, int]] = [
-    ("port_type_one_hot", len(PortType)),  # 16
+    ("port_type_one_hot", len(PortType)),  # 23
     ("parent_ctype_one_hot", len(ComponentType)),  # 16
     ("polarity_sensitive", 1),
     ("is_power_port", 1),
     ("is_ground_port", 1),
     ("is_floating", 1),
     ("is_reference", 1),
+    # ---- P0.6 additions ----
+    ("connection_policy_one_hot", len(ConnectionPolicy)),  # 3
+    ("has_pin_number", 1),
+    # 归一化 pin_number ∈ [0, 1]：log(1 + n) / log(1 + 64)；64 个 pin 已覆盖
+    # 几乎所有 DIP/SOP 封装。超出则截到 1.0。
+    ("pin_number_log", 1),
+    # 1 / symmetry_class_size：1.0 表示该 pin 独立（如 IC 第 3 脚），0.5 表
+    # 示与另一个 pin 互换（如 R 的 pin1/pin2），0.33... 表示 3 pin 互换组。
+    ("symmetry_class_size_inverse", 1),
 ]
 
 NET_FEAT_LAYOUT: list[tuple[str, int]] = [
@@ -202,6 +228,12 @@ NET_ROLE_TO_INDEX: dict[str, int] = {nr.value: idx for idx, nr in enumerate(NetR
 POLARITY_CLASS_TO_INDEX: dict[str, int] = {
     pc.value: idx for idx, pc in enumerate(PolarityClass)
 }
+CONNECTION_POLICY_TO_INDEX: dict[str, int] = {
+    cp.value: idx for idx, cp in enumerate(ConnectionPolicy)
+}
+
+# Pin-number 归一化常量：log(1+pin_number) / log(1+PIN_NUMBER_LOG_BASE)
+PIN_NUMBER_LOG_BASE = 64
 SOURCE_TYPE_TO_INDEX: dict[str, int] = {
     st.value: idx for idx, st in enumerate(SourceType)
 }
@@ -476,6 +508,173 @@ def normalize_port_type(
     return PortType.GENERIC.value
 
 
+# ---------------------------------------------------------------------------
+# Package pin spec —— 每个 component type 的预期 pin 清单（P0.6 引入）。
+#
+# 这是 SEAL "next stop" 与 missing_connection 检测的事实源：
+# - port_graph.py 用它 materialize 未在 DSL/netlist_v2 中显式连接的 package
+#   pin，作为 floating PortNode；
+# - candidate-edge generator 用它枚举"该 component 还差哪些 pin 没接"。
+# ---------------------------------------------------------------------------
+
+
+class PinSpec(NamedTuple):
+    """单个 package pin 的设计期约束。
+
+    Attributes:
+        pin_key: 该 component 上对该 pin 的"规范键"。port_graph 会用它做
+            port_key（slug 后）与 spec 匹配 —— 因此命名必须与
+            ``logical_reference.normalize_pin_role`` 的输出 / DSL 作者常用
+            名字相容（"pin1" / "anode" / "1" / "wiper" / "terminal_a"）。
+        port_type: ``PortType.value``。
+        connection_policy: ``ConnectionPolicy.value``。
+        symmetry_class: 该 component 内部 0-indexed 互换类 id。同 component 内
+            ``symmetry_class`` 相同的 pin 视为电气可互换（如 R.pin1 / R.pin2）。
+        pin_number: 1-indexed 物理位置；无位置概念则 None（如 LED 的
+            "anode" / "cathode"）。IC 与多脚封装强烈推荐填，便于 SEAL 子图
+            按位置加 prior。
+    """
+
+    pin_key: str
+    port_type: str
+    connection_policy: str
+    symmetry_class: int
+    pin_number: int | None
+
+
+# 非 IC 的静态 spec —— 键为 ``ComponentType.value``。
+PACKAGE_PIN_SPECS: dict[str, list[PinSpec]] = {
+    ComponentType.RESISTOR.value: [
+        PinSpec("pin1", PortType.PIN1.value, ConnectionPolicy.REQUIRED.value, 0, 1),
+        PinSpec("pin2", PortType.PIN2.value, ConnectionPolicy.REQUIRED.value, 0, 2),
+    ],
+    ComponentType.CAPACITOR.value: [
+        PinSpec("pin1", PortType.PIN1.value, ConnectionPolicy.REQUIRED.value, 0, 1),
+        PinSpec("pin2", PortType.PIN2.value, ConnectionPolicy.REQUIRED.value, 0, 2),
+    ],
+    ComponentType.CAPACITOR_CERAMIC.value: [
+        PinSpec("pin1", PortType.PIN1.value, ConnectionPolicy.REQUIRED.value, 0, 1),
+        PinSpec("pin2", PortType.PIN2.value, ConnectionPolicy.REQUIRED.value, 0, 2),
+    ],
+    ComponentType.CAPACITOR_ELECTROLYTIC.value: [
+        PinSpec("positive", PortType.POSITIVE.value, ConnectionPolicy.REQUIRED.value, 0, 1),
+        PinSpec("negative", PortType.NEGATIVE.value, ConnectionPolicy.REQUIRED.value, 1, 2),
+    ],
+    ComponentType.WIRE.value: [
+        PinSpec("pin1", PortType.PIN1.value, ConnectionPolicy.REQUIRED.value, 0, 1),
+        PinSpec("pin2", PortType.PIN2.value, ConnectionPolicy.REQUIRED.value, 0, 2),
+    ],
+    ComponentType.LED.value: [
+        PinSpec("anode", PortType.ANODE.value, ConnectionPolicy.REQUIRED.value, 0, 1),
+        PinSpec("cathode", PortType.CATHODE.value, ConnectionPolicy.REQUIRED.value, 1, 2),
+    ],
+    ComponentType.DIODE.value: [
+        PinSpec("anode", PortType.ANODE.value, ConnectionPolicy.REQUIRED.value, 0, 1),
+        PinSpec("cathode", PortType.CATHODE.value, ConnectionPolicy.REQUIRED.value, 1, 2),
+    ],
+    ComponentType.TRANSISTOR.value: [
+        PinSpec("base", PortType.BASE.value, ConnectionPolicy.REQUIRED.value, 0, 1),
+        PinSpec("collector", PortType.COLLECTOR.value, ConnectionPolicy.REQUIRED.value, 1, 2),
+        PinSpec("emitter", PortType.EMITTER.value, ConnectionPolicy.REQUIRED.value, 2, 3),
+    ],
+    ComponentType.POTENTIOMETER.value: [
+        PinSpec("wiper", PortType.WIPER.value, ConnectionPolicy.REQUIRED.value, 0, 1),
+        # terminal_a / terminal_b 在线性 pot 中可互换 → 同 symmetry_class。
+        PinSpec("terminal_a", PortType.TERMINAL_A.value, ConnectionPolicy.REQUIRED.value, 1, 2),
+        PinSpec("terminal_b", PortType.TERMINAL_B.value, ConnectionPolicy.REQUIRED.value, 1, 3),
+    ],
+}
+
+# IC 覆盖：connection policy 优先于默认（默认 REQUIRED）。键为
+# ``part_subtype.upper()``，值为 ``{pin_key → ConnectionPolicy}``。
+IC_PIN_POLICIES: dict[str, dict[str, ConnectionPolicy]] = {
+    "UA741": {
+        # offset_null 一般可不接（仅在需要消除直流失调时挂一个 trim pot）
+        "1": ConnectionPolicy.OPTIONAL,
+        "5": ConnectionPolicy.OPTIONAL,
+        # pin 8 在 UA741 上是 NC（厂家文档标注 No Connect）—— 必须不接
+        "8": ConnectionPolicy.FORBIDDEN,
+    },
+}
+
+# IC 内部互换组：每组 pin_key 列表表示这些 pin 在该 IC 上可互换。例如
+# UA741 的 offset_null_1 / offset_null_2 通常接同一只 trim pot 的两个外端，
+# 上下游互换不改电路功能。
+IC_PIN_SYMMETRY: dict[str, list[list[str]]] = {
+    "UA741": [["1", "5"]],
+}
+
+
+def _ua741_pin_keys(subtype_upper: str) -> list[str]:
+    """Return canonical pin keys ("1".."8") for an IC subtype that lives in
+    ``IC_PIN_MAPS``. IC pin map keys come in both "N" and "pinN" forms; we
+    pick the "N" form as canonical for PinSpec."""
+
+    pinmap = IC_PIN_MAPS.get(subtype_upper, {})
+    keys = sorted({k for k in pinmap if k.isdigit()}, key=int)
+    return keys
+
+
+def make_ic_pin_specs(subtype: str | None) -> list[PinSpec] | None:
+    """Compose a PinSpec list for an IC instance, combining IC_PIN_MAPS
+    (port_type) + IC_PIN_POLICIES (policy overlay) + IC_PIN_SYMMETRY
+    (互换组). Returns None if ``subtype`` is unknown."""
+
+    if not subtype:
+        return None
+    key = subtype.strip().upper()
+    if key not in IC_PIN_MAPS:
+        return None
+    pin_keys = _ua741_pin_keys(key)
+
+    policy_overlay = IC_PIN_POLICIES.get(key, {})
+    sym_groups = IC_PIN_SYMMETRY.get(key, [])
+
+    # Build pin_key → symmetry_class: each pin starts in its own class; pins
+    # listed in the same sym group are then merged into the lowest class id.
+    pin_to_class: dict[str, int] = {pk: idx for idx, pk in enumerate(pin_keys)}
+    for group in sym_groups:
+        if len(group) < 2:
+            continue
+        anchor = min(pin_to_class[g] for g in group if g in pin_to_class)
+        for g in group:
+            if g in pin_to_class:
+                pin_to_class[g] = anchor
+    # 重新规范化 class id 到 0-indexed 连续空间，便于下游 one-hot / 索引。
+    canonical_ids = {cid: idx for idx, cid in enumerate(sorted(set(pin_to_class.values())))}
+    pin_to_class = {pk: canonical_ids[cid] for pk, cid in pin_to_class.items()}
+
+    pinmap = IC_PIN_MAPS[key]
+    specs: list[PinSpec] = []
+    for pk in pin_keys:
+        port_type = pinmap[pk]
+        policy = policy_overlay.get(pk, ConnectionPolicy.REQUIRED).value
+        specs.append(
+            PinSpec(
+                pin_key=pk,
+                port_type=port_type,
+                connection_policy=policy,
+                symmetry_class=pin_to_class[pk],
+                pin_number=int(pk),
+            )
+        )
+    return specs
+
+
+def get_expected_pin_specs(
+    component_type: str,
+    part_subtype: str | None = None,
+) -> list[PinSpec] | None:
+    """统一入口：查 ``component_type`` 与可选 ``part_subtype`` 对应的预期
+    pin spec 清单。返回 ``None`` 表示无 spec（GNN 在 materialize phase 跳过
+    该 component —— 保持向后兼容，不强行制造 floating port）。"""
+
+    ctype = (component_type or "").strip()
+    if ctype in (ComponentType.IC.value, ComponentType.OPAMP.value):
+        return make_ic_pin_specs(part_subtype)
+    return PACKAGE_PIN_SPECS.get(ctype)
+
+
 __all__ = [
     # enums
     "ComponentType",
@@ -483,6 +682,7 @@ __all__ = [
     "NetRole",
     "PolarityClass",
     "SourceType",
+    "ConnectionPolicy",
     # dims
     "COMPONENT_FEAT_DIM",
     "PORT_FEAT_DIM",
@@ -502,12 +702,21 @@ __all__ = [
     "POLARITY_CLASS_TO_INDEX",
     "SOURCE_TYPE_TO_INDEX",
     "PACKAGE_TO_INDEX",
+    "CONNECTION_POLICY_TO_INDEX",
+    "PIN_NUMBER_LOG_BASE",
     # metadata
     "POLARITY_CLASS_OF",
     "POLARITY_SENSITIVE_PORT_TYPES",
     "POWER_PORT_TYPES",
     "GROUND_PORT_TYPES",
     "IC_PIN_MAPS",
+    "IC_PIN_POLICIES",
+    "IC_PIN_SYMMETRY",
+    # package specs (P0.6)
+    "PinSpec",
+    "PACKAGE_PIN_SPECS",
+    "make_ic_pin_specs",
+    "get_expected_pin_specs",
     # tools
     "normalize_port_type",
 ]

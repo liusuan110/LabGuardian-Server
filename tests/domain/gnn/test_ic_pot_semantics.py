@@ -61,9 +61,11 @@ def test_port_type_includes_opamp_roles() -> None:
         assert hasattr(PortType, name), f"PortType missing {name}"
 
 
-def test_port_feat_dim_recomputed_to_44() -> None:
-    # 23 (port_type) + 16 (parent_ctype) + 5 flags = 44
-    assert PORT_FEAT_DIM == 44
+def test_port_feat_dim_recomputed_to_50() -> None:
+    # P0.5: 44 = 23 (port_type) + 16 (parent_ctype) + 5 flags
+    # P0.6: 50 = + 3 connection_policy_one_hot + 1 has_pin_number
+    #            + 1 pin_number_log + 1 symmetry_class_size_inverse
+    assert PORT_FEAT_DIM == 50
 
 
 # ---------------------------------------------------------------------------
@@ -225,10 +227,11 @@ def test_opamp_buffer_fixture_resolves_all_connected_pins() -> None:
     payload = json.loads(FIXTURE_OPAMP.read_text())
     hcg = build_from_logical_reference(payload)
     summary = hcg.summary()
-    # 5 connected pins (1/5/8 are NC), 4 nets
+    # P0.6: all 8 package pins materialized (5 connected + 3 floating); only
+    # 5 (port, net) edges because pins 1/5/8 are NC in DSL.
     assert summary == {
         "n_components": 1,
-        "n_ports": 5,
+        "n_ports": 8,
         "n_nets": 4,
         "n_edges": 5,
     }, summary
@@ -240,13 +243,18 @@ def test_opamp_buffer_fixture_resolves_all_connected_pins() -> None:
     assert by_key["6"].port_type == PortType.OUTPUT.value
     assert by_key["7"].port_type == PortType.V_PLUS.value
 
-    # All five must be polarity_sensitive (multi_asymmetric IC × sensitive port type)
+    # All five connected pins must be polarity_sensitive
     for key in ("2", "3", "4", "6", "7"):
         assert by_key[key].polarity_sensitive, by_key[key]
+        assert by_key[key].is_floating is False, key
 
     # V+/V- pins flagged as power_port
     assert by_key["7"].is_power_port is True
     assert by_key["4"].is_power_port is True
+
+    # P0.6: pins 1 / 5 / 8 are now materialized as floating
+    for key in ("1", "5", "8"):
+        assert by_key[key].is_floating is True, key
 
 
 def test_opamp_buffer_preserves_parallel_feedback_pins() -> None:

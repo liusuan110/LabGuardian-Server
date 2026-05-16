@@ -36,6 +36,13 @@ class ComponentNode:
     pin_count: int
     value: float | None  # 电阻欧姆值 / 电容法拉值；缺失为 None
     confidence: float
+    # P0.6: per-component pin 互换组。每组是该 component 内部互换的 port_key
+    # tuple。e.g. Resistor → ``(("pin1", "pin2"),)``, Potentiometer →
+    # ``(("terminal_a", "terminal_b"),)``, UA741 → ``(("1", "5"),)`` (offset
+    # null pair；其它 pin 单独成组在 PortNode.symmetry_class_id 上表示，不
+    # 重复列出)。 source: ``graph_schema.get_expected_pin_specs`` + 可选
+    # netlist_v2 ``ComponentInstance.symmetry_group`` overlay。
+    pin_symmetry_groups: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -51,7 +58,19 @@ class PortNode:
     polarity_sensitive: bool
     is_power_port: bool
     is_ground_port: bool
-    is_floating: bool  # cur 侧未连任何 net 时 True；ref 侧恒 False
+    # P0.6: 真正的"floating"语义 —— True 表示该 port 在当前 side 不连接任何
+    # net。ref 侧的 floating 表示 spec 允许（OPTIONAL）或禁止（FORBIDDEN，但
+    # 学生没接才正确）；cur 侧的 floating 表示视觉确实观测到 pin 但未映射到
+    # net（``electrical_net_id`` 为 None）。
+    is_floating: bool
+    # P0.6 新增字段 -------------------------------------------------------
+    # 1-indexed 物理 pin 号；无位置概念则 None（LED.anode / Pot.wiper 等）。
+    pin_number: int | None = None
+    # ``ConnectionPolicy.value`` —— P0.6 引入。缺省 REQUIRED 兼容旧调用方。
+    connection_policy: str = "required"
+    # 0-indexed per-component 互换类 id。同 component 内同 id 的 port 可互
+    # 换。spec 缺失时调用方给唯一 id。
+    symmetry_class_id: int = 0
 
 
 @dataclass(frozen=True)

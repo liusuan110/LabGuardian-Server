@@ -117,8 +117,10 @@ def test_all_reference_fixtures_convert(all_reference_payloads) -> None:
     for ref_id, payload in all_reference_payloads.items():
         hcg: HeteroCircuitGraph = build_from_logical_reference(payload)
         s = hcg.summary()
-        # 每条 (comp, net) 边对应一个 port，所以 n_edges == n_ports
-        assert s["n_edges"] == s["n_ports"], f"{ref_id}: {s}"
+        # P0.6: n_edges ≤ n_ports —— 因为 NC / floating port 也 materialize
+        # 但没有边。仅在没有 IC 等带 OPTIONAL/FORBIDDEN 引脚的 fixture 中
+        # 才有 n_edges == n_ports。
+        assert s["n_edges"] <= s["n_ports"], f"{ref_id}: {s}"
         assert s["n_ports"] >= s["n_components"], f"{ref_id}: {s}"
         hcg.assert_invariants()
 
