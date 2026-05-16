@@ -245,6 +245,30 @@ class TestBoardGeometryPins:
         digits = [int(slot[0]) for slot in slots]
         assert digits == [digits[0] + i for i in range(3)]
 
+    def test_potentiometer_top_box_fallback_follows_cap_long_axis(self):
+        import cv2
+        from app.pipeline.stages.s1b_pin_detect import _potentiometer_top_box_fallback_points
+
+        image = np.full((160, 160, 3), 255, dtype=np.uint8)
+        cv2.rectangle(image, (55, 72), (105, 88), (210, 70, 10), -1)
+        horizontal = _potentiometer_top_box_fallback_points(
+            bbox=(45, 60, 115, 100),
+            top_image=image,
+        )
+        assert horizontal is not None
+        h_points = [horizontal[name] for name in ("terminal_a", "wiper", "terminal_b")]
+        assert max(p[0] for p in h_points) - min(p[0] for p in h_points) > max(p[1] for p in h_points) - min(p[1] for p in h_points)
+
+        image = np.full((160, 160, 3), 255, dtype=np.uint8)
+        cv2.rectangle(image, (72, 55), (88, 105), (210, 70, 10), -1)
+        vertical = _potentiometer_top_box_fallback_points(
+            bbox=(60, 45, 100, 115),
+            top_image=image,
+        )
+        assert vertical is not None
+        v_points = [vertical[name] for name in ("terminal_a", "wiper", "terminal_b")]
+        assert max(p[1] for p in v_points) - min(p[1] for p in v_points) > max(p[0] for p in v_points) - min(p[0] for p in v_points)
+
 
 class TestPinModelSchemaAlignment:
     def test_two_pin_components_ignore_third_padding_keypoint(self):

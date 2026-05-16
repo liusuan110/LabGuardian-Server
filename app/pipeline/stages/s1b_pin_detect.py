@@ -911,6 +911,8 @@ def _potentiometer_top_box_fallback_points(
         return None
 
     theta = np.deg2rad(float(angle))
+    # The three hidden pins follow the visible top cap's long axis; the center
+    # of that axis is the wiper.
     if rw >= rh:
         ax, ay = float(np.cos(theta)), float(np.sin(theta))
         span = float(rw)
