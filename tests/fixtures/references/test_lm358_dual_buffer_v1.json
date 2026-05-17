@@ -1,0 +1,31 @@
+{
+  "format": "logical_reference_v1",
+  "reference_id": "test_lm358_dual_buffer_v1",
+  "name": "LM358 dual-channel voltage follower (both halves as unity-gain buffers)",
+  "description": "LM358 dual op-amp wired as two independent voltage followers: channel A buffers VIN_A → VOUT_A, channel B buffers VIN_B → VOUT_B. Single-supply power via V+ / GND. Exercises a *different* IC subtype than UA741 with the same PortType vocabulary, giving the model IC-heterogeneity training experience beyond what test_opamp_inverting_v1 (UA741 again) covers. Picked because LM358 has no NC pin (all 8 used) — different connection-policy footprint than UA741's pin 8 = FORBIDDEN.",
+  "components": [
+    {
+      "ref_id": "U1",
+      "type": "IC",
+      "subtype": "LM358",
+      "pins": [
+        { "pin": "1", "net": "VOUT_A" },
+        { "pin": "2", "net": "VOUT_A" },
+        { "pin": "3", "net": "VIN_A" },
+        { "pin": "4", "net": "GND" },
+        { "pin": "5", "net": "VIN_B" },
+        { "pin": "6", "net": "VOUT_B" },
+        { "pin": "7", "net": "VOUT_B" },
+        { "pin": "8", "net": "VCC" }
+      ]
+    }
+  ],
+  "nets": [
+    { "net": "VIN_A", "role": "input" },
+    { "net": "VIN_B", "role": "input" },
+    { "net": "VOUT_A", "role": "output" },
+    { "net": "VOUT_B", "role": "output" },
+    { "net": "VCC", "role": "power" },
+    { "net": "GND", "role": "ground" }
+  ]
+}

@@ -398,9 +398,43 @@ def _build_ua741_pin_map() -> dict[str, str]:
     return pin_map
 
 
+def _build_lm358_pin_map() -> dict[str, str]:
+    """LM358 是双 op-amp，DIP-8 引脚：
+
+        1 = OUT_A     2 = INV_A     3 = NON_INV_A     4 = V-
+        5 = NON_INV_B 6 = INV_B     7 = OUT_B         8 = V+
+
+    所有引脚的 PortType 都已存在于现有 enum（与 UA741 重用），所以加
+    LM358 不会触发 PORT_FEAT_DIM 变化，prebaked.pt + P2.5 backbone
+    继续兼容。P3 follow-up 用它做 IC subtype 多样性实验。
+    """
+
+    return {
+        "1": PortType.OUTPUT.value,
+        "2": PortType.INVERTING_INPUT.value,
+        "3": PortType.NON_INVERTING_INPUT.value,
+        "4": PortType.V_MINUS.value,
+        "5": PortType.NON_INVERTING_INPUT.value,
+        "6": PortType.INVERTING_INPUT.value,
+        "7": PortType.OUTPUT.value,
+        "8": PortType.V_PLUS.value,
+        "pin1": PortType.OUTPUT.value,
+        "pin2": PortType.INVERTING_INPUT.value,
+        "pin3": PortType.NON_INVERTING_INPUT.value,
+        "pin4": PortType.V_MINUS.value,
+        "pin5": PortType.NON_INVERTING_INPUT.value,
+        "pin6": PortType.INVERTING_INPUT.value,
+        "pin7": PortType.OUTPUT.value,
+        "pin8": PortType.V_PLUS.value,
+    }
+
+
 IC_PIN_MAPS: dict[str, dict[str, str]] = {
     "UA741": _build_ua741_pin_map(),
-    # 占位：LM358 / NE555 在后续阶段补；不影响 MVP 的 5 教学电路。
+    "LM358": _build_lm358_pin_map(),
+    # 占位：NE555 待 PortType 扩张后补（需要 TRIGGER / RESET / CONTROL
+    # / THRESHOLD / DISCHARGE 等新 PortType，会触发 PORT_FEAT_DIM 升级 +
+    # prebaked.pt 失效；放到独立 PR 做）。
 }
 
 

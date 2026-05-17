@@ -96,6 +96,24 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "ref_id": "opamp_buffer",
             "payload_path": str(FIXTURES_DIR / "test_opamp_buffer_v1.json"),
         },
+        # P3 follow-up additions to close the OOD gap measured in P3.1
+        # ablation (val 0.92 → test 0.70 with only 4 fixtures).
+        {
+            "ref_id": "opamp_inverting",
+            "payload_path": str(FIXTURES_DIR / "test_opamp_inverting_v1.json"),
+        },
+        {
+            "ref_id": "npn_switch",
+            "payload_path": str(FIXTURES_DIR / "test_npn_switch_v1.json"),
+        },
+        # P3 follow-up #2: LM358 dual-channel buffer — different IC
+        # subtype, no NC pin → exercises a different connection-policy
+        # footprint than UA741 and gives the model IC-heterogeneity
+        # signal (not just UA741 variations).
+        {
+            "ref_id": "lm358_dual_buffer",
+            "payload_path": str(FIXTURES_DIR / "test_lm358_dual_buffer_v1.json"),
+        },
     ],
     # P1 acceptance plan: 600 samples / ref × 4 refs = 2400 total. Tuned so
     # pos_neg_ratio stays in the [0.3, 3.0] gate and every required source
@@ -129,6 +147,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "subtypes_by_ref_id": {
         # Make payload-less subtype overrides explicit
         "opamp_buffer": {"U1": "UA741"},
+        "opamp_inverting": {"U1": "UA741"},
+        "lm358_dual_buffer": {"U1": "LM358"},
     },
 }
 
