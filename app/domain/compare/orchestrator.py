@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import networkx as nx
@@ -24,6 +25,87 @@ from .matcher import (
     auto_detect_symmetries,
 )
 from .role_inference import _attach_role_inferences, _infer_current_net_roles_from_reference
+
+log = logging.getLogger(__name__)
+
+
+def _maybe_attach_gnn_advice(
+    result: dict[str, Any],
+    ref_payload: dict[str, Any] | None,
+    cur_netlist_v2: dict[str, Any] | None,
+    ref_graph: nx.Graph,
+    cur_graph: nx.Graph,
+) -> dict[str, Any]:
+    """**P4 hook (plan §六)** — annotate ``report.summary.gnn`` and
+    ``details.gnn`` with advisory output from :class:`GNNAdvisor`.
+
+    Hard rules (plan §一 "GNN 永远不直接决定 pass/fail"):
+        - **Never** mutate ``logic_correct`` / ``is_correct`` / ``is_match``.
+        - On any failure (import, missing checkpoint, model exception),
+          silently return ``result`` unchanged so the rule path stays the
+          authoritative comparator.
+        - The added ``gnn`` field is purely additive — existing items /
+          mappings / summary keys are untouched.
+    """
+
+    if ref_payload is None or cur_netlist_v2 is None:
+        return result
+    try:
+        from app.domain.gnn import GNNAdvisor, should_use_gnn
+        from app.domain.gnn.port_graph import (
+            build_from_logical_reference,
+            build_from_netlist_v2,
+        )
+    except ImportError:
+        return result
+
+    # Build a minimal context for the §七 trigger logic.
+    n_total = ref_graph.number_of_nodes() + cur_graph.number_of_nodes()
+    match_type = (result.get("details") or {}).get("match_type")
+    ctx = {
+        "node_count_total": n_total,
+        "match_type_so_far": match_type,
+        "full_isomorphism_failed": match_type != "full_isomorphism",
+    }
+    if not should_use_gnn(ctx):
+        return result
+
+    try:
+        advisor = GNNAdvisor.get()
+        ref_hcg = build_from_logical_reference(ref_payload)
+        cur_hcg = build_from_netlist_v2(cur_netlist_v2)
+        advice = advisor.advise(ref_hcg, cur_hcg, timeout_ms=300)
+    except (RuntimeError, FileNotFoundError) as e:
+        # Expected: no checkpoint / no torch / no model on this box.
+        log.debug("gnn_advisor_unavailable: %s", e)
+        return result
+    except Exception as e:  # noqa: BLE001 — never let GNN crash rule path
+        log.warning(
+            "gnn_advisor_failed: %s — keeping rule-only report",
+            type(e).__name__,
+            exc_info=e,
+        )
+        return result
+    if advice is None:
+        return result
+
+    advice_dict = advice.to_report_dict()
+    # Stuff into report.summary.gnn (plan §六 validator_report_v2 schema)
+    report = dict(result.get("report", {}))
+    summary = dict(report.get("summary", {}))
+    summary["gnn"] = advice_dict
+    report["summary"] = summary
+    result["report"] = report
+    # Mirror to details so non-report consumers can see it too
+    details = dict(result.get("details", {}))
+    details["gnn"] = {
+        "enabled": True,
+        "model_version": advice_dict["model_version"],
+        "inference_ms": advice_dict["inference_ms"],
+        "n_edges_scored": advice_dict["n_edges_scored"],
+    }
+    result["details"] = details
+    return result
 
 
 def compare_logical_graphs(
@@ -63,6 +145,7 @@ def compare_logical_graphs(
         result = _result(logic_correct=True, similarity=1.0, progress=1.0, message="电路逻辑连接与参考电路一致", items=[], details=details, ref_payload=ref_payload)
         if ref_payload is not None and cur_netlist_v2 is not None:
             result = _enrich_result(result, reference_graph, current_graph, ref_payload, cur_netlist_v2)
+            result = _maybe_attach_gnn_advice(result, ref_payload, cur_netlist_v2, reference_graph, current_graph)
         if inference_applied:
             _attach_role_inferences(result, role_inferences)
         return result
@@ -74,6 +157,7 @@ def compare_logical_graphs(
         result = _result(logic_correct=True, similarity=max(0.85, _approximate_similarity(reference_graph, current_graph)), progress=1.0, message="参考电路逻辑已存在，但当前电路包含额外元件或连接", items=items, details={"match_type": "equivalent_with_extra"}, ref_payload=ref_payload)
         if ref_payload is not None and cur_netlist_v2 is not None:
             result = _enrich_result(result, reference_graph, current_graph, ref_payload, cur_netlist_v2)
+            result = _maybe_attach_gnn_advice(result, ref_payload, cur_netlist_v2, reference_graph, current_graph)
         return result
 
     if _contains_subgraph(reference_graph, current_graph):
@@ -82,9 +166,11 @@ def compare_logical_graphs(
         result = _result(logic_correct=False, similarity=_approximate_similarity(reference_graph, current_graph), progress=_component_progress(reference_graph, current_graph), message="当前电路未完整实现参考电路逻辑", items=_dedupe_items(items), details={"match_type": "current_subgraph_in_reference"}, ref_payload=ref_payload)
         if ref_payload is not None and cur_netlist_v2 is not None:
             result = _enrich_result(result, reference_graph, current_graph, ref_payload, cur_netlist_v2)
+            result = _maybe_attach_gnn_advice(result, ref_payload, cur_netlist_v2, reference_graph, current_graph)
         return result
 
     result = _result(logic_correct=False, similarity=_ged_similarity(reference_graph, current_graph), progress=_component_progress(reference_graph, current_graph), message="检测到元件连接关系与参考电路不一致，可能存在错接。", items=_difference_items(reference_graph, current_graph), details={"match_type": "graph_edit_distance_or_fallback"}, ref_payload=ref_payload)
     if ref_payload is not None and cur_netlist_v2 is not None:
         result = _enrich_result(result, reference_graph, current_graph, ref_payload, cur_netlist_v2)
+        result = _maybe_attach_gnn_advice(result, ref_payload, cur_netlist_v2, reference_graph, current_graph)
     return result

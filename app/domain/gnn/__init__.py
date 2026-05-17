@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from app.domain.gnn.alignment import (
@@ -120,6 +121,12 @@ try:
         embeddings_for_subgraph,
     )
     from app.domain.gnn.model import CircuitMatchNet
+    from app.domain.gnn.prebaked_dataset import (
+        PREBAKED_SCHEMA_VERSION,
+        PrebakedSealDataset,
+        PrebakeStats,
+        prebake_to_disk,
+    )
     from app.domain.gnn.pretrain_dataset import SpiceNetlistPretrainDataset
     from app.domain.gnn.pyg_converter import (
         encode_component_features,
@@ -158,28 +165,42 @@ from app.domain.gnn.splits import (
 )
 
 
-class GNNAdvisor:
-    """GNN 推理入口（P4 实现）。
+# P4 inference layer — guarded behind torch availability (same as P2 / P3).
+# The shim below lets non-extra installs still import the package; calling
+# GNNAdvisor.get() without torch raises a clear RuntimeError.
+try:
+    from app.domain.gnn.inference import (
+        GNNAdvice,
+        GNNAdvisor,
+        should_use_gnn,
+    )
+except ImportError:  # torch missing — fall back to stub raising on use
+    @dataclass(frozen=True)  # type: ignore[no-redef]
+    class GNNAdvice:  # noqa: D101
+        model_version: str = ""
+        inference_ms: float = 0.0
+        n_edges_scored: int = 0
+        enabled: bool = False
 
-    P0 阶段保留类骨架以固定外部 import 路径，避免 P4 时改动 callsite。任何
-    早期调用都必须显式失败而不是悄悄返回 None。
-    """
+    class GNNAdvisor:  # type: ignore[no-redef]
+        """Stub raised when torch is missing — match P4 API surface so
+        ``from app.domain.gnn import GNNAdvisor`` works even without
+        ``[gnn]`` extras installed."""
 
-    @classmethod
-    def get(cls) -> GNNAdvisor:
-        raise NotImplementedError(
-            "GNNAdvisor will be implemented in plan phase P4. "
-            "P0 only ships the graph schema."
-        )
+        @classmethod
+        def get(cls) -> "GNNAdvisor":
+            raise RuntimeError(
+                "GNNAdvisor requires the [gnn] extra (torch + "
+                "torch_geometric). Install with: pip install -e '.[gnn]'"
+            )
 
+        @classmethod
+        def checkpoint_available(cls) -> bool:
+            return False
 
-def should_use_gnn(_ctx: Any) -> bool:
-    """P0 stub：永远返回 False，让 orchestrator 走纯规则路径。
-
-    P4 替换为 plan §七 的真实触发逻辑。
-    """
-
-    return False
+    def should_use_gnn(_ctx: Any) -> bool:  # type: ignore[no-redef]
+        """No GNN available → never use it."""
+        return False
 
 
 __all__ = [
@@ -295,7 +316,13 @@ __all__ = [
     "HeteroNodeEncoder",
     "HeteroSAGEBackbone",
     "embeddings_for_subgraph",
-    # P4 stubs
+    # P3.2 prebaked dataset (data pipeline 25x speedup)
+    "PrebakedSealDataset",
+    "PrebakeStats",
+    "prebake_to_disk",
+    "PREBAKED_SCHEMA_VERSION",
+    # P4 inference integration
     "GNNAdvisor",
+    "GNNAdvice",
     "should_use_gnn",
 ]

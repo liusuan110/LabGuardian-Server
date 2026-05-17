@@ -53,7 +53,7 @@ from app.domain.gnn.pyg_converter import seal_subgraph_to_pyg_data
 from app.domain.gnn.pyg_dataset import RefRegistry, reconstruct_cur_hcg
 
 if TYPE_CHECKING:  # pragma: no cover
-    from app.domain.gnn.hetero_circuit import HeteroCircuitGraph
+    pass
 
 
 log = logging.getLogger(__name__)
