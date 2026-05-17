@@ -24,6 +24,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -164,13 +165,7 @@ class GNNAdvisor:
         global _SINGLETON
         if _SINGLETON is not None:
             return _SINGLETON
-        try:
-            import torch  # noqa: F401
-        except ImportError as e:
-            raise RuntimeError(
-                "GNNAdvisor requires the [gnn] extra (torch + "
-                "torch_geometric). Install with: pip install -e '.[gnn]'"
-            ) from e
+        _ensure_gnn_runtime()
         path = _locate_default_checkpoint()
         if path is None:
             raise FileNotFoundError(
@@ -217,6 +212,16 @@ class GNNAdvisor:
         plausible checkpoint exist on disk? Doesn't actually load it."""
 
         return _locate_default_checkpoint() is not None
+
+    @classmethod
+    def runtime_available(cls) -> bool:
+        """Return True only when torch + PyG can both be imported."""
+
+        try:
+            _ensure_gnn_runtime()
+        except RuntimeError:
+            return False
+        return True
 
     @classmethod
     def reset_singleton(cls) -> None:
@@ -273,7 +278,8 @@ class GNNAdvisor:
         num_hops: int,
     ) -> GNNAdvice | None:
         import torch
-        from torch_geometric.loader import DataLoader  # type: ignore[import-untyped]
+
+        DataLoader = getattr(import_module("torch_geometric.loader"), "DataLoader")
 
         from app.domain.gnn.pyg_converter import seal_subgraph_to_pyg_data
         from app.domain.gnn.seal_subgraph import (
@@ -394,6 +400,8 @@ def should_use_gnn(ctx: Any) -> bool:
     that's a P4.1 follow-up.
     """
 
+    if not GNNAdvisor.runtime_available():
+        return False
     if not GNNAdvisor.checkpoint_available():
         return False
 
@@ -453,6 +461,19 @@ def _locate_default_checkpoint() -> Path | None:
         if p.is_file():
             return p
     return None
+
+
+def _ensure_gnn_runtime() -> None:
+    """Raise RuntimeError when the optional GNN runtime is unavailable."""
+
+    try:
+        import torch  # noqa: F401
+        import torch_geometric  # type: ignore[import-not-found,import-untyped]  # noqa: F401
+    except ImportError as e:
+        raise RuntimeError(
+            "GNNAdvisor requires the [gnn] extra (torch + "
+            "torch_geometric). Install with: pip install -e '.[gnn]'"
+        ) from e
 
 
 __all__ = [
