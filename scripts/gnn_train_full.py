@@ -216,20 +216,43 @@ def build_loaders(
     batch_size: int,
     num_workers: int = 0,
     drop_drnl: bool = False,
+    prebaked_path: Path | None = None,
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
-    refs = build_refs_registry(refs_config, subtypes_by_ref_id)
-    labels_dir = dataset_dir / "labels"
+    """Build train / val / test DataLoaders.
+
+    If ``prebaked_path`` is provided, uses :class:`PrebakedSealDataset`
+    (zero per-row replay, ~25× faster training on Windows CPU). Otherwise
+    falls back to :class:`FlatSealDataset` which replays cur_hcg per row.
+    """
+
     splits_dir = dataset_dir / "splits"
     train_entries = json.loads((splits_dir / "train.json").read_text())
     val_entries = json.loads((splits_dir / "val.json").read_text())
     test_entries = json.loads((splits_dir / "test.json").read_text())
 
-    train_ds = FlatSealDataset(labels_dir, refs, train_entries, drop_drnl=drop_drnl)
-    val_ds = FlatSealDataset(labels_dir, refs, val_entries, drop_drnl=drop_drnl)
-    test_ds = FlatSealDataset(labels_dir, refs, test_entries, drop_drnl=drop_drnl)
+    if prebaked_path is not None:
+        from app.domain.gnn.prebaked_dataset import PrebakedSealDataset
+
+        log.info("loading prebaked dataset from %s", prebaked_path)
+        train_ds = PrebakedSealDataset(
+            prebaked_path, train_entries, drop_drnl=drop_drnl
+        )
+        val_ds = PrebakedSealDataset(
+            prebaked_path, val_entries, drop_drnl=drop_drnl
+        )
+        test_ds = PrebakedSealDataset(
+            prebaked_path, test_entries, drop_drnl=drop_drnl
+        )
+    else:
+        refs = build_refs_registry(refs_config, subtypes_by_ref_id)
+        labels_dir = dataset_dir / "labels"
+        train_ds = FlatSealDataset(labels_dir, refs, train_entries, drop_drnl=drop_drnl)
+        val_ds = FlatSealDataset(labels_dir, refs, val_entries, drop_drnl=drop_drnl)
+        test_ds = FlatSealDataset(labels_dir, refs, test_entries, drop_drnl=drop_drnl)
     log.info(
-        "dataset rows: train=%d val=%d test=%d",
+        "dataset rows: train=%d val=%d test=%d (%s)",
         len(train_ds), len(val_ds), len(test_ds),
+        "prebaked" if prebaked_path else "live replay",
     )
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers
@@ -261,6 +284,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--pretrain-ckpt", type=Path, default=None,
         help="path to P2.5 backbone.pt (optional)",
+    )
+    p.add_argument(
+        "--prebaked", type=Path, default=None,
+        help="path to a prebaked .pt blob from scripts.gnn_prebake_dataset "
+             "(skips per-row cur_hcg replay; ~25x faster training on "
+             "Windows CPU per P3.2)",
     )
     p.add_argument(
         "--refs-config", type=Path, default=None,
@@ -324,6 +353,7 @@ def main(argv: list[str] | None = None) -> int:
         subtypes,
         batch_size=args.batch_size,
         drop_drnl=args.no_drnl,
+        prebaked_path=args.prebaked,
     )
     if args.no_drnl:
         log.info("ablation: --no-drnl active (DRNL one-hot zeroed)")

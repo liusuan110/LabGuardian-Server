@@ -172,6 +172,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--dataset-dir", type=Path, required=True)
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--pretrain-ckpt", type=Path, default=None)
+    p.add_argument(
+        "--prebaked", type=Path, default=None,
+        help="path to a prebaked .pt blob (P3.2 pipeline). Passed through "
+             "to every train_full sub-run for ~25x speedup.",
+    )
     p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--lr", type=float, default=1e-3)
@@ -203,6 +208,8 @@ def main(argv: list[str] | None = None) -> int:
         base_argv.append("--cpu")
     if args.verbose:
         base_argv.append("-v")
+    if args.prebaked is not None:
+        base_argv += ["--prebaked", str(args.prebaked)]
 
     results: dict[str, dict[str, Any]] = {}
     for cfg in args.ablations:
@@ -225,9 +232,12 @@ def main(argv: list[str] | None = None) -> int:
         results, target_f1_gate=0.88, target_top3_gate=0.85
     )
     report_path = args.output_dir / "ablation_report.md"
-    report_path.write_text(report)
+    # encoding="utf-8" is required because the verdict strings contain ✅ / ⚠️
+    # which Windows default GBK codec can't encode (would raise
+    # UnicodeEncodeError on Windows CN locale).
+    report_path.write_text(report, encoding="utf-8")
     (args.output_dir / "results.json").write_text(
-        json.dumps(results, indent=2, default=str)
+        json.dumps(results, indent=2, default=str), encoding="utf-8"
     )
     print(f"[ablation] wrote {report_path}")
     print()
