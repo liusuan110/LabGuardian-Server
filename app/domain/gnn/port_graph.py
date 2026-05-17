@@ -566,28 +566,53 @@ def _payload_raw_pin_edges_cur(netlist_v2: dict[str, Any]) -> list[RawPinEdge]:
     return out
 
 
-def build_from_logical_reference(payload: dict[str, Any]) -> HeteroCircuitGraph:
+def build_from_logical_reference(
+    payload: dict[str, Any],
+    *,
+    extra_subtypes_by_source_id: dict[str, str] | None = None,
+) -> HeteroCircuitGraph:
     """``logical_reference_v1`` payload → ``HeteroCircuitGraph(side="ref")``.
 
     P0.5: 从 ``components[*].subtype`` 抽出 part_subtype 旁路传给 builder
     让 IC 的 pin 拿到精细的 PortType；并直接从 payload 重建原始 pin 边表，
     绕过 ``nx.Graph`` 折叠平行边（如 op-amp 单位增益缓冲器里 pin2 和 pin6
     同接 VOUT，nx 只保留一条）。
+
+    P1 audit fix: ``extra_subtypes_by_source_id`` 可显式补充 / 覆盖 payload
+    中的 subtype 字段。优先级：``extra_subtypes_by_source_id`` 覆盖
+    payload subtype。用途：fixture JSON 没写 subtype，但 dataset_builder
+    通过 :class:`RefSpec.subtype_by_source_id` 知道某 IC 是 UA741，需要让
+    ref HCG 也享受到 FORBIDDEN/OPTIONAL 等精细 spec —— 否则 ref/cur
+    pin 语义会不一致，label builder 会产出错乱样本。
     """
 
     nx_graph = logical_reference_to_graph(payload)
-    subtypes = _extract_subtypes(
+    payload_subtypes = _extract_subtypes(
         payload.get("components"),
         id_keys=("ref_id",),
         subtype_keys=("subtype", "part_subtype"),
     )
+    if extra_subtypes_by_source_id:
+        merged = {**payload_subtypes, **extra_subtypes_by_source_id}
+    else:
+        merged = payload_subtypes
     raw_edges = _payload_raw_pin_edges_ref(payload)
-    return build_hetero_circuit_graph(
+    hcg = build_hetero_circuit_graph(
         nx_graph,
         cast(Side, "ref"),
-        subtype_by_source_id=subtypes,
+        subtype_by_source_id=merged,
         raw_pin_edges=raw_edges,
     )
+    # P1 audit fix #2: stash the merged subtype map onto metadata so that
+    # downstream consumers (notably ``perturbation._collect_subtypes``) can
+    # rebuild cur HCGs with the SAME IC/pin spec semantics as ref, without
+    # the caller having to thread ``subtype_by_source_id`` through every
+    # ``apply_perturbation`` / ``RefSpec`` call. Without this, payloads that
+    # carry ``"subtype": "UA741"`` would still produce cur HCGs missing
+    # OPTIONAL/FORBIDDEN pin materialization → silent forbidden_negative=0.
+    if merged:
+        hcg.metadata["subtype_by_source_id"] = dict(merged)
+    return hcg
 
 
 def build_from_netlist_v2(netlist_v2: dict[str, Any]) -> HeteroCircuitGraph:
@@ -604,12 +629,17 @@ def build_from_netlist_v2(netlist_v2: dict[str, Any]) -> HeteroCircuitGraph:
         subtype_keys=("part_subtype", "subtype"),
     )
     raw_edges = _payload_raw_pin_edges_cur(netlist_v2)
-    return build_hetero_circuit_graph(
+    hcg = build_hetero_circuit_graph(
         nx_graph,
         cast(Side, "cur"),
         subtype_by_source_id=subtypes,
         raw_pin_edges=raw_edges,
     )
+    # Symmetric stash for the cur side — perturbation / label_builder may
+    # consume it analogously when reasoning about hybrid pipelines.
+    if subtypes:
+        hcg.metadata["subtype_by_source_id"] = dict(subtypes)
+    return hcg
 
 
 __all__ = [

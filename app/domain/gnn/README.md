@@ -1,6 +1,6 @@
 # `app.domain.gnn` · GNN-assisted Graph Comparator
 
-**Status: P0.8 complete (label builder + ref↔cur alignment).**
+**Status: P1 Phase C in progress (splits + resume + CLI driver landed; 12 operators × 4 fixtures = 600 sample / 30 s smoke run green).**
 Full plan: `~/.claude/plans/labguardian-server-glowing-galaxy.md`.
 
 ## What this module is
@@ -41,6 +41,116 @@ integration) for the contract.
 - `raw_pin_edges` bypass in `build_from_*` preserves parallel pin edges
   (e.g., UA741 pin2↔pin6 both wired to VOUT in a unity-gain buffer; the
   underlying `nx.Graph` would otherwise collapse them).
+
+### ✅ P1 Phase A — Perturbation framework + dataset_builder
+- `perturbation.py` — 4 deterministic perturbation operators built on a
+  pluggable `Perturbation` base class + `PERTURBATION_REGISTRY`:
+  - `IdentityPerturbation` — perfect cur copy; baseline REF_PRESENT positives
+  - `PinSwapSymmetricPerturbation` — swaps two pins within a `symmetry_class_id`
+    (e.g., R.pin1↔pin2); produces REF_SYMMETRIC_SWAP positives (label_builder
+    sibling expansion validation)
+  - `WrongConnectionPerturbation` — reroutes an edge to a different net;
+    produces WRONG_OBSERVED strong negatives + MISSING_EDGE wrong_redirect group
+  - `PinReversedPerturbation` — anode↔cathode swap on polarized devices
+    (LED / Diode / electrolytic Cap)
+  - **Mutation pipeline: raw_pin_edges (not nx.Graph).** All 4 operators
+    pull `hcg_to_raw_pin_edges(ref)` → mutate the 7-tuple edge list →
+    `_rebuild_cur_from_raw` calls `build_hetero_circuit_graph(...,
+    raw_pin_edges=...)`. This preserves parallel pins (UA741 pin2 + pin6
+    both wired to VOUT) and lets `WrongConnection` collide a new edge
+    with a pre-existing one without silent collapse.
+  - `hcg_to_nx(hcg)` is still exposed as a back-compat helper but is **no
+    longer the perturbation hot path** — it folds parallel edges and is
+    kept only for callers (debug tooling, label-builder inspection) that
+    explicitly want a flat bipartite view.
+- `dataset_builder.py` — orchestration layer enforcing the P0.8 contract:
+  - `RefSpec` / `PerturbationPlan` / `DatasetSpec` dataclasses
+  - `validate_dataset_spec(spec)` runs **first** in `generate_dataset` and
+    raises :class:`DatasetSpecError` for config errors (bad ref path,
+    unknown perturbation name, duplicate ref_id, empty refs/plan, negative
+    count) — fail-fast **before** any directory creation or sample work
+  - `generate_dataset(spec)` runs every (ref, perturbation, idx) combo,
+    calls `build_seal_samples_with_coverage_check`, serializes labels JSON
+    to `<output>/labels/<ref_id>/<sample_id>.json`, accumulates a
+    `LabelManifest`, optional `assert_manifest_healthy` at the end (the
+    manifest is always written before the health check so violation
+    snapshots survive for diagnosis)
+  - `RefSpec.subtype_by_source_id` overrides apply on **both** ref and cur
+    build paths; payload-embedded `subtype` is also auto-stashed onto
+    `ref_hcg.metadata["subtype_by_source_id"]` so perturbation cur rebuilds
+    inherit UA741-style pin specs without the caller threading it manually
+  - Per-sample seed via SHA-256 over `(base_seed, ref_id, sample_id)` for
+    reproducibility across runs
+  - `try/except CoverageError` per sample → failures recorded in manifest,
+    pipeline never aborts mid-way
+- New fixture: `tests/fixtures/references/test_voltage_divider_v1.json`
+  (R1+R2 divider) to exercise multi-component perturbations.
+
+### ✅ P1 Phase B — 8 additional perturbation operators
+Same raw_pin_edges pipeline, same identity_alignment + label_builder contract.
+`_rebuild_cur_from_raw` extended with `extra_components` / `extra_nets` /
+`dropped_components` / `dropped_nets` kwargs so the new ops can add or
+remove nodes without bypassing P0.6 materialization.
+
+| Operator | `expected_outcome` | What it does |
+|---|---|---|
+| `missing_component` | `missing_required` | Drop one low-fanout component from cur. Ref edges from it land in `n_skipped_missing_component`. Falls back to identity on single-component circuits (UA741 buffer). |
+| `extra_component` | `wrong_observed` | Inject a parasitic R/C/Wire with both pins on random existing nets → WRONG_OBSERVED on each pin. |
+| `floating_net` | `missing_required` | Pick a net of ref-degree ≥ 2, keep one edge, delete the rest → REF_ABSENT_REQUIRED + wrong_redirect groups on affected ports. |
+| `short_circuit` | `wrong_observed` | Re-route every edge on net N2 onto N1; N2 stays as isolated cur node so alignment maps cleanly. |
+| `power_swapped` | `wrong_observed` | Swap all edges between `role=power` net and `role=ground` net. Fall back to identity if either is absent. |
+| `input_output_swapped` | `wrong_observed` | Swap all edges between `role=input` and `role=output` nets. |
+| `extra_wire_bridge` | `wrong_observed` | Add a Wire component bridging two nets that share no ref component. Preserves all ref edges + parasitic path. |
+| `chained` | most severe of links | Compose 2–3 randomly-chosen Phase B operators in sequence. Each link's cur becomes the next's "ref". |
+
+**Registry now ships 12 operators (4 Phase A + 8 Phase B).** Each has a
+deterministic per-seed output and a safe identity fallback when its
+preconditions aren't met (e.g. `power_swapped` on a circuit with no VCC).
+
+### ✅ P1 Phase C — Splits + resume + CLI generation driver
+- `splits.py` — ref-disjoint train/val/test partitioning per plan §五.
+  - `SplitSpec` carries `test_ref_ids` (held-out **whole** ref circuits,
+    never sample-level), `val_fraction`, `seed`.
+  - `DatasetSplits` stores `("<ref_id>/<sample_id>", ...)` tuples sorted
+    deterministically.
+  - `discover_samples(labels_dir)` scans the disk layout that
+    `generate_dataset` wrote (`<labels>/<ref_id>/<sample_id>.json`).
+  - `build_splits(samples_by_ref, spec)` guarantees: train ∩ val ∩ test
+    pairwise disjoint, every test sample comes from a `test_ref_id`,
+    no train ref ever loses all train samples even at high
+    `val_fraction`.
+  - `write_splits` / `load_splits` JSON round-trip into
+    `<output>/splits/{train,val,test,stats}.json`.
+- `dataset_builder.generate_dataset(..., resume=True)` —
+  if a `<ref_id>/<sample_id>.json` already exists, deserialize it into
+  the manifest and skip regen; corrupted / unreadable files fall through
+  to regenerate (logged). Without `resume`, behavior is unchanged
+  (truncate + overwrite). Long runs become **idempotent + crash-safe**.
+- `dataset_builder.generate_dataset(..., workers=N)` — parallel
+  execution via `ProcessPoolExecutor`. Workers receive a picklable
+  `_WorkerTask` (with the ref_hcg + spec params), do
+  perturbation → label_builder → write the label JSON file → return
+  only the `LabelStats` dataclass back to the main process (so the
+  inter-process payload stays tiny). Main process aggregates via the
+  new `LabelManifest.add_stats(sample_id, stats)` method. Resume runs
+  in the main process before any worker dispatch (cheap json replay),
+  so `workers=N + resume=True` compose correctly.
+  **Cross-process determinism contract**: with the same `(spec,
+  base_seed)`, `workers=1` and `workers=N` produce **byte-identical
+  label JSON files** for every sample. The contract is enforced by
+  `test_workers_gt1_writes_identical_label_payloads_as_serial`.
+- `scripts/gnn_generate_dataset.py` — CLI driver that ties everything
+  together: spec validation → labels generation (resume-aware) →
+  manifest health gate → splits write. Flags:
+  - `--output-dir DIR` (required)
+  - `--config FILE` (optional; defaults to a built-in MVP config covering
+    all 4 fixtures × 12 operators ≈ 600 samples)
+  - `--base-seed N`, `--resume`, `--workers N`, `--skip-splits`,
+    `--no-healthy`, `--progress`, `--verbose`
+  - Exit codes: 0 = ok, 2 = spec validation failed, 3 = manifest health
+    gate failed (manifest still on disk for diagnosis), 4 = splits error
+  - Smoke-tested end-to-end: 600 samples / 0 failures / pos_neg_ratio ≈
+    1.07, train=405 / val=45 / test=150 (opamp held out).
 
 ### ✅ P0.8 — Label builder + ref↔cur alignment
 - `alignment.py` — `ComponentAlignment` carries ref↔cur `source_id` maps for

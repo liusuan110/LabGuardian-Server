@@ -1,0 +1,29 @@
+{
+  "format": "logical_reference_v1",
+  "reference_id": "test_voltage_divider_v1",
+  "name": "Resistive Voltage Divider (R1+R2)",
+  "description": "Classic two-resistor divider: R1 between VIN and VOUT, R2 between VOUT and GND. Used in P1 Phase A to exercise multi-component perturbations.",
+  "components": [
+    {
+      "ref_id": "R1",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "VIN" },
+        { "pin": "pin2", "net": "VOUT" }
+      ]
+    },
+    {
+      "ref_id": "R2",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "VOUT" },
+        { "pin": "pin2", "net": "GND" }
+      ]
+    }
+  ],
+  "nets": [
+    { "net": "VIN", "role": "input" },
+    { "net": "VOUT", "role": "output" },
+    { "net": "GND", "role": "ground" }
+  ]
+}

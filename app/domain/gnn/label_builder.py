@@ -472,13 +472,22 @@ def build_seal_samples(
             continue  # 已接对，跳过
         query_origin = "floating" if not cur_nets_actual else "wrong_redirect"
 
-        must_include = {cur_net_correct, *cur_nets_actual}
+        # **Deterministic ordering** (cross-process safe — sets are hash-
+        # randomised per Python process via PYTHONHASHSEED, so a raw
+        # ``list({cur_net_correct, *cur_nets_actual})`` would yield
+        # different candidate orderings between workers and break the
+        # parallel-vs-serial parity contract). cur_net_correct goes first
+        # (semantically: "the right answer"), then any wrong-redirect
+        # nets in lex order.
+        # Note: line 471 above guarantees ``cur_net_correct ∉ cur_nets_actual``.
+        must_include = [cur_net_correct] + sorted(cur_nets_actual)
+        must_include_set = set(must_include)
         all_nets = list(cur_hcg.nets)
-        pool = [n for n in all_nets if n not in must_include]
+        pool = [n for n in all_nets if n not in must_include_set]
         rng.shuffle(pool)
         n_distractors = max(0, missing_edge_group_size - len(must_include))
         distractors = pool[:n_distractors]
-        candidate_nets = list(must_include) + distractors
+        candidate_nets = must_include + distractors
 
         group_id = (
             f"miss_{cur_port}_"

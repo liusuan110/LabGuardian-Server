@@ -28,6 +28,14 @@ from app.domain.gnn.alignment import (
     alignment_from_dicts,
     identity_alignment,
 )
+from app.domain.gnn.dataset_builder import (
+    DatasetSpec,
+    DatasetSpecError,
+    PerturbationPlan,
+    RefSpec,
+    generate_dataset,
+    validate_dataset_spec,
+)
 from app.domain.gnn.graph_schema import (
     COMPONENT_FEAT_DIM,
     IC_PIN_MAPS,
@@ -69,6 +77,27 @@ from app.domain.gnn.label_manifest import (
     LabelManifest,
     assert_manifest_healthy,
 )
+from app.domain.gnn.perturbation import (
+    PERTURBATION_REGISTRY,
+    ChainedPerturbation,
+    ExtraComponentPerturbation,
+    ExtraWireBridgePerturbation,
+    FloatingNetPerturbation,
+    IdentityPerturbation,
+    InputOutputSwappedPerturbation,
+    MissingComponentPerturbation,
+    Perturbation,
+    PerturbedCur,
+    PinReversedPerturbation,
+    PinSwapSymmetricPerturbation,
+    PowerSwappedPerturbation,
+    ShortCircuitPerturbation,
+    WrongConnectionPerturbation,
+    apply_perturbation,
+    get_perturbation,
+    hcg_to_nx,
+    hcg_to_raw_pin_edges,
+)
 from app.domain.gnn.port_graph import (
     build_from_logical_reference,
     build_from_netlist_v2,
@@ -79,6 +108,15 @@ from app.domain.gnn.seal_subgraph import (
     extract_seal_subgraph,
     extract_subgraphs_for_floating_ports,
     extract_subgraphs_for_observed_edges,
+)
+from app.domain.gnn.splits import (
+    DatasetSplits,
+    SplitsError,
+    SplitSpec,
+    build_splits,
+    discover_samples,
+    load_splits,
+    write_splits,
 )
 
 
@@ -159,6 +197,41 @@ __all__ = [
     "SCHEMA_VERSION",
     "serialize_label_build_result",
     "deserialize_label_build_result",
+    # P1 Phase A: perturbation + dataset_builder
+    "PerturbedCur",
+    "Perturbation",
+    "IdentityPerturbation",
+    "PinSwapSymmetricPerturbation",
+    "WrongConnectionPerturbation",
+    "PinReversedPerturbation",
+    # P1 Phase B: additional perturbation operators
+    "MissingComponentPerturbation",
+    "ExtraComponentPerturbation",
+    "FloatingNetPerturbation",
+    "ShortCircuitPerturbation",
+    "PowerSwappedPerturbation",
+    "InputOutputSwappedPerturbation",
+    "ExtraWireBridgePerturbation",
+    "ChainedPerturbation",
+    "PERTURBATION_REGISTRY",
+    "get_perturbation",
+    "apply_perturbation",
+    "hcg_to_nx",
+    "hcg_to_raw_pin_edges",
+    "RefSpec",
+    "PerturbationPlan",
+    "DatasetSpec",
+    "DatasetSpecError",
+    "validate_dataset_spec",
+    "generate_dataset",
+    # P1 Phase C: splits
+    "SplitSpec",
+    "DatasetSplits",
+    "SplitsError",
+    "discover_samples",
+    "build_splits",
+    "write_splits",
+    "load_splits",
     # P4 stubs
     "GNNAdvisor",
     "should_use_gnn",

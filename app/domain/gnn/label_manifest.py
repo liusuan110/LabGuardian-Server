@@ -25,6 +25,7 @@ from pathlib import Path
 from app.domain.gnn.label_builder import (
     LabelBuildResult,
     LabelSource,
+    LabelStats,
     TaskType,
 )
 
@@ -92,24 +93,34 @@ class LabelManifest:
     # -- mutation --------------------------------------------------------
 
     def add(self, sample_id: str, result: LabelBuildResult) -> None:
-        """累积一个成功的 LabelBuildResult 到 running totals。"""
+        """累积一个成功的 LabelBuildResult 到 running totals."""
+
+        self.add_stats(sample_id, result.stats)
+
+    def add_stats(self, sample_id: str, stats: LabelStats) -> None:
+        """直接用 LabelStats 累积 —— 用于跨进程 worker，只回传 stats
+        而不是完整 LabelBuildResult（picking 全 SealSample 列表代价高）。
+
+        Phase C 并发路径：worker 内部 build_seal_samples + 写文件后只把
+        ``result.stats`` 通过 ProcessPoolExecutor 回传，主进程 dispatch
+        进这里。
+        """
 
         self.n_processed += 1
-        s = result.stats
-        self.total_samples += s.total_samples
-        self.total_positives += s.n_positives
-        self.total_negatives += s.n_negatives
-        self.n_groups += s.n_groups
-        self.n_groups_without_positive += s.n_groups_without_positive
-        self.n_skipped_missing_component += s.n_skipped_missing_component
-        self.n_skipped_optional_pin += s.n_skipped_optional_pin
+        self.total_samples += stats.total_samples
+        self.total_positives += stats.n_positives
+        self.total_negatives += stats.n_negatives
+        self.n_groups += stats.n_groups
+        self.n_groups_without_positive += stats.n_groups_without_positive
+        self.n_skipped_missing_component += stats.n_skipped_missing_component
+        self.n_skipped_optional_pin += stats.n_skipped_optional_pin
         self.n_skipped_forbidden_pin_no_violation += (
-            s.n_skipped_forbidden_pin_no_violation
+            stats.n_skipped_forbidden_pin_no_violation
         )
-        self.n_skipped_extract_error += s.n_skipped_extract_error
-        for k, v in s.by_source.items():
+        self.n_skipped_extract_error += stats.n_skipped_extract_error
+        for k, v in stats.by_source.items():
             self.by_source[k] = self.by_source.get(k, 0) + v
-        for k, v in s.by_task_type.items():
+        for k, v in stats.by_task_type.items():
             self.by_task_type[k] = self.by_task_type.get(k, 0) + v
         # sample_id 暂不记录到 manifest（避免巨大文件），P1 dataset_builder
         # 可独立维护 sample_id → file_path 索引
