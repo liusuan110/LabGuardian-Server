@@ -109,6 +109,44 @@ from app.domain.gnn.seal_subgraph import (
     extract_subgraphs_for_floating_ports,
     extract_subgraphs_for_observed_edges,
 )
+
+# P2 PyG bridge — guarded behind torch/PyG availability so callers that
+# only need the schema / label_builder / dataset_builder layers (which are
+# pure Python) can import this package even on a CPU-only / no-extras box.
+try:
+    from app.domain.gnn.backbone import (
+        HeteroNodeEncoder,
+        HeteroSAGEBackbone,
+        embeddings_for_subgraph,
+    )
+    from app.domain.gnn.model import CircuitMatchNet
+    from app.domain.gnn.pretrain_dataset import SpiceNetlistPretrainDataset
+    from app.domain.gnn.pyg_converter import (
+        encode_component_features,
+        encode_net_features,
+        encode_port_features,
+        encode_port_net_edge_features,
+        seal_subgraph_to_pyg_data,
+        to_hetero_data,
+    )
+    from app.domain.gnn.pyg_dataset import (
+        FlatSealDataset,
+        RefEntry,
+        RefRegistry,
+        reconstruct_cur_hcg,
+    )
+    from app.domain.gnn.seal_dgcnn import SealDGCNN, predict_prob
+    from app.domain.gnn.spicenetlist_loader import (
+        COMPONENT_TYPE_MAP,
+        SpiceNetlistCircuit,
+        load_circuit_json,
+        load_spicenetlist_dir,
+    )
+
+    _PYG_AVAILABLE = True
+except ImportError:  # torch / torch_geometric not installed
+    _PYG_AVAILABLE = False
+
 from app.domain.gnn.splits import (
     DatasetSplits,
     SplitsError,
@@ -232,6 +270,31 @@ __all__ = [
     "build_splits",
     "write_splits",
     "load_splits",
+    # P2 PyG (guarded — only importable if torch + torch_geometric extras)
+    "to_hetero_data",
+    "encode_component_features",
+    "encode_port_features",
+    "encode_net_features",
+    "encode_port_net_edge_features",
+    "seal_subgraph_to_pyg_data",
+    "RefEntry",
+    "RefRegistry",
+    "FlatSealDataset",
+    "reconstruct_cur_hcg",
+    # P2.5 SpiceNetlist pretrain
+    "SpiceNetlistCircuit",
+    "load_circuit_json",
+    "load_spicenetlist_dir",
+    "COMPONENT_TYPE_MAP",
+    "SpiceNetlistPretrainDataset",
+    "SealDGCNN",
+    "predict_prob",
+    # P3 multi-task wrapper
+    "CircuitMatchNet",
+    # P3.1 L1 HeteroConv backbone (standalone module, integration deferred)
+    "HeteroNodeEncoder",
+    "HeteroSAGEBackbone",
+    "embeddings_for_subgraph",
     # P4 stubs
     "GNNAdvisor",
     "should_use_gnn",

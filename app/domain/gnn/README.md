@@ -1,6 +1,6 @@
 # `app.domain.gnn` · GNN-assisted Graph Comparator
 
-**Status: P1 Phase C in progress (splits + resume + CLI driver landed; 12 operators × 4 fixtures = 600 sample / 30 s smoke run green).**
+**Status: P3.1 ✅ — L1 HeteroConv backbone module + ablation harness landed; baseline 15-epoch run hit val F1 = 0.923, top-3 = 1.000. P3.2 = L1↔SEAL integration + aux heads.**
 Full plan: `~/.claude/plans/labguardian-server-glowing-galaxy.md`.
 
 ## What this module is
@@ -151,6 +151,208 @@ preconditions aren't met (e.g. `power_swapped` on a circuit with no VCC).
     gate failed (manifest still on disk for diagnosis), 4 = splits error
   - Smoke-tested end-to-end: 600 samples / 0 failures / pos_neg_ratio ≈
     1.07, train=405 / val=45 / test=150 (opamp held out).
+
+### ✅ P1 acceptance — 4 × 600 = 2400 sample dataset
+
+Generated via `scripts/gnn_generate_dataset.py --workers 4 --base-seed 0`:
+
+| Metric | Value |
+|---|---|
+| Samples processed | 2400 |
+| Failures | 0 |
+| pos_neg_ratio | 1.08 |
+| Total labeled rows | 33518 |
+| Avg rows per sample build | 14.0 |
+| Required LabelSources covered | 6/6 |
+| Splits | train=1620 / val=180 / test=600 (opamp_buffer held out) |
+| Wall time (4 workers) | 0.78 s |
+
+Reproducibility: same `--base-seed` always emits byte-identical label JSON
+files (cross-process contract enforced by Phase C parity tests).
+Acceptance test (`tests/domain/gnn/test_p1_acceptance.py`) runs a
+scaled-down version of the same plan in CI.
+
+### ✅ P2 — PyG converter + dataset loader (plan §二 / §三 / §三.6)
+- `pyg_converter.py`
+  - `to_hetero_data(hcg)` — HCG → `HeteroData` with three node types
+    (`component` / `port` / `net`) and two edge types
+    (`(component, has_port, port)` and `(port, connects, net)`). Feature
+    dims follow §三 (30 / 50 / 11 / 5). `T.ToUndirected()` adds the
+    reverse edges so it feeds a SAGE-style `HeteroConv` directly.
+  - `seal_subgraph_to_pyg_data(sg, cur_hcg, label=..., ...)` — one
+    `SealSubgraph` → one `Data` with node feature layout
+    `DRNL[17] ⊕ port-or-net feat ⊕ target_flag[1]` (rectangular tensor
+    padded to `max(PORT_FEAT_DIM, NET_FEAT_DIM)`). Undirected edges
+    in the subgraph slice. Anchors at `target_port_idx` /
+    `target_net_idx`. Optional string fields (`label_source` /
+    `task_type` / `group_id`) always set with `""` sentinels so PyG
+    `DataLoader` collation never crashes on heterogeneous batches.
+- `pyg_dataset.py`
+  - `RefRegistry` — ref_id → payload path + subtype dict with cached
+    ref_hcg.
+  - `reconstruct_cur_hcg(ref_hcg, cur_metadata, subtypes)` — replays the
+    perturbation from the `seed + perturbation_chain[0]` recorded in the
+    label JSON. Same seed → byte-identical cur_hcg.
+  - `FlatSealDataset(labels_dir, refs, split_entries)` — PyG `Dataset`
+    subclass; `__getitem__` returns one PyG `Data` per `SealSample` row.
+    Index built from disk JSON headers (cheap). cur_hcg replay cached
+    via `functools.lru_cache(maxsize=64)` for hot batching.
+  - Direct compatibility with `torch_geometric.loader.DataLoader`:
+    `DataLoader(ds, batch_size=16)` yields concatenated batches with
+    per-graph `batch` / `ptr` vectors ready to feed the SEAL DGCNN head.
+
+Pyproject extras: `[gnn]` declares `torch>=2.2` + `torch-geometric>=2.5`.
+`app.domain.gnn.__init__` guards the PyG imports behind a `try/except
+ImportError` so the schema / label_builder / dataset_builder layers stay
+importable on boxes without torch installed.
+
+### ✅ P2.5 — SpiceNetlist self-supervised SEAL pretraining
+- `spicenetlist_loader.py` — parses GNN-ACLP's JSON dump
+  (`<id>.json`, 155 circuits in the public release) into
+  `HeteroCircuitGraph` with `side="ref"`. Component-type mapping:
+  MOSFET → Transistor (Drain→Collector / Gate→Base / Source→Emitter),
+  Inductor → UNKNOWN, BJT / Diode / Voltage / Current / IC → faithful.
+  Net "0" is tagged as `role="gnd"` per SPICE convention. Two-pin
+  passives (R / C / Ind / Wire) get the same `symmetry_class_id` on
+  both pins; polar / multi-pin components get distinct classes.
+- `pretrain_dataset.py:SpiceNetlistPretrainDataset` — for each circuit,
+  emit one positive SealSubgraph per observed `(port, net)` edge plus
+  `negatives_per_positive × N_pos` randomly sampled non-edges. Each
+  positive subgraph is extracted with `edge_present=True` so the SEAL
+  extractor excludes the anchor edge from the message-passing
+  neighbourhood (plan §三.6 SEAL contract). `max_pairs_per_circuit` caps
+  per-circuit contribution so dense circuits (237 edges max) don't
+  dominate. Returned as plain `torch.utils.data.Dataset`; PyG
+  `DataLoader` handles collation.
+- `seal_dgcnn.py:SealDGCNN` — plan §四 L2 reference architecture:
+  `[in_channels] → GCN(hidden) → GCN(hidden) → GCN(1) tanh + concat`
+  per-node descriptor → `global_sort_pool(k=30)` → `Conv1d(kernel=2)` →
+  MLP head → scalar logit. Default `hidden=32` keeps the CPU footprint
+  small; `predict_prob(model, batch)` applies sigmoid.
+- `scripts/gnn_pretrain_seal.py` — 5-fold-by-circuit CV training driver
+  with manual `roc_auc` (no sklearn dep). CLI flags:
+  `--spicenetlist-json DIR --output-dir DIR --epochs --folds --batch-size
+  --lr --hidden --sort-k --num-hops --max-pairs-per-circuit
+  --max-circuits --min-auc --cpu --verbose`. Per-fold history + summary
+  JSON written to disk. Exit code 3 if mean AUC < `--min-auc`.
+
+**Measured (full 155 circuits, 5-fold CV, 5 epochs / fold, CPU-only)**:
+
+| Fold | val_auc (best) |
+|---|---|
+| 1 | 1.0000 |
+| 2 | 1.0000 |
+| 3 | 1.0000 |
+| 4 | 1.0000 |
+| 5 | 1.0000 |
+| **mean** | **1.0000** (≥ plan §九 gate 0.95) |
+
+Wall time: **10.8 s** on a single Mac CPU. Smoke test
+(`test_one_epoch_training_decreases_loss`) gates regressions on
+gradient flow.
+
+### ✅ P3 MVP — CircuitMatchNet end-to-end training
+
+- `model.py:CircuitMatchNet` — multi-task wrapper around the P2.5
+  `SealDGCNN` main head. Returns a dict (`{"seal_logits": [B]}`) so
+  later heads can be added without breaking the public interface.
+  Two checkpoint methods:
+  - `from_pretrained_backbone(p2_5_ckpt, strict=False, override_in_channels=…)`
+    loads the SpiceNetlist-pretrained SEAL weights into `seal_head`.
+    Rekey: P2.5's flat `SealDGCNN` state_dict → `seal_head.<param>` here.
+  - `save(path) / load(path)` for P3 fine-tuned checkpoints; carries
+    constructor `config` so the load side reconstructs the right model.
+- `scripts/gnn_train_full.py` — end-to-end driver:
+  - Loads P1 dataset via `FlatSealDataset(labels_dir, refs, splits)`.
+  - Optional `--pretrain-ckpt checkpoints/pretrain_v1/backbone.pt`.
+  - Multi-task: trains BCE on **every** sample (both `WRONG_EDGE` and
+    `MISSING_EDGE`). At eval time, splits results by `task_type`:
+    - **WRONG_EDGE**: F1@0.5 / precision / recall / accuracy / AUC.
+    - **MISSING_EDGE**: groups rows by `group_id`, sorts by predicted
+      probability, computes top-1 / top-3 / top-5 accuracy.
+  - Saves `best_f1.pt` whenever val F1 improves; writes per-epoch
+    history + final summary to `summary.json`.
+  - Exit code 3 if both val gates fail (`--min-f1`, `--min-top3`).
+
+**Measured (15 epochs, 4 refs × 600 P1 samples, backbone loaded, CPU)**:
+
+| Metric | Train | Val (best) | Test (opamp held out) | Plan §九 gate |
+|---|---|---|---|---|
+| **WRONG_EDGE F1** | — | **0.923** | 0.619 | ≥ 0.88 ✅ |
+| WRONG_EDGE AUC | — | 0.975 | 0.711 | — |
+| **MISSING_EDGE top-3** | — | **1.000** | 0.400 | ≥ 0.85 ✅ |
+| MISSING_EDGE top-1 | — | 0.818 (peak) | 0.400 | — |
+| BCE train loss | 0.29 (ep 14) | 0.24 | 0.88 | — |
+| Wall time | ~3 min (CPU) | — | — | — |
+
+Both plan §九 P3 gates met on val. Test (OOD UA741) shows expected
+generalisation gap — addressable via plan §十 mitigations (more
+training fixtures, domain adaptation, aux heads). Reproduce with:
+
+```sh
+python -m scripts.gnn_train_full \
+    --dataset-dir datasets/circuit_compare \
+    --pretrain-ckpt checkpoints/pretrain_v1/backbone.pt \
+    --output-dir checkpoints/p3_v1 \
+    --epochs 15 --batch-size 128 --lr 1e-3 \
+    --min-f1 0.88 --min-top3 0.85 -v
+```
+
+**P3 follow-up scope** (not in MVP):
+- L1 shared `HeteroConv` backbone (replaces raw port/net features with
+  128-dim embeddings before SEAL DGCNN, per plan §四 L1). **P3.1 ships
+  the module** (`backbone.py`) ready for integration; SEAL head wiring
+  deferred (changes SEAL input dim 68→146, breaks P2.5 transfer, needs
+  sample-level dataloader).
+- L4 auxiliary heads: `graph_similarity` / `error_type` / `hotspot` /
+  `progress_score`. Requires extending `label_builder` to emit
+  graph-level GT.
+- Cross-topology test improvement (add more training-time fixtures so
+  the UA741 OOD gap closes).
+
+### ✅ P3.1 — L1 backbone module + ablation harness
+
+- `backbone.py:HeteroNodeEncoder` — per-type Linear → tanh →
+  `hidden_dim` (default 128), one head each for component / port / net.
+- `backbone.py:HeteroSAGEBackbone` — plan §四 L1 reference: 3 stacked
+  `HeteroConv(SAGEConv)` layers with residual + per-type LayerNorm +
+  ReLU + dropout. Consumes the `HeteroData` from `to_hetero_data` after
+  `ToUndirected()` adds reverse edges. Returns `z_comp / z_port / z_net`
+  ready to be sliced via `embeddings_for_subgraph(z, port_ids, net_ids,
+  hetero_data_node_ids)` for each `SealSubgraph`.
+- `--no-drnl` flag on `scripts/gnn_train_full.py` (and matching
+  `drop_drnl` kwarg on `seal_subgraph_to_pyg_data` /
+  `FlatSealDataset`) — zeros the DRNL one-hot slice so the model
+  trains on identical input dims but without DRNL structural signal.
+- `scripts/gnn_ablation.py` — orchestrator that drives 3 configs in
+  sequence:
+  - `baseline` — P2.5 backbone loaded, DRNL on
+  - `no_pretrain` — random-init `SealDGCNN`
+  - `no_drnl` — P2.5 backbone loaded, DRNL slice zeroed
+  - (`no_port` deferred — requires schema rewrite to component-net
+    bipartite)
+  Each config runs `train_full.main` and the runner aggregates per-config
+  val/test metrics into `ablation_report.md` with verdicts:
+  `pretrain ≥ +5%` and `DRNL ≥ +3%` against plan §九 expectations.
+
+**Reproduce**:
+
+```sh
+python -m scripts.gnn_ablation \
+    --dataset-dir datasets/circuit_compare \
+    --pretrain-ckpt checkpoints/pretrain_v1/backbone.pt \
+    --output-dir checkpoints/p3_ablation \
+    --epochs 10 -v
+```
+
+Ablation results live in `checkpoints/p3_ablation/ablation_report.md`
+after the run completes.
+
+**P3.2 still pending**:
+- Wire L1 backbone into a sample-level dataloader → SEAL head
+  (replaces raw port/net dims with 128-d L1 embeddings).
+- Implement `no_port` ablation (component-net bipartite).
+- L4 auxiliary heads (graph_similarity / error_type / hotspot).
 
 ### ✅ P0.8 — Label builder + ref↔cur alignment
 - `alignment.py` — `ComponentAlignment` carries ref↔cur `source_id` maps for

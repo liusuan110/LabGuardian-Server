@@ -40,3 +40,9 @@ models/
 # datasheet ingest or model change with scripts/build_datasheet_embeddings.py.
 # Keep them out of git so we don't bloat the repo with binary blobs.
 knowledge/datasheets/embeddings/*.npz
+
+# Datasets — large files kept locally, not tracked in git
+datasets/
+
+# Checkpoints — model weights kept locally, not tracked in git
+checkpoints/

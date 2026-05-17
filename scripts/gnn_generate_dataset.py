@@ -97,22 +97,23 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "payload_path": str(FIXTURES_DIR / "test_opamp_buffer_v1.json"),
         },
     ],
-    # Plan tuned so identity/positives + wrong_observed/negatives stay healthy
-    # (pos_neg_ratio gate is [0.3, 3.0])
+    # P1 acceptance plan: 600 samples / ref × 4 refs = 2400 total. Tuned so
+    # pos_neg_ratio stays in the [0.3, 3.0] gate and every required source
+    # actually fires on at least one ref. Sums to 600 exactly.
     "plan": {
         "counts": {
-            "identity": 15,
-            "pin_swap_symmetric": 10,
-            "wrong_connection": 25,
-            "pin_reversed": 15,
-            "missing_component": 10,
-            "extra_component": 15,
-            "floating_net": 10,
-            "short_circuit": 10,
-            "power_swapped": 5,
-            "input_output_swapped": 5,
-            "extra_wire_bridge": 10,
-            "chained": 20,
+            "identity": 80,
+            "pin_swap_symmetric": 40,
+            "wrong_connection": 90,
+            "pin_reversed": 40,
+            "missing_component": 40,
+            "extra_component": 50,
+            "floating_net": 50,
+            "short_circuit": 50,
+            "power_swapped": 25,
+            "input_output_swapped": 25,
+            "extra_wire_bridge": 50,
+            "chained": 60,
         },
     },
     # Plan §五: hold out one ref entirely so test ≡ new topology
