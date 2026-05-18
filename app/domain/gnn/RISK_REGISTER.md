@@ -127,7 +127,7 @@ torch on CPU + ~50 nodes.
 | **R2** | When GNN advice has ≥ 1 edge with `p_correct < 0.3` **and** rule says pass, set `report.summary.gnn.disagreement_with_rule=True` + emit a `WARN_GNN_DISAGREES_WITH_RULE` advisory item (does NOT flip `logic_correct`). | Orchestrator (P4.1 §六) | **P0** | ✅ shipped — `_maybe_attach_gnn_advice` (`orchestrator.py`); 3 new tests in `test_p4_inference.py` (20 total); R2 column now in evaluator `report.md` |
 | **R3** | Add `gnn_assisted_strict` opt-in mode: `logic_correct = rule AND (no edge below threshold)` — for downstream graders that want zero false_pass at the cost of false_fail. | Orchestrator | P2 | 🧪 experimental — revisit only if R1 (Position B) falls short |
 | **R4** | Tighten `input_output_swapped` perturbation to only apply on non-symmetric op-amp roles (or relabel as `expected_outcome="positive"` when symmetric). | Dataset builder | P2 | 🧪 experimental — see RULE_SEMANTICS §4 Q2 |
-| **R5** | Add `scripts/gnn_eval_nightly.sh` to CI nightly so any regression in false_pass surfaces immediately. | CI / build | P1 | 🟢 **ready to wire** — both splits now exit 0 (`rule_accuracy=1.0000`); CI integration unblocked. |
+| **R5** | Add `scripts/gnn_eval_nightly.sh` to CI nightly so any regression in false_pass surfaces immediately. | CI / build | P1 | ✅ shipped (2026-05-18) — `.github/workflows/gnn-eval-nightly.yml` (schedule + push + manual dispatch) + `docs/CI_NIGHTLY.md` (incl. self-hosted cron alternative). Exit-code contract pinned by 6 tests in `tests/scripts/test_gnn_eval_nightly.py` (including a live happy-path smoke when artifacts present). Soft skip (exit 4) on fresh checkout so CI doesn't fail-loud until dataset/ckpt secrets are wired. |
 
 ---
 

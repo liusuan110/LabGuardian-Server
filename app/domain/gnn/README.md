@@ -1,6 +1,6 @@
 # `app.domain.gnn` · GNN-assisted Graph Comparator
 
-**Status: P5 ✅ + P4.1 R2 ✅ + R1 (Position B + §6 + R6) ✅ — Plan §八 red line MET on both splits with 100% rule accuracy: `rule_false_pass_rate = 0.0000` AND `rule_false_fail_rate = 0.0000` on test AND val. SEAL F1 0.9953 (test) / 0.9791 (val) maintained. Nightly script `bash scripts/gnn_eval_nightly.sh` exits 0 — CI wiring (R5) unblocked. 501 tests green.**
+**Status: P5 ✅ + P4.1 R2 ✅ + R1 (Position B + §6 + R6) ✅ + R5 CI ✅ — Plan §八 red line MET on both splits with 100% rule accuracy. Nightly evaluator wired into GitHub Actions (schedule + push + manual dispatch) with self-hosted cron alternative; exit-code contract (0/2/3/4) pinned by 6 tests. See [`docs/CI_NIGHTLY.md`](../../../docs/CI_NIGHTLY.md). 507 tests green.**
 Full plan: `~/.claude/plans/labguardian-server-glowing-galaxy.md`.
 
 ## What this module is

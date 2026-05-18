@@ -1,36 +1,69 @@
 #!/usr/bin/env bash
-# scripts/gnn_eval_nightly.sh — repeatable manual / cron entry point for
-# the P5 evaluator. Wraps `python -m scripts.gnn_eval` with the project
-# defaults the team agreed on (plan §八 false_pass red line, current
-# best ckpt, dual-split eval).
+# scripts/gnn_eval_nightly.sh — repeatable CI / cron / manual entry point
+# for the P5 evaluator. Wraps `python -m scripts.gnn_eval` with the
+# project defaults the team agreed on (plan §八 false_pass red line,
+# current best ckpt, dual-split eval).
 #
 # Usage:
 #   bash scripts/gnn_eval_nightly.sh                  # default ckpt + both splits
 #   bash scripts/gnn_eval_nightly.sh path/to/ckpt.pt  # alt ckpt
 #
+# Environment overrides:
+#   LABEL_DIR           dataset labels root (default: datasets/circuit_compare/labels)
+#   FALSE_PASS_GATE     threshold for exit-3 (default: 0.005, plan §八 red line)
+#   PYTHON              python interpreter (default: python3)
+#   SKIP_IF_MISSING_DATA  "1" (default) → exit 4 when dataset or ckpt absent;
+#                       "0" → exit 2 (treat as hard failure). CI defaults to
+#                       SKIP_IF_MISSING_DATA=1 so fresh checkouts don't fail.
+#
 # Exit codes:
 #   0   both splits passed gate
+#   2   eval crashed / bad args (hard failure)
 #   3   at least one split exceeded false_pass_gate (caller should alert)
-#   2   eval crashed / bad args
+#   4   skipped: required data / checkpoint missing (soft skip — not a regression)
 #
 # Wires into:
-#   - checkpoints/p5_eval/             (held-out test split)
-#   - checkpoints/p5_eval_val/         (in-distribution val split)
+#   - checkpoints/p5_eval/             (held-out test split, with GNN)
+#   - checkpoints/p5_eval_val/         (in-distribution val split, with GNN)
 #   - checkpoints/p5_eval_rule_only/   (rule-only baseline for diffs)
 #
-# Per RISK_REGISTER §5 R5, this is the cron-runnable surface. Wire it
-# into CI nightly once the false_pass red line is repaired (R1).
+# See docs/CI_NIGHTLY.md for wiring this into CI (GitHub Actions / cron).
+# See RISK_REGISTER.md §5 R5 for the rationale.
 
 set -euo pipefail
 
 CKPT="${1:-checkpoints/p3_followup_v2/best_f1.pt}"
 LABEL_DIR="${LABEL_DIR:-datasets/circuit_compare/labels}"
+SPLITS_DIR="${SPLITS_DIR:-datasets/circuit_compare/splits}"
 FALSE_PASS_GATE="${FALSE_PASS_GATE:-0.005}"
 PYTHON="${PYTHON:-python3}"
+SKIP_IF_MISSING_DATA="${SKIP_IF_MISSING_DATA:-1}"
 
-if [ ! -d "${LABEL_DIR}" ]; then
-    echo "ERROR: label-dir not found: ${LABEL_DIR}" >&2
-    exit 2
+# ---- Pre-flight: graceful skip when artifacts are missing ----------------
+# CI on a fresh checkout has neither the generated dataset nor the trained
+# checkpoint. We want exit 4 ("skip, not failure") in that case so the
+# nightly job stays green until somebody seeds those artifacts.
+
+missing=()
+[ -d "${LABEL_DIR}" ] || missing+=("LABEL_DIR=${LABEL_DIR}")
+[ -f "${SPLITS_DIR}/test.json" ] || missing+=("test split=${SPLITS_DIR}/test.json")
+[ -f "${SPLITS_DIR}/val.json" ] || missing+=("val split=${SPLITS_DIR}/val.json")
+[ -f "${CKPT}" ] || missing+=("ckpt=${CKPT}")
+
+if [ ${#missing[@]} -gt 0 ]; then
+    echo "⏭  gnn_eval_nightly: skipping — missing required artifact(s):"
+    for m in "${missing[@]}"; do echo "     - ${m}"; done
+    echo
+    echo "   To seed locally:"
+    echo "     python -m scripts.gnn_generate_dataset    # builds the dataset + splits"
+    echo "     python -m scripts.gnn_train_full          # produces best_f1.pt"
+    echo "     bash scripts/gnn_eval_nightly.sh          # re-run this"
+    if [ "${SKIP_IF_MISSING_DATA}" = "1" ]; then
+        exit 4
+    else
+        echo "   SKIP_IF_MISSING_DATA=0 → treating as hard failure"
+        exit 2
+    fi
 fi
 
 mkdir -p checkpoints/p5_eval checkpoints/p5_eval_val checkpoints/p5_eval_rule_only
@@ -60,17 +93,17 @@ run_split () {
 }
 
 run_split "test (held-out opamp_buffer) + GNN" \
-    "datasets/circuit_compare/splits/test.json" \
+    "${SPLITS_DIR}/test.json" \
     "checkpoints/p5_eval" \
     --ckpt "${CKPT}"
 
 run_split "val (in-distribution refs) + GNN" \
-    "datasets/circuit_compare/splits/val.json" \
+    "${SPLITS_DIR}/val.json" \
     "checkpoints/p5_eval_val" \
     --ckpt "${CKPT}"
 
 run_split "test rule-only baseline" \
-    "datasets/circuit_compare/splits/test.json" \
+    "${SPLITS_DIR}/test.json" \
     "checkpoints/p5_eval_rule_only"
 
 echo
