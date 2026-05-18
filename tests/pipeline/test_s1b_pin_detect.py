@@ -216,6 +216,34 @@ class TestBoardGeometryPins:
         assert sorted(pin["pin_id"] for pin in pins if pin["metadata"]["row_lock"] == "e") == [1, 2, 3, 4]
         assert sorted(pin["pin_id"] for pin in pins if pin["metadata"]["row_lock"] == "f") == [5, 6, 7, 8]
 
+    def test_ic_column_selection_centers_inside_covered_bbox(self):
+        from app.pipeline.stages.s1b_pin_detect import _try_board_logic_layout
+
+        class _Calibrator:
+            is_grid_ready = True
+            landscape = True
+            row_coords = np.asarray([1, 2, 3, 4, 5, 6, 7, 8], dtype=np.float32)
+
+            def frame_pixel_to_board_point(self, x, y):
+                return (x, y)
+
+            def logic_to_board_point(self, logic):
+                col_label, row_label = logic
+                return (float(col_label), 0.0 if row_label == "e" else 1.0)
+
+            def board_point_to_frame_pixel(self, x, y):
+                return (x, y)
+
+        layout = _try_board_logic_layout(
+            bbox=(1.0, 0.0, 6.0, 1.0),
+            half=4,
+            calibrator=_Calibrator(),
+            top_image=None,
+        )
+
+        assert layout is not None
+        assert layout["digit_column_labels"] == ["2", "3", "4", "5"]
+
     def test_potentiometer_bbox_fallback_snaps_to_legal_triplet(self, blank_image_b64):
         from app.pipeline.stages.s1b_pin_detect import run_pin_detect
         from app.pipeline.vision.calibrator import BreadboardCalibrator

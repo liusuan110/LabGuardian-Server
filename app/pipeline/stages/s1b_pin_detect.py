@@ -1517,23 +1517,39 @@ def _try_board_logic_layout(
     coords = np.asarray(row_coords, dtype=np.float32)
     if coords.size < half:
         return None
-    # 选 half 个相邻数字列 (列号连续), 让该列窗口与 bbox 数字列投影 [lo,hi] 的 1D IoU 最大.
-    # 与旧的"bbox 中点选窗口"相比, IoU 对 bbox 单侧含 label / 留白偏移更鲁棒.
-    best_start = 0
-    best_key: tuple[float, float] = (-1.0, -float("inf"))
-    for start in range(coords.size - half + 1):
+    max_start = coords.size - half
+    eps = 1e-6
+
+    # bbox 覆盖超过目标列数时，优先居中选取，避免贴边错位。
+    inside_starts: list[int] = []
+    for start in range(max_start + 1):
         win_lo = float(coords[start])
         win_hi = float(coords[start + half - 1])
-        inter = max(0.0, min(win_hi, bbox_hi) - max(win_lo, bbox_lo))
-        union = max(win_hi, bbox_hi) - min(win_lo, bbox_lo)
-        iou = inter / union if union > 1e-6 else 0.0
-        win_center = 0.5 * (win_lo + win_hi)
-        # Tiebreaker: prefer the window whose center is closer to the bbox center
-        # (covers degenerate cases where every window has IoU 0 — bbox far outside).
-        key = (iou, -abs(win_center - bbox_center))
-        if key > best_key:
-            best_key = key
-            best_start = start
+        if win_lo >= bbox_lo - eps and win_hi <= bbox_hi + eps:
+            inside_starts.append(start)
+
+    if inside_starts:
+        best_start = min(
+            inside_starts,
+            key=lambda start: abs(
+                0.5 * (float(coords[start]) + float(coords[start + half - 1])) - bbox_center
+            ),
+        )
+    else:
+        # Fallback: bbox 太窄或没有完整窗口时，保留旧的 1D IoU 最大逻辑。
+        best_start = 0
+        best_key: tuple[float, float] = (-1.0, -float("inf"))
+        for start in range(max_start + 1):
+            win_lo = float(coords[start])
+            win_hi = float(coords[start + half - 1])
+            inter = max(0.0, min(win_hi, bbox_hi) - max(win_lo, bbox_lo))
+            union = max(win_hi, bbox_hi) - min(win_lo, bbox_lo)
+            iou = inter / union if union > 1e-6 else 0.0
+            win_center = 0.5 * (win_lo + win_hi)
+            key = (iou, -abs(win_center - bbox_center))
+            if key > best_key:
+                best_key = key
+                best_start = start
 
     digit_column_labels = [str(best_start + i + 1) for i in range(half)]
     e_board_points: list[tuple[float, float]] = []
