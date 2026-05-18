@@ -1,6 +1,6 @@
 # `app.domain.gnn` · GNN-assisted Graph Comparator
 
-**Status: P4 MVP ✅ — GNNAdvisor wired into orchestrator. `report.summary.gnn` field appears alongside the rule verdict; rule still owns `logic_correct`. Inference 22 ms on 4-edge divider, zero regression on the 29 existing compare tests, 17 new P4 tests green.**
+**Status: P5 ✅ + P4.1 R2 ✅ — Evaluator emits plan §八 metric table; orchestrator now emits `WARN_GNN_DISAGREES_WITH_RULE` advisory items when rule says pass + GNN says wrong (catches 100% of `extra_component` / `input_output_swapped` false_passes). Red line still breached (`rule_false_pass_rate = 0.3057`) — fix requires R1 rule-semantics work tracked in [`app/domain/compare/RULE_SEMANTICS.md`](../compare/RULE_SEMANTICS.md). Nightly: `bash scripts/gnn_eval_nightly.sh`. 495 tests green (488 → 495).**
 Full plan: `~/.claude/plans/labguardian-server-glowing-galaxy.md`.
 
 ## What this module is
@@ -675,6 +675,123 @@ synchronous orchestrator integration viable.
   is soft — logs warning, returns result anyway)
 - Plan §七 full 6-trigger logic with a proper `CompareContext`
   dataclass populated from the orchestrator's intermediate state
+
+### ✅ P5 — Offline evaluator + plan §八 metric table + risk register
+
+End-to-end evaluator that runs both the rule comparator and the
+`GNNAdvisor` over a labelled dataset slice and emits the plan §八
+metric table.
+
+- `app/domain/gnn/evaluator.py:evaluate_split()` — load `splits/{train,val,test}.json`,
+  reconstruct each cur HCG via `reconstruct_cur_hcg`, run
+  `compare_logical_graphs` + `GNNAdvisor.advise`, aggregate into
+  `EvaluationReport` (false_pass / false_fail / SEAL AUC / F1 / accuracy /
+  runtime mean+p95 / per-perturbation breakdown / rule↔GNN disagreement
+  counts). `EvaluationReport.to_markdown()` renders a plan-§八-style
+  table with ✅ / ⚠️ gate markers.
+- `scripts/gnn_eval.py` — CLI wrapper. Exit code 3 if `rule_false_pass_rate`
+  exceeds the red line (default 0.005). Writes `metrics.json` + `report.md`.
+- `tests/domain/gnn/test_p5_evaluator.py` — 11 tests: rule-only path,
+  combined==rule invariant, manual-count cross-check, JSON round-trip,
+  markdown render, multi-ref aggregation, advisor smoke (skip if torch
+  missing).
+
+**Reproduce**:
+
+```bash
+python -m scripts.gnn_eval \
+    --label-dir datasets/circuit_compare/labels \
+    --split datasets/circuit_compare/splits/test.json \
+    --ckpt checkpoints/p3_followup_v2/best_f1.pt \
+    --output checkpoints/p5_eval --verbose
+```
+
+**Results on held-out `opamp_buffer` (600 samples)**:
+
+| metric | value | plan §八 gate |
+|---|---|---|
+| SEAL AUC | 0.9993 | ≥ 0.92 ✅ |
+| SEAL F1 | 0.9953 | ≥ 0.88 ✅ |
+| rule_false_pass_rate | **0.3057** | ≤ 0.005 ⚠️ **red-line breach** |
+| rule_false_fail_rate | 0.0000 | ≤ 0.05 ✅ |
+| rule runtime (CPU, mean) | 0.19 ms | — |
+| GNN advise (CPU, mean) | 1.01 ms | < 100 ms ✅ |
+| rule↔GNN disagreements | 113 / 600 | — |
+
+The false_pass breach is a **definitional mismatch** between the rule
+path's `equivalent_with_extra` semantics (treats extra components +
+input/output-symmetric op-amp swaps as `logic_correct=True`) and the
+dataset_builder's strict `expected_outcome` labelling. The GNN
+advisor correctly flags every one of these cases (SEAL F1 = 0.995)
+but per plan §一 cannot override the rule. Full root-cause analysis +
+P4.1 remediation list in [`RISK_REGISTER.md`](RISK_REGISTER.md).
+
+**P5 pending** (deferred to P6 / P4.1):
+- GraphMatcher runtime −50% measurement (needs P4.1 seed-mapping wiring)
+- Real-student-netlist domain-adaptation snapshot (needs ingestion pipeline)
+- CI nightly wiring of `scripts/gnn_eval_nightly.sh` (deferred until R1 closes false_pass gap so CI doesn't fail-loud forever)
+
+### ✅ P4.1 R2 — Rule↔GNN disagreement advisory item (plan §六)
+
+When the rule path returns `logic_correct=True` but the GNN advisor
+flagged at least one edge with `p_correct < 0.3`, the orchestrator now:
+
+1. sets `report.summary.gnn.disagreement_with_rule = True`
+2. appends a new `WARN_GNN_DISAGREES_WITH_RULE` item (severity
+   `"warning"`, family `gnn_advisory`) into `result["items"]` +
+   `result["report"]["items"]`
+3. **does NOT touch** `logic_correct` / `is_correct` / `is_match`
+   (plan §一 hard rule)
+
+Threshold (`_GNN_WRONG_EDGE_P_FLOOR = 0.3`) is stricter than the
+SEAL decision threshold (0.5) — borderline edges no longer spam the
+report. The fail-direction (rule fail + GNN pass) is intentionally
+**not** flagged; it's not actionable for the false_pass red line and
+would inflate noise on legitimate broken circuits.
+
+Tests: `tests/domain/gnn/test_p4_inference.py` adds 3 R2 cases
+(consistent advice → no warning; injected low-confidence advice →
+exactly one warning, logic_correct stays True; rule_fail → no
+warning regardless). 20 P4 tests green total.
+
+Evaluator integration: `EvaluationReport` now reports `n_r2_warnings`
++ a per-perturbation `R2-warn rate` column. On the held-out test
+split: 79 / 600 R2 warnings, all on `extra_component` (50) +
+`input_output_swapped` (25) + 4 chained — perfect recall on
+false_pass cases.
+
+### 🟡 P4.1 R1 — Rule semantics tightening (in design)
+
+The false_pass red line cannot close without rule-path changes
+(`equivalent_with_extra` is by design too lenient for graders that
+treat any deviation as an error). Design tracker at
+[`app/domain/compare/RULE_SEMANTICS.md`](../compare/RULE_SEMANTICS.md)
+— three positions enumerated (Strict / Match-aware / Configurable),
+recommendation pending curriculum review on whether extras on signal
+nets are ever real errors. R3 (`strict_gnn` opt-in) and R4
+(perturbation realism) are marked experimental and only revisited if
+R1 falls short.
+
+### ✅ P5 quality refactor
+
+Quality improvements made on top of the P5 MVP:
+
+- **single-pass advisor**: `_evaluate_sample` now captures raw SEAL
+  scores when it visits each sample, so `evaluate_split` no longer
+  needs a second `_collect_seal_scores` pass over the dataset (the
+  previous version doubled advisor invocation cost). The
+  `test_single_pass_evaluator_calls_advisor_once_per_sample` test
+  monkey-patches `advise()` with a counter to verify.
+- **R2 fields on the report**: `n_r2_warnings`,
+  `by_perturbation_r2_warning_rate`, and a new markdown section so
+  the operator can read disagreement signal at a glance.
+- **CLI `--split=` / `--split=ALL`**: empty string or the literal
+  `ALL` now means "walk the whole label-dir" — useful for one-off
+  full-dataset audits without authoring an extra splits json.
+- **`scripts/gnn_eval_nightly.sh`**: bash wrapper that runs test +
+  val + rule-only baseline in one shot, summarises false_pass / SEAL
+  F1 / R2 counts. Manual today (`bash scripts/gnn_eval_nightly.sh`);
+  CI wiring waits on R1.
 
 ### ✅ P0.8 — Label builder + ref↔cur alignment
 - `alignment.py` — `ComponentAlignment` carries ref↔cur `source_id` maps for

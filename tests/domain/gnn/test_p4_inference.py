@@ -393,3 +393,169 @@ def test_orchestrator_keeps_working_when_payloads_are_none() -> None:
     # No gnn field added
     summary = (result.get("report") or {}).get("summary", {})
     assert "gnn" not in summary
+
+
+# ---------------------------------------------------------------------------
+# P4.1 R2 — disagreement_with_rule warning (plan §六 conflict arbitration)
+# ---------------------------------------------------------------------------
+
+
+def test_orchestrator_disagreement_field_false_when_advice_consistent() -> None:
+    """On a matching circuit the advisor should score every edge well
+    above the 0.3 floor, so ``disagreement_with_rule`` stays False and
+    no warning item is added."""
+
+    from app.domain.compare.orchestrator import compare_logical_graphs
+
+    ref_payload = _ref_payload()
+    cur_netlist = _matching_cur_netlist_v2()
+    ref = logical_reference_to_graph(ref_payload)
+    cur = current_netlist_v2_to_graph(cur_netlist)
+    result = compare_logical_graphs(
+        ref, cur, ref_payload=ref_payload, cur_netlist_v2=cur_netlist,
+    )
+    gnn_block = result["report"]["summary"]["gnn"]
+    assert gnn_block["disagreement_with_rule"] is False
+    assert not any(
+        item.get("error_code") == "WARN_GNN_DISAGREES_WITH_RULE"
+        for item in (result.get("items") or [])
+    )
+    # details mirror also exposes the flag
+    assert result["details"]["gnn"]["disagreement_with_rule"] is False
+    assert result["details"]["gnn"]["n_suspicious_edges"] == 0
+
+
+def test_orchestrator_disagreement_warning_appears_when_gnn_low_confidence(
+    monkeypatch,
+) -> None:
+    """Patch the advisor's ``advise`` to inject a synthetic GNNAdvice
+    with one ``p_correct < 0.3`` edge. The orchestrator must:
+
+    1. set ``disagreement_with_rule=True`` in ``report.summary.gnn``
+    2. add exactly one ``WARN_GNN_DISAGREES_WITH_RULE`` item with
+       ``severity == "warning"``
+    3. **not** flip ``logic_correct`` (plan §一 hard rule)
+    """
+
+    from app.domain.compare.orchestrator import compare_logical_graphs
+
+    GNNAdvisor.reset_singleton()
+    real_advisor = GNNAdvisor.get()
+
+    def _stub_advise(ref_hcg, cur_hcg, *, timeout_ms=300, num_hops=2):  # type: ignore[no-untyped-def]
+        return GNNAdvice(
+            model_version="circuit_match:stub",
+            inference_ms=12.3,
+            n_edges_scored=2,
+            edge_predictions=(
+                {"edge": ["cur_port:R_a.pin1", "cur_net:n_in"],
+                 "p_correct": 0.94, "verdict": "ok"},
+                {"edge": ["cur_port:R_b.pin1", "cur_net:n_mid"],
+                 "p_correct": 0.12, "verdict": "likely_wrong"},
+            ),
+            hotspots=(
+                {"node": "cur_port:R_b.pin1", "score": 0.88,
+                 "hint": "Pin may be wired wrong"},
+            ),
+            graph_similarity=0.53,
+            graph_similarity_confidence=0.42,
+        )
+
+    monkeypatch.setattr(real_advisor, "advise", _stub_advise)
+
+    ref_payload = _ref_payload()
+    cur_netlist = _matching_cur_netlist_v2()
+    ref = logical_reference_to_graph(ref_payload)
+    cur = current_netlist_v2_to_graph(cur_netlist)
+    result = compare_logical_graphs(
+        ref, cur, ref_payload=ref_payload, cur_netlist_v2=cur_netlist,
+    )
+
+    # 1. logic_correct unchanged (rule path won)
+    assert result["logic_correct"] is True
+    assert result["is_correct"] is True
+    assert result["is_match"] is True
+
+    # 2. disagreement_with_rule promoted to True
+    gnn_block = result["report"]["summary"]["gnn"]
+    assert gnn_block["disagreement_with_rule"] is True
+    assert result["details"]["gnn"]["disagreement_with_rule"] is True
+    assert result["details"]["gnn"]["n_suspicious_edges"] == 1
+
+    # 3. exactly one warning item appears at result.items + report.items
+    warnings = [
+        item for item in result["items"]
+        if item.get("error_code") == "WARN_GNN_DISAGREES_WITH_RULE"
+    ]
+    assert len(warnings) == 1
+    warn = warnings[0]
+    assert warn["severity"] == "warning"
+    assert warn["error_family"] == "gnn_advisory"
+    assert "cur_port:R_b.pin1" in str(warn["actual"])
+
+    # Also surfaces in report["items"] (the validator_report_v2 shape)
+    report_warnings = [
+        item for item in result["report"]["items"]
+        if item.get("error_code") == "WARN_GNN_DISAGREES_WITH_RULE"
+    ]
+    assert len(report_warnings) == 1
+
+    # Total count was bumped on the summary
+    assert result["report"]["summary"]["total_item_count"] >= 1
+
+    GNNAdvisor.reset_singleton()
+
+
+def test_orchestrator_disagreement_skipped_when_rule_fails(monkeypatch) -> None:
+    """R2 is **only** about rule_pass + GNN-flags-wrong (the false_pass
+    direction). When the rule already says fail, the warning is moot."""
+
+    from app.domain.compare.orchestrator import compare_logical_graphs
+
+    GNNAdvisor.reset_singleton()
+    real_advisor = GNNAdvisor.get()
+
+    def _stub_advise(ref_hcg, cur_hcg, *, timeout_ms=300, num_hops=2):  # type: ignore[no-untyped-def]
+        return GNNAdvice(
+            model_version="circuit_match:stub",
+            inference_ms=10.0,
+            n_edges_scored=1,
+            edge_predictions=(
+                {"edge": ["cur_port:R_a.pin1", "cur_net:n_in"],
+                 "p_correct": 0.08, "verdict": "likely_wrong"},
+            ),
+            hotspots=(),
+            graph_similarity=0.1,
+            graph_similarity_confidence=0.5,
+        )
+
+    monkeypatch.setattr(real_advisor, "advise", _stub_advise)
+
+    # Construct a clearly-broken cur (different topology)
+    ref_payload = _ref_payload()
+    bad_cur = {
+        "components": [
+            {
+                "component_id": "X1", "component_type": "Resistor",
+                "pins": [{"pin_name": "pin1", "electrical_net_id": "stray"}],
+            },
+        ],
+        "nets": [{"electrical_net_id": "stray", "canonical_name": "stray"}],
+    }
+    ref = logical_reference_to_graph(ref_payload)
+    cur = current_netlist_v2_to_graph(bad_cur)
+    result = compare_logical_graphs(
+        ref, cur, ref_payload=ref_payload, cur_netlist_v2=bad_cur,
+    )
+    # Rule says fail
+    assert result["logic_correct"] is False
+    # disagreement only fires on rule_pass; rule_fail → no warning
+    gnn_block = (result["report"].get("summary") or {}).get("gnn")
+    if gnn_block is not None:  # advisor may have been triggered or not
+        assert gnn_block["disagreement_with_rule"] is False
+    assert not any(
+        item.get("error_code") == "WARN_GNN_DISAGREES_WITH_RULE"
+        for item in (result.get("items") or [])
+    )
+
+    GNNAdvisor.reset_singleton()

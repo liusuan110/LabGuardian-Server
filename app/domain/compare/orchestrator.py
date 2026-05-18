@@ -29,6 +29,13 @@ from .role_inference import (
     _infer_current_net_roles_from_reference,
 )
 
+# P4.1 R2 — disagreement warning thresholds (see RISK_REGISTER.md §5 R2).
+# A wrong-edge call needs `p_correct < _GNN_WRONG_EDGE_P_FLOOR` for the
+# disagreement warning to fire; using a stricter floor than the SEAL
+# decision threshold (0.5) keeps low-noise warnings on borderline edges.
+_GNN_WRONG_EDGE_P_FLOOR = 0.3
+_GNN_DISAGREE_ERROR_CODE = "WARN_GNN_DISAGREES_WITH_RULE"
+
 log = logging.getLogger(__name__)
 
 
@@ -93,11 +100,71 @@ def _maybe_attach_gnn_advice(
         return result
 
     advice_dict = advice.to_report_dict()
+
+    # P4.1 R2 (RISK_REGISTER §5) — only the rule_pass + GNN_flags_wrong_edge
+    # direction is actionable for the false_pass red line. Compute it here
+    # rather than in the advisor so the rule verdict (which the advisor
+    # never sees) is the source of truth.
+    rule_pass = bool(result.get("logic_correct", False))
+    suspicious_edges = [
+        e for e in advice_dict.get("edge_predictions", [])
+        if float(e.get("p_correct", 1.0)) < _GNN_WRONG_EDGE_P_FLOOR
+    ]
+    disagreement = rule_pass and len(suspicious_edges) > 0
+    advice_dict["disagreement_with_rule"] = disagreement
+
     # Stuff into report.summary.gnn (plan §六 validator_report_v2 schema)
     report = dict(result.get("report", {}))
     summary = dict(report.get("summary", {}))
     summary["gnn"] = advice_dict
     report["summary"] = summary
+
+    if disagreement:
+        # Plan §一: NEVER flip logic_correct. severity="warning" keeps the
+        # _dedupe / promotion logic in _enrich_result inert (it only promotes
+        # to logic_correct=False on "error" severity).
+        worst = min(suspicious_edges, key=lambda e: float(e["p_correct"]))
+        warning_item = _item(
+            _GNN_DISAGREE_ERROR_CODE,
+            "gnn_advisory",
+            "warning",
+            (
+                "规则比较器认为电路通过，但 GNN 怀疑有 "
+                f"{len(suspicious_edges)} 条引脚连接异常 "
+                f"(最低 P(edge_correct)={float(worst['p_correct']):.2f})。"
+                "请人工复核高亮的引脚。"
+            ),
+            expected={"rule_logic_correct": True},
+            actual={
+                "gnn_suspicious_edges": [
+                    {
+                        "edge": e["edge"],
+                        "p_correct": float(e["p_correct"]),
+                    }
+                    for e in suspicious_edges
+                ],
+                "gnn_model_version": advice_dict["model_version"],
+            },
+            suggested_action=(
+                "GNN 给出的建议是 advisory，最终判定仍以规则为准。"
+                "若复核发现确为错接，请补充规则或重新训练模型。"
+            ),
+            evidence={
+                "p_floor": _GNN_WRONG_EDGE_P_FLOOR,
+                "inference_ms": advice_dict["inference_ms"],
+            },
+        )
+        report_items = list(report.get("items", []) or [])
+        report_items.append(warning_item)
+        report["items"] = report_items
+        # Bump summary total_item_count so consumers reading report
+        # standalone see the correct count.
+        summary["total_item_count"] = len(report_items)
+
+        result_items = list(result.get("items", []) or [])
+        result_items.append(warning_item)
+        result["items"] = result_items
+
     result["report"] = report
     # Mirror to details so non-report consumers can see it too
     details = dict(result.get("details", {}))
@@ -106,6 +173,8 @@ def _maybe_attach_gnn_advice(
         "model_version": advice_dict["model_version"],
         "inference_ms": advice_dict["inference_ms"],
         "n_edges_scored": advice_dict["n_edges_scored"],
+        "disagreement_with_rule": disagreement,
+        "n_suspicious_edges": len(suspicious_edges),
     }
     result["details"] = details
     return result
