@@ -270,8 +270,15 @@ def current_netlist_v2_to_graph(netlist_v2: dict[str, Any]) -> nx.Graph:
         if not isinstance(comp, dict):
             continue
         ctype = normalize_component_type(comp.get("component_type") or comp.get("type"))
-        if ctype == "Wire":
-            continue
+        # R8 fix (RISK_REGISTER §5): previously this skipped Wire entirely
+        # under the assumption that S3 had already merged the wire's two
+        # endpoints into a single net. That assumption hides stray jumper
+        # wires that physically connect role-critical nets — the rule
+        # comparator could not see them at all. SIM_TO_REAL §"Key
+        # findings" 2 measured 100% false_pass on ``extra_wire_bridge``
+        # from this. Wires are now nodes like any other component;
+        # ``_critical_extra_items`` correctly counts the degree they add
+        # to the role-critical nets they bridge.
         component_id = str(comp.get("component_id") or comp.get("ref_id") or "").strip()
         if not component_id:
             component_id = f"{ctype}_{graph.number_of_nodes()}"

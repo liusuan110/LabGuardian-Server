@@ -68,6 +68,17 @@ def main(argv: list[str] | None = None) -> int:
         help="SEAL head decision threshold (default 0.5)",
     )
     parser.add_argument(
+        "--netlist-dir", type=Path, default=None,
+        help=(
+            "**Sim → real** (plan §十 R6). Path to a directory of "
+            "pre-baked netlist_v2 JSON files, layout "
+            "<dir>/<ref_id>/<sample_id>.json. When set the evaluator "
+            "uses these as the cur side instead of synthesising one "
+            "from the label's perturbation chain. Generate one via "
+            "`python -m scripts.gnn_export_pseudo_real`."
+        ),
+    )
+    parser.add_argument(
         "--limit", type=int, default=None,
         help="cap on samples (smoke test)",
     )
@@ -118,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         advisor=advisor,
         seal_threshold=args.seal_threshold,
         limit=args.limit,
+        netlist_v2_dir=args.netlist_dir,
     )
 
     args.output.mkdir(parents=True, exist_ok=True)

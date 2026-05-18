@@ -568,3 +568,190 @@ class TestR1CriticalExtras:
         )
         # total_item_count reflects the bump
         assert report["summary"]["total_item_count"] >= len(report["items"])
+
+
+# ---------------------------------------------------------------------------
+# R8 — Wire-drop production bug fix (RISK_REGISTER §5, plan §十 R6 follow-up)
+# A stray Wire bridging two role-critical nets must now reach the rule
+# comparator. Previously: dropped by `current_netlist_v2_to_graph` and
+# `_payload_raw_pin_edges_cur`. Now it lands as a cur node + bumps the
+# degree on the bridged nets so `_critical_extra_items` catches it.
+# ---------------------------------------------------------------------------
+
+
+class TestR8WireDropFix:
+    def test_extra_wire_bridges_critical_nets_fails(self) -> None:
+        """Stray Wire between VCC and GND must be detected end-to-end
+        through the production rule path (with payloads)."""
+
+        from app.domain.logical_reference import (
+            current_netlist_v2_to_graph,
+            logical_reference_to_graph,
+        )
+
+        ref_payload = {
+            "format": "logical_reference_v1",
+            "components": [
+                {
+                    "ref_id": "R1",
+                    "type": "Resistor",
+                    "pins": [
+                        {"pin": "pin1", "net": "VCC"},
+                        {"pin": "pin2", "net": "GND"},
+                    ],
+                },
+            ],
+            "nets": [
+                {"net": "VCC", "role": "power", "role_label": "VCC"},
+                {"net": "GND", "role": "ground", "role_label": "GND"},
+            ],
+        }
+        # cur: ref + stray Wire bridging VCC↔GND (a real short).
+        cur_netlist = {
+            "components": [
+                {
+                    "component_id": "R1",
+                    "component_type": "Resistor",
+                    "pins": [
+                        {"pin_name": "pin1", "electrical_net_id": "VCC"},
+                        {"pin_name": "pin2", "electrical_net_id": "GND"},
+                    ],
+                },
+                {
+                    "component_id": "X_Wire_0",
+                    "component_type": "Wire",
+                    "pins": [
+                        {"pin_name": "pin1", "electrical_net_id": "VCC"},
+                        {"pin_name": "pin2", "electrical_net_id": "GND"},
+                    ],
+                },
+            ],
+            "nets": [
+                {"electrical_net_id": "VCC", "manual_role": "power",
+                 "role_label": "VCC"},
+                {"electrical_net_id": "GND", "manual_role": "ground",
+                 "role_label": "GND"},
+            ],
+        }
+        result = compare_logical_graphs(
+            logical_reference_to_graph(ref_payload),
+            current_netlist_v2_to_graph(cur_netlist),
+            ref_payload=ref_payload,
+            cur_netlist_v2=cur_netlist,
+        )
+        assert result["logic_correct"] is False, (
+            "Wire bridging VCC↔GND must fail; previously slipped through "
+            "because Wire was dropped from the cur graph"
+        )
+        # R1 should attribute the failure to critical-extra connections
+        crit = [
+            i for i in result["report"]["items"]
+            if i["error_code"] == "CRITICAL_EXTRA_CONNECTION"
+        ]
+        assert crit, "expected CRITICAL_EXTRA_CONNECTION on power/ground"
+        seen_roles = {i["expected"]["role"] for i in crit}
+        assert seen_roles & {"power", "ground"}
+
+    def test_clean_circuit_with_no_wire_still_passes(self) -> None:
+        """Regression: removing the Wire-skip must not introduce
+        false_fail on circuits that legitimately contain no Wires."""
+
+        from app.domain.logical_reference import (
+            current_netlist_v2_to_graph,
+            logical_reference_to_graph,
+        )
+
+        ref_payload = {
+            "format": "logical_reference_v1",
+            "components": [
+                {
+                    "ref_id": "R1",
+                    "type": "Resistor",
+                    "pins": [
+                        {"pin": "pin1", "net": "VIN"},
+                        {"pin": "pin2", "net": "GND"},
+                    ],
+                },
+            ],
+            "nets": [
+                {"net": "VIN", "role": "input", "role_label": "UI1"},
+                {"net": "GND", "role": "ground", "role_label": "GND"},
+            ],
+        }
+        cur_netlist = {
+            "components": [
+                {
+                    "component_id": "R1",
+                    "component_type": "Resistor",
+                    "pins": [
+                        {"pin_name": "pin1", "electrical_net_id": "VIN"},
+                        {"pin_name": "pin2", "electrical_net_id": "GND"},
+                    ],
+                },
+            ],
+            "nets": [
+                {"electrical_net_id": "VIN", "manual_role": "input",
+                 "role_label": "UI1"},
+                {"electrical_net_id": "GND", "manual_role": "ground",
+                 "role_label": "GND"},
+            ],
+        }
+        result = compare_logical_graphs(
+            logical_reference_to_graph(ref_payload),
+            current_netlist_v2_to_graph(cur_netlist),
+            ref_payload=ref_payload,
+            cur_netlist_v2=cur_netlist,
+        )
+        assert result["logic_correct"] is True
+
+    def test_wire_on_non_critical_signal_net_stays_passing(self) -> None:
+        """Wire bridging two signal-internal nets should NOT trigger
+        R1's critical-extra promotion — Position B only fires on
+        power/ground/input/output."""
+
+        from app.domain.logical_reference import (
+            current_netlist_v2_to_graph,
+            logical_reference_to_graph,
+        )
+
+        ref_payload = {
+            "format": "logical_reference_v1",
+            "components": [
+                {
+                    "ref_id": "R1", "type": "Resistor",
+                    "pins": [{"pin": "pin1", "net": "S_A"},
+                             {"pin": "pin2", "net": "S_B"}],
+                },
+            ],
+            "nets": [
+                {"net": "S_A", "role": "signal"},
+                {"net": "S_B", "role": "signal"},
+            ],
+        }
+        cur_netlist = {
+            "components": [
+                {
+                    "component_id": "R1", "component_type": "Resistor",
+                    "pins": [{"pin_name": "pin1", "electrical_net_id": "S_A"},
+                             {"pin_name": "pin2", "electrical_net_id": "S_B"}],
+                },
+                {
+                    "component_id": "X_Wire_0", "component_type": "Wire",
+                    "pins": [{"pin_name": "pin1", "electrical_net_id": "S_A"},
+                             {"pin_name": "pin2", "electrical_net_id": "S_B"}],
+                },
+            ],
+            "nets": [
+                {"electrical_net_id": "S_A", "manual_role": "signal"},
+                {"electrical_net_id": "S_B", "manual_role": "signal"},
+            ],
+        }
+        result = compare_logical_graphs(
+            logical_reference_to_graph(ref_payload),
+            current_netlist_v2_to_graph(cur_netlist),
+            ref_payload=ref_payload,
+            cur_netlist_v2=cur_netlist,
+        )
+        # equivalent_with_extra path; not flipped to fail
+        assert result["logic_correct"] is True
+        assert result["details"]["match_type"] == "equivalent_with_extra"

@@ -541,9 +541,12 @@ def _payload_raw_pin_edges_cur(netlist_v2: dict[str, Any]) -> list[RawPinEdge]:
         ctype = normalize_component_type(
             comp.get("component_type") or comp.get("type")
         )
-        if ctype == "Wire":
-            # current_netlist_v2_to_graph skips Wire; mirror that here.
-            continue
+        # R8 fix (RISK_REGISTER §5): previously this skipped Wire to
+        # mirror current_netlist_v2_to_graph, but that made stray
+        # jumper wires invisible to the rule path. 100% false_pass on
+        # ``extra_wire_bridge`` was the result (see
+        # docs/SIM_TO_REAL.md). Now we keep them; PACKAGE_PIN_SPECS
+        # has Wire pin1/pin2 specs so the materialize phase works.
         comp_id = str(
             comp.get("component_id") or comp.get("ref_id") or ""
         ).strip()

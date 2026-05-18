@@ -477,7 +477,21 @@ def _evaluate_sample(
     ref_payload_paths: dict[str, Path],
     subtypes_by_ref: dict[str, dict[str, str]],
     seal_threshold: float,
+    netlist_v2_override: dict[str, Any] | None = None,
 ) -> SampleEvaluation | None:
+    """Score one sample against ref.
+
+    Args:
+        netlist_v2_override: when set, **skip** the synthetic
+            ``reconstruct_cur_hcg`` path and treat the override as the
+            cur to compare. Used by the pseudo-real / real-export
+            ingest paths (plan §十 R6) to measure sim→real drift on
+            the same evaluator. The override must carry the same
+            ``component_id`` + ``electrical_net_id`` shape that the
+            label file expected; otherwise SEAL F1 will be measured
+            on a different edge set.
+    """
+
     label = json.loads(label_path.read_text())
     ref_id = label["ref_id"]
     sample_id = label["sample_id"]
@@ -504,21 +518,35 @@ def _evaluate_sample(
         )
     ref_payload, ref_hcg, ref_graph, subtypes = ref_cache[ref_id]
 
-    try:
-        cur_hcg = reconstruct_cur_hcg(
-            ref_hcg, cur_meta, subtype_by_source_id=subtypes
+    if netlist_v2_override is not None:
+        # Pseudo-real / real-export path: load cur from the on-disk
+        # netlist_v2 dict, bypassing reconstruct_cur_hcg.
+        from app.domain.gnn.port_graph import build_from_netlist_v2
+        try:
+            cur_hcg = build_from_netlist_v2(netlist_v2_override)
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "skip %s: build_from_netlist_v2 failed (%s)",
+                sample_id, type(e).__name__,
+            )
+            return None
+        cur_netlist_v2 = netlist_v2_override
+    else:
+        try:
+            cur_hcg = reconstruct_cur_hcg(
+                ref_hcg, cur_meta, subtype_by_source_id=subtypes
+            )
+        except Exception as e:  # noqa: BLE001 — bad sample, skip not crash
+            log.warning(
+                "skip %s: cur reconstruction failed (%s)",
+                sample_id, type(e).__name__,
+            )
+            return None
+        cur_netlist_v2 = _hcg_to_netlist_v2(
+            cur_hcg, subtype_by_source_id=subtypes,
         )
-    except Exception as e:  # noqa: BLE001 — bad sample, skip not crash
-        log.warning(
-            "skip %s: cur reconstruction failed (%s)",
-            sample_id, type(e).__name__,
-        )
-        return None
 
     cur_graph = hcg_to_nx(cur_hcg, target_side="cur")
-    cur_netlist_v2 = _hcg_to_netlist_v2(
-        cur_hcg, subtype_by_source_id=subtypes,
-    )
 
     # ---- Rule path -----------------------------------------------------
     # Pass both ref_payload + cur_netlist_v2 so the rule path runs its
@@ -662,6 +690,7 @@ def evaluate_split(
     subtypes_by_ref: dict[str, dict[str, str]] | None = None,
     seal_threshold: float = 0.5,
     limit: int | None = None,
+    netlist_v2_dir: Path | None = None,
 ) -> EvaluationReport:
     """Run rule comparator + GNN advisor over every sample listed in
     ``split_ids`` (or every label file under ``label_dir`` if None).
@@ -679,6 +708,13 @@ def evaluate_split(
             Defaults to :data:`DEFAULT_SUBTYPES_BY_REF` (UA741 / LM358).
         seal_threshold: SEAL head decision threshold (default 0.5).
         limit: cap on samples; useful for smoke tests.
+        netlist_v2_dir: **Sim → real Phase 1+2** (plan §十 R6). When
+            set, the evaluator looks up ``<dir>/<ref_id>/<sample_id>.json``
+            and uses it as the cur netlist_v2 instead of synthesising one
+            from the perturbation pipeline. Samples without a matching
+            file are skipped. Used to score the pseudo-real corpus
+            produced by ``scripts/gnn_export_pseudo_real.py`` (and the
+            real-export corpus, once it exists).
     """
 
     ref_payload_paths = ref_payload_paths or dict(DEFAULT_REF_PAYLOAD_PATHS)
@@ -694,10 +730,23 @@ def evaluate_split(
 
     ref_cache: dict[str, tuple] = {}
     samples: list[SampleEvaluation] = []
+    n_netlist_missing = 0
 
     for i, label_path in enumerate(label_files):
         if (i + 1) % 100 == 0:
             log.info("evaluate_split: %d / %d", i + 1, len(label_files))
+
+        netlist_override: dict[str, Any] | None = None
+        if netlist_v2_dir is not None:
+            label_doc = json.loads(label_path.read_text())
+            ref_id = label_doc["ref_id"]
+            sample_id = label_doc["sample_id"]
+            netlist_path = netlist_v2_dir / ref_id / f"{sample_id}.json"
+            if not netlist_path.is_file():
+                n_netlist_missing += 1
+                continue
+            netlist_override = json.loads(netlist_path.read_text())
+
         ev = _evaluate_sample(
             label_path,
             advisor=advisor,
@@ -705,10 +754,17 @@ def evaluate_split(
             ref_payload_paths=ref_payload_paths,
             subtypes_by_ref=subtypes_by_ref,
             seal_threshold=seal_threshold,
+            netlist_v2_override=netlist_override,
         )
         if ev is None:
             continue
         samples.append(ev)
+
+    if netlist_v2_dir is not None and n_netlist_missing > 0:
+        log.warning(
+            "evaluate_split: %d / %d samples had no netlist file under %s",
+            n_netlist_missing, len(label_files), netlist_v2_dir,
+        )
 
     # Aggregate -----------------------------------------------------------
     n_total = len(samples)

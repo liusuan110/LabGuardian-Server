@@ -1,6 +1,6 @@
 # `app.domain.gnn` · GNN-assisted Graph Comparator
 
-**Status: P5 ✅ + P4.1 R2 ✅ + R1 (Position B + §6 + R6) ✅ + R5 CI ✅ — Plan §八 red line MET on both splits with 100% rule accuracy. Nightly evaluator wired into GitHub Actions (schedule + push + manual dispatch) with self-hosted cron alternative; exit-code contract (0/2/3/4) pinned by 6 tests. See [`docs/CI_NIGHTLY.md`](../../../docs/CI_NIGHTLY.md). 507 tests green.**
+**Status: P5 ✅ + P4.1 R2 ✅ + R1 ✅ + R5 CI ✅ + R6 Sim→Real ✅ + R8 Wire-drop ✅ — Plan §八 red line MET on synthetic AND across **every** sim→real (profile × split) cell: false_pass = 0.0000 throughout. R8 fix removed the Wire-skip in `_payload_raw_pin_edges_cur` + `current_netlist_v2_to_graph`; stray jumper wires bridging role-critical nets now hit `_critical_extra_items` and flip `logic_correct` correctly. Drift study in [`docs/SIM_TO_REAL.md`](../../../docs/SIM_TO_REAL.md). 528 tests green.**
 Full plan: `~/.claude/plans/labguardian-server-glowing-galaxy.md`.
 
 ## What this module is
