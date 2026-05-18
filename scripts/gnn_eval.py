@@ -68,6 +68,28 @@ def main(argv: list[str] | None = None) -> int:
         help="SEAL head decision threshold (default 0.5)",
     )
     parser.add_argument(
+        "--netlist-dir", type=Path, default=None,
+        help=(
+            "**Sim → real Phase 1+2** (plan §十 R6). Path to a "
+            "directory of pre-baked netlist_v2 JSON files, layout "
+            "<dir>/<ref_id>/<sample_id>.json. When set the evaluator "
+            "uses these as the cur side instead of synthesising one "
+            "from the label's perturbation chain. Generate one via "
+            "`python -m scripts.gnn_export_pseudo_real`."
+        ),
+    )
+    parser.add_argument(
+        "--real-dir", type=Path, default=None,
+        help=(
+            "**Sim → real Phase 3** (plan §十 R6). Path to a "
+            "directory of real student netlist exports, layout "
+            "<dir>/<ref_id>/<sample_id>.json + "
+            "<sample_id>.meta.json. No synthetic label_dir needed. "
+            "Mutually exclusive with --netlist-dir / --split. See "
+            "docs/REAL_STUDENT_NETLIST.md for the schema contract."
+        ),
+    )
+    parser.add_argument(
         "--limit", type=int, default=None,
         help="cap on samples (smoke test)",
     )
@@ -83,21 +105,32 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 
-    if not args.label_dir.is_dir():
-        parser.error(f"--label-dir not found: {args.label_dir}")
-        return 2
-
-    # `--split=` (empty) or `--split=ALL` ⇒ walk the whole label-dir.
-    # Otherwise must point at an existing file.
-    split_arg = (args.split or "").strip()
-    if split_arg in {"", "ALL"}:
-        split_path: Path | None = None
-    else:
-        split_path = Path(split_arg)
-        if not split_path.is_file():
-            parser.error(f"--split path not found: {split_path}")
+    real_mode = args.real_dir is not None
+    if real_mode:
+        if args.netlist_dir is not None:
+            parser.error("--real-dir is mutually exclusive with --netlist-dir")
             return 2
-    split_ids = _parse_split(split_path)
+        if not args.real_dir.is_dir():
+            parser.error(f"--real-dir not found: {args.real_dir}")
+            return 2
+        split_path: Path | None = None
+        split_ids: list[str] | None = None
+    else:
+        if not args.label_dir.is_dir():
+            parser.error(f"--label-dir not found: {args.label_dir}")
+            return 2
+
+        # `--split=` (empty) or `--split=ALL` ⇒ walk the whole label-dir.
+        # Otherwise must point at an existing file.
+        split_arg = (args.split or "").strip()
+        if split_arg in {"", "ALL"}:
+            split_path = None
+        else:
+            split_path = Path(split_arg)
+            if not split_path.is_file():
+                parser.error(f"--split path not found: {split_path}")
+                return 2
+        split_ids = _parse_split(split_path)
 
     advisor = None
     if args.ckpt is not None:
@@ -105,20 +138,37 @@ def main(argv: list[str] | None = None) -> int:
         log.info("loading advisor from %s", args.ckpt)
         advisor = GNNAdvisor.from_checkpoint(args.ckpt)
 
-    log.info(
-        "evaluating split=%s (%s samples) advisor=%s",
-        split_path,
-        len(split_ids) if split_ids else "all",
-        advisor.model_version if advisor else "rule-only",
-    )
+    if real_mode:
+        log.info(
+            "evaluating real corpus at %s (advisor=%s)",
+            args.real_dir,
+            advisor.model_version if advisor else "rule-only",
+        )
+    else:
+        log.info(
+            "evaluating split=%s (%s samples) advisor=%s",
+            split_path,
+            len(split_ids) if split_ids else "all",
+            advisor.model_version if advisor else "rule-only",
+        )
 
-    report = evaluate_split(
-        args.label_dir,
-        split_ids=split_ids,
-        advisor=advisor,
-        seal_threshold=args.seal_threshold,
-        limit=args.limit,
-    )
+    if real_mode:
+        from app.domain.gnn.evaluator import evaluate_real_samples
+        report = evaluate_real_samples(
+            args.real_dir,
+            advisor=advisor,
+            seal_threshold=args.seal_threshold,
+            limit=args.limit,
+        )
+    else:
+        report = evaluate_split(
+            args.label_dir,
+            split_ids=split_ids,
+            advisor=advisor,
+            seal_threshold=args.seal_threshold,
+            limit=args.limit,
+            netlist_v2_dir=args.netlist_dir,
+        )
 
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "metrics.json").write_text(

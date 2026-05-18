@@ -1,0 +1,8 @@
+{
+  "sample_id": "student_0005_pin_swap",
+  "ref_id": "rc_lowpass",
+  "expected_outcome": "positive",
+  "annotation_source": "teacher",
+  "notes": "R1 wired with pin1/pin2 swapped — topologically equivalent for passive resistor, must be accepted as correct.",
+  "perturbation_chain": ["pin_swap_symmetric:R1"]
+}

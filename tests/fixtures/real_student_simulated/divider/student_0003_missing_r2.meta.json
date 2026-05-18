@@ -1,0 +1,8 @@
+{
+  "sample_id": "student_0003_missing_r2",
+  "ref_id": "divider",
+  "expected_outcome": "missing_required",
+  "annotation_source": "teacher",
+  "notes": "Student only placed the upper resistor; the bottom-half-to-GND leg is missing entirely.",
+  "perturbation_chain": ["missing_component:R2"]
+}

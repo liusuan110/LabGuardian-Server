@@ -1,0 +1,8 @@
+{
+  "sample_id": "student_0002_short_to_gnd",
+  "ref_id": "divider",
+  "expected_outcome": "wrong_observed",
+  "annotation_source": "teacher",
+  "notes": "Student added a stray jumper wire bridging VIN directly to GND — would short the supply. R8-fix territory.",
+  "perturbation_chain": ["extra_wire_bridge:VIN->GND"]
+}

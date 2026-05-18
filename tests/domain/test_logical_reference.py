@@ -169,7 +169,14 @@ class TestCurrentNetlistV2ToGraph:
         assert graph.nodes["cur_net:NET_001"]["role"] == "power"
         assert graph.nodes["cur_net:NET_002"]["role"] == "signal"
 
-    def test_skips_wire(self) -> None:
+    def test_keeps_wire_as_node(self) -> None:
+        """R8 fix (RISK_REGISTER §5): Wire components are no longer
+        silently dropped during netlist→graph conversion. They land
+        as regular ``cur_comp:*`` nodes carrying their pin edges so
+        the rule comparator can detect stray jumper wires that
+        bridge role-critical nets (previously: 100% false_pass on
+        ``extra_wire_bridge``; see ``docs/SIM_TO_REAL.md``)."""
+
         graph = current_netlist_v2_to_graph(
             {
                 "components": [
@@ -197,5 +204,9 @@ class TestCurrentNetlistV2ToGraph:
             }
         )
         comp_nodes = [n for n, d in graph.nodes(data=True) if d.get("kind") == "comp"]
-        assert len(comp_nodes) == 1
-        assert "cur_comp:R1" in comp_nodes
+        assert sorted(comp_nodes) == ["cur_comp:R1", "cur_comp:W1"]
+        # Each component contributes 2 edges (one per pin); shared net
+        # nodes collapse them at the nx layer but cur_comp:W1 still
+        # has degree 2 (one edge to each net).
+        assert graph.degree("cur_comp:W1") == 2
+        assert graph.degree("cur_comp:R1") == 2

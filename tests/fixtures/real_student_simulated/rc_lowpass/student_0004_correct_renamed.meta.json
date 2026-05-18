@@ -1,0 +1,8 @@
+{
+  "sample_id": "student_0004_correct_renamed",
+  "ref_id": "rc_lowpass",
+  "expected_outcome": "positive",
+  "annotation_source": "teacher",
+  "notes": "Correct RC lowpass — but vision OCR re-IDed components as Resistor_001/CapacitorCeramic_001 (production-shaped IDs).",
+  "perturbation_chain": []
+}

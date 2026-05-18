@@ -1,6 +1,6 @@
 # `app.domain.gnn` · GNN-assisted Graph Comparator
 
-**Status: P5 ✅ + P4.1 R2 ✅ + R1 (Position B + §6 + R6) ✅ + R5 CI ✅ — Plan §八 red line MET on both splits with 100% rule accuracy. Nightly evaluator wired into GitHub Actions (schedule + push + manual dispatch) with self-hosted cron alternative; exit-code contract (0/2/3/4) pinned by 6 tests. See [`docs/CI_NIGHTLY.md`](../../../docs/CI_NIGHTLY.md). 507 tests green.**
+**Status: P5 ✅ + P4.1 R2 ✅ + R1 ✅ + R5 CI ✅ + R6 Sim→Real ✅ + R8 Wire-drop ✅ + R9 Phase 3 Real-Ingest ✅ — Plan §八 red line MET on synthetic AND across every sim→real (profile × split) cell: false_pass = 0.0000 throughout. R9 ships Phase 3 plumbing: `app/domain/gnn/real_netlist_loader.py` + `evaluator.evaluate_real_samples` + `gnn_eval --real-dir` + nightly auto-pickup; the system is ready to ingest production data the moment it arrives. Smoke validated on 5 hand-rolled fixtures in `tests/fixtures/real_student_simulated/`. See [`docs/REAL_STUDENT_NETLIST.md`](../../../docs/REAL_STUDENT_NETLIST.md). 547 tests green.**
 Full plan: `~/.claude/plans/labguardian-server-glowing-galaxy.md`.
 
 ## What this module is
