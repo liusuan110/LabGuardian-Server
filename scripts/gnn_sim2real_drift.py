@@ -81,11 +81,20 @@ def main(argv: list[str] | None = None) -> int:
     lines.append("")
     lines.append("## Headline matrix")
     lines.append("")
-    lines.append(
-        "| split | metric | synthetic baseline | clean (round-trip)"
-        " | low (confidence noise) | high (full prod noise) |"
-    )
-    lines.append("|---|---|---|---|---|---|")
+    real_metrics = _load(args.baseline_root / "p5_eval_real" / "metrics.json")
+    real_col = real_metrics is not None
+    if real_col:
+        lines.append(
+            "| split | metric | synthetic baseline | clean (round-trip)"
+            " | low (confidence noise) | high (full prod noise) | **real (Phase 3)** |"
+        )
+        lines.append("|---|---|---|---|---|---|---|")
+    else:
+        lines.append(
+            "| split | metric | synthetic baseline | clean (round-trip)"
+            " | low (confidence noise) | high (full prod noise) |"
+        )
+        lines.append("|---|---|---|---|---|---|")
 
     metric_keys = [
         ("rule_false_pass_rate", "rule_false_pass_rate", ".4f"),
@@ -102,12 +111,21 @@ def main(argv: list[str] | None = None) -> int:
             for prof in PROFILES:
                 d = rows.get((prof, split))
                 cells.append(_fmt(d.get(key) if d else None, fmt))
-            lines.append(
+            row = (
                 f"| **{split}** | {label} | {_fmt(base_v, fmt)} | "
                 f"{cells[0]} | {cells[1]} | {cells[2]} |"
             )
+            if real_col:
+                # The real corpus isn't split into test/val by ref —
+                # we report its single aggregated value once, on the
+                # test row (only). Val row leaves the cell empty so
+                # readers don't double-read.
+                real_v = real_metrics.get(key) if split == "test" else None
+                row += f" {_fmt(real_v, fmt)} |"
+            lines.append(row)
         lines.append(
             "| | _separator_ | | | | |"
+            + (" |" if real_col else "")
         )
 
     lines.append("")

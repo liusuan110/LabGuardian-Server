@@ -1,0 +1,42 @@
+{
+  "scene_id": "sim_real_student_0001",
+  "board_schema_id": "breadboard_400tp",
+  "components": [
+    {
+      "component_id": "R_a",
+      "component_type": "Resistor",
+      "package_type": "axial",
+      "part_subtype": "10k",
+      "polarity": "none",
+      "pins": [
+        {"pin_id": 0, "pin_name": "pin1", "hole_id": "B12",
+         "electrical_net_id": "n_in", "confidence": 0.87},
+        {"pin_id": 1, "pin_name": "pin2", "hole_id": "B18",
+         "electrical_net_id": "n_mid", "confidence": 0.89}
+      ],
+      "confidence": 0.91
+    },
+    {
+      "component_id": "R_b",
+      "component_type": "Resistor",
+      "package_type": "axial",
+      "part_subtype": "10k",
+      "polarity": "none",
+      "pins": [
+        {"pin_id": 0, "pin_name": "pin1", "hole_id": "B20",
+         "electrical_net_id": "n_mid", "confidence": 0.90},
+        {"pin_id": 1, "pin_name": "pin2", "hole_id": "B26",
+         "electrical_net_id": "n_gnd", "confidence": 0.88}
+      ],
+      "confidence": 0.92
+    }
+  ],
+  "nets": [
+    {"electrical_net_id": "n_in", "canonical_name": "VIN",
+     "role": "input", "manual_role": "input"},
+    {"electrical_net_id": "n_mid", "canonical_name": "VOUT",
+     "role": "output", "manual_role": "output"},
+    {"electrical_net_id": "n_gnd", "canonical_name": "GND",
+     "role": "ground", "manual_role": "ground", "power_role": "GND"}
+  ]
+}

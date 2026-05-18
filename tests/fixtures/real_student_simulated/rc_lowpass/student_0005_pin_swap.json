@@ -1,0 +1,34 @@
+{
+  "scene_id": "sim_real_student_0005",
+  "board_schema_id": "breadboard_400tp",
+  "components": [
+    {
+      "component_id": "R1",
+      "component_type": "Resistor",
+      "pins": [
+        {"pin_id": 0, "pin_name": "pin2", "hole_id": "C5",
+         "electrical_net_id": "n_07"},
+        {"pin_id": 1, "pin_name": "pin1", "hole_id": "C11",
+         "electrical_net_id": "n_05"}
+      ]
+    },
+    {
+      "component_id": "C1",
+      "component_type": "CapacitorCeramic",
+      "pins": [
+        {"pin_id": 0, "pin_name": "pin1", "hole_id": "D11",
+         "electrical_net_id": "n_05"},
+        {"pin_id": 1, "pin_name": "pin2", "hole_id": "D17",
+         "electrical_net_id": "n_03"}
+      ]
+    }
+  ],
+  "nets": [
+    {"electrical_net_id": "n_07", "canonical_name": "VIN",
+     "role": "input", "manual_role": "input"},
+    {"electrical_net_id": "n_05", "canonical_name": "VOUT",
+     "role": "output", "manual_role": "output"},
+    {"electrical_net_id": "n_03", "canonical_name": "GND",
+     "role": "ground", "manual_role": "ground", "power_role": "GND"}
+  ]
+}

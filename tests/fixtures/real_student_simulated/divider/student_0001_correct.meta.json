@@ -1,0 +1,8 @@
+{
+  "sample_id": "student_0001_correct",
+  "ref_id": "divider",
+  "expected_outcome": "positive",
+  "annotation_source": "teacher",
+  "notes": "Reference divider built correctly — R1 between VIN/VOUT, R2 between VOUT/GND. Used as Phase 3 simulated-real positive baseline.",
+  "perturbation_chain": []
+}

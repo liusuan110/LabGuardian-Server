@@ -1,0 +1,38 @@
+{
+  "scene_id": "sim_real_student_0004",
+  "board_schema_id": "breadboard_400tp",
+  "components": [
+    {
+      "component_id": "Resistor_001",
+      "component_type": "Resistor",
+      "package_type": "axial",
+      "part_subtype": "1k",
+      "pins": [
+        {"pin_id": 0, "pin_name": "pin1", "hole_id": "C5",
+         "electrical_net_id": "n_07", "confidence": 0.71},
+        {"pin_id": 1, "pin_name": "pin2", "hole_id": "C11",
+         "electrical_net_id": "n_05", "confidence": 0.72}
+      ]
+    },
+    {
+      "component_id": "CapacitorCeramic_001",
+      "component_type": "CapacitorCeramic",
+      "package_type": "radial",
+      "part_subtype": "100nF",
+      "pins": [
+        {"pin_id": 0, "pin_name": "pin1", "hole_id": "D11",
+         "electrical_net_id": "n_05", "confidence": 0.74},
+        {"pin_id": 1, "pin_name": "pin2", "hole_id": "D17",
+         "electrical_net_id": "n_03", "confidence": 0.71}
+      ]
+    }
+  ],
+  "nets": [
+    {"electrical_net_id": "n_07", "canonical_name": "VIN",
+     "role": "input", "manual_role": "input"},
+    {"electrical_net_id": "n_05", "canonical_name": "VOUT",
+     "role": "output", "manual_role": "output"},
+    {"electrical_net_id": "n_03", "canonical_name": "GND",
+     "role": "ground", "manual_role": "ground", "power_role": "GND"}
+  ]
+}

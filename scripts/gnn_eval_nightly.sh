@@ -106,9 +106,40 @@ run_split "test rule-only baseline" \
     "${SPLITS_DIR}/test.json" \
     "checkpoints/p5_eval_rule_only"
 
+# Phase 3 (plan §十 R6) — optional real student corpus eval. Runs only
+# when REAL_DIR points at an existing directory; otherwise silently
+# skips so existing CI doesn't fail-loud before any real data arrives.
+REAL_DIR="${REAL_DIR:-datasets/real_student}"
+if [ -d "${REAL_DIR}" ] && [ -n "$(find "${REAL_DIR}" -name '*.meta.json' -print -quit 2>/dev/null)" ]; then
+    echo
+    echo "=== [real student corpus + GNN] ${REAL_DIR} -> checkpoints/p5_eval_real ==="
+    mkdir -p checkpoints/p5_eval_real
+    set +e
+    "${PYTHON}" -m scripts.gnn_eval \
+        --real-dir "${REAL_DIR}" \
+        --ckpt "${CKPT}" \
+        --output "checkpoints/p5_eval_real" \
+        --false-pass-gate "${FALSE_PASS_GATE}"
+    rc=$?
+    set -e
+    if [ ${rc} -ne 0 ] && [ ${rc} -ne 3 ]; then
+        echo "FATAL: real eval crashed (exit ${rc})" >&2
+        exit 2
+    fi
+    if [ ${rc} -eq 3 ] && [ ${worst_exit} -lt 3 ]; then
+        worst_exit=3
+    fi
+fi
+
 echo
 echo "=== Summary ==="
-for d in checkpoints/p5_eval checkpoints/p5_eval_val checkpoints/p5_eval_rule_only; do
+SUMMARY_DIRS=(
+    checkpoints/p5_eval
+    checkpoints/p5_eval_val
+    checkpoints/p5_eval_rule_only
+    checkpoints/p5_eval_real
+)
+for d in "${SUMMARY_DIRS[@]}"; do
     if [ -f "${d}/metrics.json" ]; then
         false_pass=$("${PYTHON}" -c "import json,sys; d=json.load(open('${d}/metrics.json')); print(f\"{d['rule_false_pass_rate']:.4f}\")")
         seal=$("${PYTHON}" -c "import json,sys; d=json.load(open('${d}/metrics.json')); v=d.get('seal_edge_f1'); print(f\"{v:.4f}\" if v is not None else 'n/a')")

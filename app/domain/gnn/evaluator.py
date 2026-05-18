@@ -915,10 +915,318 @@ def evaluate_split(
     )
 
 
+# ---------------------------------------------------------------------------
+# Phase 3 (plan §十 R6) — score real student samples
+# ---------------------------------------------------------------------------
+
+
+def _evaluate_real_sample(
+    real_sample,
+    *,
+    advisor: GNNAdvisor | None,
+    ref_cache: dict[str, tuple[dict[str, Any], HeteroCircuitGraph, nx.Graph, dict[str, str]]],
+    ref_payload_paths: dict[str, Path],
+    subtypes_by_ref: dict[str, dict[str, str]],
+    seal_threshold: float,
+) -> SampleEvaluation | None:
+    """Score a single :class:`RealSample` against its ref.
+
+    Mirrors the synthetic ``_evaluate_sample`` flow but doesn't try
+    to reconstruct a cur from a perturbation chain — the cur is the
+    on-disk netlist_v2 the loader handed us. SEAL F1 measurement is
+    skipped (real samples don't ship with per-edge labels yet); the
+    rule comparator and GNN advisor still run end-to-end.
+    """
+
+    from app.domain.gnn.port_graph import build_from_netlist_v2
+
+    ref_id = real_sample.ref_id
+    sample_id = real_sample.sample_id
+    expected_positive = real_sample.expected_outcome == "positive"
+
+    if ref_id not in ref_cache:
+        try:
+            ref_cache[ref_id] = _build_ref_artifacts(
+                ref_id, ref_payload_paths, subtypes_by_ref,
+            )
+        except KeyError:
+            log.warning(
+                "skip %s: no ref payload registered for ref_id=%r",
+                sample_id, ref_id,
+            )
+            return None
+    ref_payload, ref_hcg, ref_graph, _subtypes = ref_cache[ref_id]
+
+    try:
+        cur_hcg = build_from_netlist_v2(real_sample.netlist_v2)
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "skip %s: build_from_netlist_v2 failed (%s)",
+            sample_id, type(e).__name__,
+        )
+        return None
+
+    cur_graph = hcg_to_nx(cur_hcg, target_side="cur")
+    cur_netlist_v2 = real_sample.netlist_v2
+
+    t0 = time.time()
+    rule_result = compare_logical_graphs(
+        ref_graph,
+        cur_graph,
+        ref_payload=ref_payload,
+        cur_netlist_v2=cur_netlist_v2,
+    )
+    rule_ms = (time.time() - t0) * 1000
+
+    # GNN scores — reuse the orchestrator-internal block when present
+    gnn_ms: float | None = None
+    n_edges_scored = 0
+    gnn_mean: float | None = None
+    gnn_min: float | None = None
+    gnn_predicted_positive: bool | None = None
+    n_suspicious_edges = 0
+    if advisor is not None:
+        gnn_block = (
+            (rule_result.get("report") or {})
+            .get("summary", {})
+            .get("gnn")
+        )
+        from app.domain.gnn import GNNAdvice as _AdviceCls
+
+        if gnn_block:
+            advice = _AdviceCls(
+                model_version=gnn_block["model_version"],
+                inference_ms=gnn_block["inference_ms"],
+                n_edges_scored=gnn_block["n_edges_scored"],
+                edge_predictions=tuple(
+                    gnn_block.get("edge_predictions", [])
+                ),
+                hotspots=tuple(gnn_block.get("hotspots", [])),
+                graph_similarity=gnn_block.get("graph_similarity", 0.0),
+                graph_similarity_confidence=gnn_block.get(
+                    "graph_similarity_confidence", 0.0
+                ),
+            )
+            gnn_ms = advice.inference_ms
+        else:
+            t1 = time.time()
+            advice = advisor.advise(ref_hcg, cur_hcg, timeout_ms=2000)
+            gnn_ms = (time.time() - t1) * 1000
+
+        if advice is not None:
+            n_edges_scored = advice.n_edges_scored
+            probs = [
+                float(e["p_correct"]) for e in advice.edge_predictions
+            ]
+            if probs:
+                gnn_mean = sum(probs) / len(probs)
+                gnn_min = min(probs)
+                gnn_predicted_positive = all(
+                    p >= seal_threshold for p in probs
+                )
+                n_suspicious_edges = sum(
+                    1 for p in probs if p < _GNN_WRONG_EDGE_P_FLOOR
+                )
+            else:
+                gnn_predicted_positive = True
+                gnn_mean = 1.0
+                gnn_min = 1.0
+
+    rule_correct = bool(rule_result.get("logic_correct", False))
+    return SampleEvaluation(
+        sample_id=sample_id,
+        ref_id=ref_id,
+        expected_positive=expected_positive,
+        perturbation_chain=real_sample.perturbation_chain,
+        rule_logic_correct=rule_correct,
+        rule_similarity=float(rule_result.get("similarity", 0.0)),
+        rule_match_type=str(
+            (rule_result.get("details") or {}).get("match_type", "")
+        ),
+        rule_runtime_ms=rule_ms,
+        gnn_inference_ms=gnn_ms,
+        n_edges_scored=n_edges_scored,
+        gnn_mean_p_correct=gnn_mean,
+        gnn_min_p_correct=gnn_min,
+        gnn_predicted_positive=gnn_predicted_positive,
+        combined_logic_correct=rule_correct,
+        n_observed_edge_labels=0,        # real samples have no SEAL labels
+        n_correct_observed_edge_preds=0,
+        observed_edge_scores=(),
+        observed_edge_labels=(),
+        n_suspicious_edges=n_suspicious_edges,
+    )
+
+
+def evaluate_real_samples(
+    real_dir: Path,
+    *,
+    advisor: GNNAdvisor | None = None,
+    ref_payload_paths: dict[str, Path] | None = None,
+    subtypes_by_ref: dict[str, dict[str, str]] | None = None,
+    seal_threshold: float = 0.5,
+    limit: int | None = None,
+) -> EvaluationReport:
+    """**Phase 3 (plan §十 R6)** — score a corpus of real student
+    netlist exports living under ``real_dir``.
+
+    The corpus layout matches what
+    :mod:`app.domain.gnn.real_netlist_loader` expects::
+
+        <real_dir>/<ref_id>/<sample_id>.json          (netlist_v2)
+        <real_dir>/<ref_id>/<sample_id>.meta.json     (ref_id + outcome)
+
+    Returns the same :class:`EvaluationReport` shape as
+    :func:`evaluate_split` so the existing markdown + drift-table
+    pipelines keep working. SEAL F1 fields stay ``None`` because real
+    samples don't carry per-edge labels (that's a follow-up — teachers
+    can label individual edges later).
+    """
+
+    from app.domain.gnn.real_netlist_loader import load_real_samples
+
+    ref_payload_paths = ref_payload_paths or dict(DEFAULT_REF_PAYLOAD_PATHS)
+    subtypes_by_ref = subtypes_by_ref or dict(DEFAULT_SUBTYPES_BY_REF)
+
+    real_samples, load_stats = load_real_samples(real_dir, limit=limit)
+    if not real_samples:
+        raise ValueError(
+            f"no usable real samples found under {real_dir} "
+            f"(loaded={load_stats.n_loaded}, "
+            f"skipped_no_meta={load_stats.n_skipped_no_meta}, "
+            f"skipped_bad_outcome={load_stats.n_skipped_bad_outcome}, "
+            f"skipped_invalid_schema={load_stats.n_skipped_invalid_schema})"
+        )
+
+    ref_cache: dict = {}
+    samples: list[SampleEvaluation] = []
+    for rs in real_samples:
+        ev = _evaluate_real_sample(
+            rs,
+            advisor=advisor,
+            ref_cache=ref_cache,
+            ref_payload_paths=ref_payload_paths,
+            subtypes_by_ref=subtypes_by_ref,
+            seal_threshold=seal_threshold,
+        )
+        if ev is not None:
+            samples.append(ev)
+
+    # Aggregate — reuses the synthetic evaluator's tallying logic so
+    # the report shape is identical. We compute it inline rather than
+    # extracting a helper to keep the diff minimal.
+    n_total = len(samples)
+    n_neg = sum(1 for s in samples if not s.expected_positive)
+    n_pos = n_total - n_neg
+    rule_fp = sum(
+        1 for s in samples
+        if s.rule_logic_correct and not s.expected_positive
+    )
+    rule_ff = sum(
+        1 for s in samples
+        if (not s.rule_logic_correct) and s.expected_positive
+    )
+    rule_correct = sum(
+        1 for s in samples
+        if s.rule_logic_correct == s.expected_positive
+    )
+    by_ref: dict[str, int] = defaultdict(int)
+    by_pert: dict[str, int] = defaultdict(int)
+    pert_fp: dict[str, int] = defaultdict(int)
+    pert_ff: dict[str, int] = defaultdict(int)
+    pert_neg: dict[str, int] = defaultdict(int)
+    pert_pos: dict[str, int] = defaultdict(int)
+    pert_r2_warn: dict[str, int] = defaultdict(int)
+    n_r2_warnings = 0
+    for s in samples:
+        by_ref[s.ref_id] += 1
+        op = (
+            s.perturbation_chain[0].split(":", 1)[0]
+            if s.perturbation_chain else "identity"
+        )
+        by_pert[op] += 1
+        if s.expected_positive:
+            pert_pos[op] += 1
+            if not s.rule_logic_correct:
+                pert_ff[op] += 1
+        else:
+            pert_neg[op] += 1
+            if s.rule_logic_correct:
+                pert_fp[op] += 1
+        if s.rule_logic_correct and s.n_suspicious_edges > 0:
+            n_r2_warnings += 1
+            pert_r2_warn[op] += 1
+
+    rule_rts = [s.rule_runtime_ms for s in samples]
+    gnn_rts = [
+        s.gnn_inference_ms for s in samples
+        if s.gnn_inference_ms is not None
+    ]
+    n_dis = sum(
+        1 for s in samples
+        if s.gnn_predicted_positive is not None
+        and s.rule_logic_correct != s.gnn_predicted_positive
+    )
+    n_dis_rp_gf = sum(
+        1 for s in samples
+        if s.gnn_predicted_positive is False and s.rule_logic_correct is True
+    )
+    n_dis_rf_gp = sum(
+        1 for s in samples
+        if s.gnn_predicted_positive is True and s.rule_logic_correct is False
+    )
+
+    return EvaluationReport(
+        n_samples=n_total,
+        by_ref_id=dict(by_ref),
+        by_perturbation=dict(by_pert),
+        seal_edge_n=0,
+        seal_edge_auc=None,
+        seal_edge_f1=None,
+        seal_edge_precision=None,
+        seal_edge_recall=None,
+        seal_edge_accuracy=None,
+        rule_false_pass_rate=rule_fp / max(1, n_neg),
+        rule_false_fail_rate=rule_ff / max(1, n_pos),
+        rule_accuracy=rule_correct / max(1, n_total),
+        combined_false_pass_rate=rule_fp / max(1, n_neg),
+        combined_false_fail_rate=rule_ff / max(1, n_pos),
+        combined_accuracy=rule_correct / max(1, n_total),
+        rule_runtime_ms_mean=sum(rule_rts) / max(1, len(rule_rts)),
+        rule_runtime_ms_p95=_percentile(rule_rts, 95),
+        gnn_runtime_ms_mean=(
+            sum(gnn_rts) / len(gnn_rts) if gnn_rts else None
+        ),
+        gnn_runtime_ms_p95=_percentile(gnn_rts, 95) if gnn_rts else None,
+        n_disagreements=n_dis,
+        n_disagreements_rule_pass_gnn_fail=n_dis_rp_gf,
+        n_disagreements_rule_fail_gnn_pass=n_dis_rf_gp,
+        n_r2_warnings=n_r2_warnings,
+        advisor_unavailable=advisor is None,
+        advisor_version=(
+            getattr(advisor, "model_version", None) if advisor else None
+        ),
+        by_perturbation_false_pass={
+            op: pert_fp[op] / pert_neg[op]
+            for op in pert_neg if pert_neg[op] > 0
+        },
+        by_perturbation_false_fail={
+            op: pert_ff[op] / pert_pos[op]
+            for op in pert_pos if pert_pos[op] > 0
+        },
+        by_perturbation_r2_warning_rate={
+            op: pert_r2_warn[op] / by_pert[op]
+            for op in by_pert if by_pert[op] > 0
+        },
+        samples=tuple(samples),
+    )
+
+
 __all__ = [
     "SampleEvaluation",
     "EvaluationReport",
     "evaluate_split",
+    "evaluate_real_samples",
     "DEFAULT_REF_PAYLOAD_PATHS",
     "DEFAULT_SUBTYPES_BY_REF",
 ]
