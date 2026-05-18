@@ -28,6 +28,24 @@ val split — both far above plan §八's 0.5% red line.**
 Per plan §一, GNN never overrides `logic_correct`, so
 combined_false_pass == rule_false_pass (advisory cannot "save" the gate).
 
+**Update 2026-05-18 — Post R1 (Position B + §6 follow-up + R6)**
+
+After shipping (a) `_critical_extra_items` + `_promote_critical_extras`
+in the rule path, (b) `_hcg_to_netlist_v2` adapter so the evaluator
+invokes the full production rule path (with `_enrich_result` pin-level
+checks), and (c) R6 — `test_all_signal_v1` enrichment + supporting
+role_label / role_source / pin_role normalization propagation:
+
+| split | rule false_pass | rule false_fail | rule accuracy | R2 warnings | SEAL F1 |
+|---|---|---|---|---|---|
+| test | **0.0000 ✅** | **0.0000 ✅** | **1.0000** | 0 | 0.9953 |
+| val | **0.0000 ✅** | **0.0000 ✅** | **1.0000** | 0 | 0.9791 |
+| test rule-only baseline | **0.0000 ✅** | **0.0000 ✅** | **1.0000** | 0 | n/a |
+
+**Both splits now meet the plan §八 red line (`false_pass ≤ 0.005`)**
+with **zero false_fail regression**. Nightly script (`bash
+scripts/gnn_eval_nightly.sh`) exits 0, ready for CI wiring.
+
 ---
 
 ## 2 · Root cause — per-perturbation breakdown
@@ -105,11 +123,11 @@ torch on CPU + ~50 nodes.
 
 | # | Action | Owner | Priority | Status |
 |---|---|---|---|---|
-| **R1** | Re-examine `equivalent_with_extra` semantics in `compare_logical_graphs` — promote to `logic_correct=False` when extra connects to a role-critical net (vcc/gnd/input/output). Three positions enumerated in [`app/domain/compare/RULE_SEMANTICS.md`](../compare/RULE_SEMANTICS.md). | Rule path | **P0 (red-line breach)** | 🟡 design doc opened, awaits curriculum review |
+| **R1** | Re-examine `equivalent_with_extra` semantics in `compare_logical_graphs` — promote to `logic_correct=False` when extra connects to a role-critical net (vcc/gnd/input/output). Three positions enumerated in [`app/domain/compare/RULE_SEMANTICS.md`](../compare/RULE_SEMANTICS.md). | Rule path | **P0 (red-line breach)** | ✅ Position B shipped (2026-05-18): `_critical_extra_items` + `_promote_critical_extras` in `app/domain/compare/`. **false_pass test 0.3057 → 0.1514, val 0.2363 → 0.0970** (zero false_fail regression). Residual `input_output_swapped` + `floating_net` tracked as Position B follow-up in RULE_SEMANTICS §6. |
 | **R2** | When GNN advice has ≥ 1 edge with `p_correct < 0.3` **and** rule says pass, set `report.summary.gnn.disagreement_with_rule=True` + emit a `WARN_GNN_DISAGREES_WITH_RULE` advisory item (does NOT flip `logic_correct`). | Orchestrator (P4.1 §六) | **P0** | ✅ shipped — `_maybe_attach_gnn_advice` (`orchestrator.py`); 3 new tests in `test_p4_inference.py` (20 total); R2 column now in evaluator `report.md` |
 | **R3** | Add `gnn_assisted_strict` opt-in mode: `logic_correct = rule AND (no edge below threshold)` — for downstream graders that want zero false_pass at the cost of false_fail. | Orchestrator | P2 | 🧪 experimental — revisit only if R1 (Position B) falls short |
 | **R4** | Tighten `input_output_swapped` perturbation to only apply on non-symmetric op-amp roles (or relabel as `expected_outcome="positive"` when symmetric). | Dataset builder | P2 | 🧪 experimental — see RULE_SEMANTICS §4 Q2 |
-| **R5** | Add `scripts/gnn_eval_nightly.sh` to CI nightly so any regression in false_pass surfaces immediately. | CI / build | P1 | ✅ runnable manually (just `bash scripts/gnn_eval_nightly.sh`); CI nightly wiring deferred until R1 closes the false_pass gap |
+| **R5** | Add `scripts/gnn_eval_nightly.sh` to CI nightly so any regression in false_pass surfaces immediately. | CI / build | P1 | 🟢 **ready to wire** — both splits now exit 0 (`rule_accuracy=1.0000`); CI integration unblocked. |
 
 ---
 
@@ -120,7 +138,7 @@ torch on CPU + ~50 nodes.
 | 离线 evaluator (`evaluator.py`) | ✅ — `app/domain/gnn/evaluator.py` (461 LOC) |
 | Ablation table | ✅ — already in `checkpoints/p3_followup_ablation/ablation_report.md` (P3 deliverable) |
 | 风险报告 | ✅ — this document |
-| `false_pass ≤ 0.5%` gate | ⚠️ **0.3057 measured** — see R1/R2/R3 above |
+| `false_pass ≤ 0.5%` gate | **test ✅ 0.0000** + **val ✅ 0.0000** after R1 (Position B + §6 follow-up + R6 + supporting bug-fixes). Both splits exit 0 in the nightly script. |
 | `GraphMatcher runtime −50%` | ❌ not measured — requires P4.1 seed-mapping integration (`_find_isomorphism(..., seed_node_mapping=advice.top1_component_mapping)` does not yet pass the seed). Tracked as P4.1 follow-up |
 
 The red-line breach on `false_pass_rate` is **a measurement

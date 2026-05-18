@@ -270,3 +270,116 @@ def test_markdown_renders_r2_section():
     assert "would-emit warnings" in md
     # Per-perturbation table now has 5 columns including R2-warn rate
     assert "R2-warn rate" in md
+
+
+# ---------------------------------------------------------------------------
+# P5 §6 follow-up — evaluator now runs the production rule path with
+# _enrich_result pin-level checks. The adapter must round-trip subtype
+# info (UA741 / LM358) so the inner GNN hook sees the same port_type
+# vector as the explicit advise() fallback.
+# ---------------------------------------------------------------------------
+
+
+def test_hcg_to_netlist_v2_roundtrip_preserves_ids():
+    """The adapter must emit a netlist_v2 whose build_from_netlist_v2
+    yields a cur_hcg with the same port + net source_ids as the input.
+    Without this guarantee, the orchestrator's GNN hook (which builds
+    its own cur_hcg from the netlist) would score different edges
+    than the SEAL label files expect."""
+
+    from app.domain.gnn.evaluator import (
+        DEFAULT_SUBTYPES_BY_REF,
+        _build_ref_artifacts,
+        _hcg_to_netlist_v2,
+    )
+    from app.domain.gnn.port_graph import build_from_netlist_v2
+    from app.domain.gnn.pyg_dataset import reconstruct_cur_hcg
+
+    split_ids = _pick_label_ids("opamp_buffer", k=1)
+    if not split_ids:
+        pytest.skip("opamp_buffer fixtures not generated")
+    label = json.loads(
+        (LABEL_ROOT / f"{split_ids[0]}.json").read_text()
+    )
+    cur_meta = label["cur_metadata"]
+    _, ref_hcg, _, subtypes = _build_ref_artifacts(
+        label["ref_id"],
+        {"opamp_buffer": Path(
+            "tests/fixtures/references/test_opamp_buffer_v1.json"
+        )},
+        DEFAULT_SUBTYPES_BY_REF,
+    )
+    cur_hcg = reconstruct_cur_hcg(
+        ref_hcg, cur_meta, subtype_by_source_id=subtypes,
+    )
+    cur_v2 = _hcg_to_netlist_v2(cur_hcg, subtype_by_source_id=subtypes)
+    cur_hcg_2 = build_from_netlist_v2(cur_v2)
+
+    orig_edges = {
+        (e.src_port_id, e.dst_net_id) for e in cur_hcg.edges
+    }
+    rt_edges = {
+        (e.src_port_id, e.dst_net_id) for e in cur_hcg_2.edges
+    }
+    assert orig_edges == rt_edges, (
+        "round-trip lost edges — SEAL F1 will degrade because the "
+        "orchestrator-internal cur_hcg won't match label file IDs"
+    )
+
+
+def test_hcg_to_netlist_v2_omitting_subtypes_loses_ic_port_types(monkeypatch):
+    """Sanity check: forgetting to pass subtype_by_source_id makes IC
+    pins lose their UA741/LM358 port_type (regression guard for the
+    bug found while shipping §6 follow-up — SEAL F1 fell from 0.99 to
+    0.70 because the orchestrator-internal cur_hcg had generic pin
+    roles)."""
+
+    from app.domain.gnn.evaluator import (
+        DEFAULT_SUBTYPES_BY_REF,
+        _build_ref_artifacts,
+        _hcg_to_netlist_v2,
+    )
+    from app.domain.gnn.port_graph import build_from_netlist_v2
+    from app.domain.gnn.pyg_dataset import reconstruct_cur_hcg
+
+    split_ids = _pick_label_ids("opamp_buffer", k=1)
+    if not split_ids:
+        pytest.skip("opamp_buffer fixtures not generated")
+    label = json.loads(
+        (LABEL_ROOT / f"{split_ids[0]}.json").read_text()
+    )
+    cur_meta = label["cur_metadata"]
+    _, ref_hcg, _, subtypes = _build_ref_artifacts(
+        label["ref_id"],
+        {"opamp_buffer": Path(
+            "tests/fixtures/references/test_opamp_buffer_v1.json"
+        )},
+        DEFAULT_SUBTYPES_BY_REF,
+    )
+    cur_hcg = reconstruct_cur_hcg(
+        ref_hcg, cur_meta, subtype_by_source_id=subtypes,
+    )
+
+    # WITH subtypes — IC ports get specific port_type
+    with_v2 = _hcg_to_netlist_v2(cur_hcg, subtype_by_source_id=subtypes)
+    with_hcg = build_from_netlist_v2(with_v2)
+    ua741_ports_with = {
+        p.port_type for p in with_hcg.ports.values()
+        if p.parent_ctype == "IC"
+    }
+
+    # WITHOUT subtypes — IC ports fall back to generic
+    without_v2 = _hcg_to_netlist_v2(cur_hcg)
+    without_hcg = build_from_netlist_v2(without_v2)
+    ua741_ports_without = {
+        p.port_type for p in without_hcg.ports.values()
+        if p.parent_ctype == "IC"
+    }
+
+    # The "with subtype" set must include the specific op-amp port types
+    # that the "without" set lacks.
+    assert ua741_ports_with != ua741_ports_without
+    assert any(
+        pt in ua741_ports_with
+        for pt in ("non_inverting_input", "inverting_input", "output")
+    )

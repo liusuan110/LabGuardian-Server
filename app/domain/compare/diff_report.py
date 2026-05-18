@@ -28,7 +28,7 @@ def _item(error_code: str, error_family: str, severity: str, message: str, *, ex
 
 
 def _default_title(error_code: str) -> str:
-    return {"PIN_ROLE_MISMATCH": "功能引脚错误", "SHORT_CIRCUIT": "短路", "ROLE_LABEL_MISMATCH": "端口标签错误", "UNSUPPORTED_REFERENCE_FORMAT": "不支持的参考格式", "REFERENCE_NOT_SET": "未设置参考电路", "COMPONENT_MISSING": "缺元件", "COMPONENT_EXTRA": "多余元件", "OPEN_CIRCUIT": "断路", "WRONG_CONNECTION": "错接", "EXTRA_CONNECTION": "多余连接", "INCOMPLETE_CIRCUIT": "电路未完成", "ROLE_MISMATCH": "网络角色错误", "INPUT_NODE_MISMATCH": "输入节点错误", "OUTPUT_NODE_MISMATCH": "输出节点错误", "POWER_NODE_MISMATCH": "电源节点错误", "GROUND_NODE_MISMATCH": "地节点错误", "WARN_GNN_DISAGREES_WITH_RULE": "GNN 与规则结果不一致（仅提醒）"}.get(error_code, "电路异常")
+    return {"PIN_ROLE_MISMATCH": "功能引脚错误", "SHORT_CIRCUIT": "短路", "ROLE_LABEL_MISMATCH": "端口标签错误", "UNSUPPORTED_REFERENCE_FORMAT": "不支持的参考格式", "REFERENCE_NOT_SET": "未设置参考电路", "COMPONENT_MISSING": "缺元件", "COMPONENT_EXTRA": "多余元件", "OPEN_CIRCUIT": "断路", "WRONG_CONNECTION": "错接", "EXTRA_CONNECTION": "多余连接", "INCOMPLETE_CIRCUIT": "电路未完成", "ROLE_MISMATCH": "网络角色错误", "INPUT_NODE_MISMATCH": "输入节点错误", "OUTPUT_NODE_MISMATCH": "输出节点错误", "POWER_NODE_MISMATCH": "电源节点错误", "GROUND_NODE_MISMATCH": "地节点错误", "WARN_GNN_DISAGREES_WITH_RULE": "GNN 与规则结果不一致（仅提醒）", "CRITICAL_EXTRA_CONNECTION": "关键网络上多余连接"}.get(error_code, "电路异常")
 
 
 def _detailed_item(*, error_code: str, error_family: str, severity: str, message: str, expected: Any, actual: Any, component_ref: dict[str, Any] | None, component_actual: dict[str, Any] | None, evidence_refs: list[dict[str, Any]], suggested_action: str, title: str = "") -> dict[str, Any]:
@@ -442,6 +442,61 @@ def _extra_items(reference_graph: nx.Graph, current_graph: nx.Graph) -> list[dic
             items.append(_item("COMPONENT_EXTRA", "extra_component", "warning", f"当前电路比参考电路多出 {extra} 个 {ctype}。", expected={"component_type": ctype, "count": ref_counts[ctype]}, actual={"component_type": ctype, "count": cur_counts[ctype]}, suggested_action=f"请检查是否误放了多余的 {ctype}。"))
     if current_graph.number_of_edges() > reference_graph.number_of_edges():
         items.append(_item("EXTRA_CONNECTION", "extra_connection", "warning", "当前电路包含参考电路之外的额外连接。", expected={"edge_count": reference_graph.number_of_edges()}, actual={"edge_count": current_graph.number_of_edges()}, suggested_action="请检查是否有多余导线或多余元件连接。"))
+    return items
+
+
+def _critical_extra_items(reference_graph: nx.Graph, current_graph: nx.Graph) -> list[dict[str, Any]]:
+    """**R1 Position B (RULE_SEMANTICS §3)** — return one item per
+    role-critical net that has more edges in cur than ref.
+
+    Used by :func:`compare_logical_graphs` to promote
+    ``logic_correct=True`` (lenient ``equivalent_with_extra``) to
+    ``logic_correct=False`` whenever an extra component / wire actually
+    touches a role-critical net (``power``, ``ground``, ``input``,
+    ``output``). Extras on signal / internal nets stay as soft warnings.
+
+    The check is **edge-count based** per net role. Pros: deterministic,
+    cheap, no monomorphism mapping needed. Cons: cannot catch
+    topology-preserving relabels like ``input_output_swapped`` (per-role
+    degrees stay the same after swap) — that case is intentionally left
+    to a follow-up (see RULE_SEMANTICS §4 Q2).
+    """
+
+    from app.domain.compare.matcher import CRITICAL_NET_ROLES
+
+    def _role_degrees(g: nx.Graph) -> dict[str, int]:
+        per_role: dict[str, int] = {}
+        for node, data in g.nodes(data=True):
+            if data.get("kind") != "net":
+                continue
+            role = normalize_net_role(data.get("role"))
+            if role not in CRITICAL_NET_ROLES:
+                continue
+            per_role[role] = per_role.get(role, 0) + g.degree(node)
+        return per_role
+
+    ref_deg = _role_degrees(reference_graph)
+    cur_deg = _role_degrees(current_graph)
+
+    items: list[dict[str, Any]] = []
+    for role in sorted(CRITICAL_NET_ROLES):
+        extra = cur_deg.get(role, 0) - ref_deg.get(role, 0)
+        if extra > 0:
+            items.append(_item(
+                "CRITICAL_EXTRA_CONNECTION",
+                "extra_connection",
+                "error",
+                (
+                    f"在关键网络（role={role}）上检测到 {extra} 条多余连接，"
+                    "这可能影响电路核心功能。"
+                ),
+                expected={"role": role, "edge_count_on_role_nets": ref_deg.get(role, 0)},
+                actual={"role": role, "edge_count_on_role_nets": cur_deg.get(role, 0)},
+                suggested_action=(
+                    f"请移除连接到 {role} 网络的多余元件或导线 — "
+                    "电源 / 地 / 输入 / 输出 不应出现非参考要求的额外接线。"
+                ),
+            ))
     return items
 
 

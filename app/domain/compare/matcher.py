@@ -15,6 +15,11 @@ from app.domain.logical_reference import (
 
 PORT_NET_ROLES = {"input", "output"}
 STRICT_NET_ROLES = {"ground", "power"}
+# Plan R1 (Position B) — `app/domain/compare/RULE_SEMANTICS.md` §3.
+# Extras (components / wires) that touch a net of one of these roles are
+# promoted from "warning" to a hard fail by ``compare_logical_graphs``.
+# Anything outside this set (signal / internal / unknown) stays a warning.
+CRITICAL_NET_ROLES = STRICT_NET_ROLES | PORT_NET_ROLES
 PASSIVE_TWO_PIN_TYPES = {"Resistor", "Capacitor", "CapacitorCeramic", "Wire"}
 STRICT_PIN_ROLE_TYPES = {"Transistor", "Potentiometer", "LED", "Diode", "CapacitorElectrolytic"}
 NON_POLAR_CAPACITOR_TYPES = {"Capacitor", "CapacitorCeramic"}

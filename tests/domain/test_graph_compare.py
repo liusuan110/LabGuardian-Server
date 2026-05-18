@@ -441,3 +441,130 @@ class TestCompareLogicalGraphs:
         result = compare_logical_graphs(ref, cur)
         assert result["logic_correct"] is True
         assert result["details"]["match_type"] == "equivalent_with_allowed_symmetry"
+
+
+# ---------------------------------------------------------------------------
+# R1 Position B — extras on role-critical nets promote to logic_correct=False.
+# See app/domain/compare/RULE_SEMANTICS.md §3 + RISK_REGISTER §5 R1.
+# ---------------------------------------------------------------------------
+
+
+def _build_cur_extra_resistor_to_vcc() -> nx.Graph:
+    """Same shape as `_build_cur_extra_resistor` but R2 connects to a new
+    VCC net (role="power") instead of a signal-internal pair."""
+
+    g = nx.Graph()
+    g.add_node("cur_comp:R1", kind="comp", ctype="Resistor")
+    g.add_node("cur_comp:C1", kind="comp", ctype="CapacitorCeramic")
+    g.add_node("cur_comp:R2", kind="comp", ctype="Resistor")
+    g.add_node("cur_net:NET_000", kind="net", role="input")
+    g.add_node("cur_net:NET_001", kind="net", role="signal")
+    g.add_node("cur_net:NET_002", kind="net", role="ground")
+    g.add_node("cur_net:NET_VCC", kind="net", role="power")
+    g.add_edge("cur_comp:R1", "cur_net:NET_000")
+    g.add_edge("cur_comp:R1", "cur_net:NET_001")
+    g.add_edge("cur_comp:C1", "cur_net:NET_001")
+    g.add_edge("cur_comp:C1", "cur_net:NET_002")
+    # Extra R2 connects signal net → VCC (power, role-critical)
+    g.add_edge("cur_comp:R2", "cur_net:NET_001")
+    g.add_edge("cur_comp:R2", "cur_net:NET_VCC")
+    return g
+
+
+def _build_cur_extra_wire_on_gnd() -> nx.Graph:
+    """An extra Wire node bridging an existing internal net to GND."""
+
+    g = nx.Graph()
+    g.add_node("cur_comp:R1", kind="comp", ctype="Resistor")
+    g.add_node("cur_comp:C1", kind="comp", ctype="CapacitorCeramic")
+    g.add_node("cur_comp:W1", kind="comp", ctype="Wire")
+    g.add_node("cur_net:NET_000", kind="net", role="input")
+    g.add_node("cur_net:NET_001", kind="net", role="signal")
+    g.add_node("cur_net:NET_002", kind="net", role="ground")
+    g.add_node("cur_net:NET_003", kind="net", role="signal")
+    g.add_edge("cur_comp:R1", "cur_net:NET_000")
+    g.add_edge("cur_comp:R1", "cur_net:NET_001")
+    g.add_edge("cur_comp:C1", "cur_net:NET_001")
+    g.add_edge("cur_comp:C1", "cur_net:NET_002")
+    # Extra Wire on GND — degree on ground role goes up.
+    g.add_edge("cur_comp:W1", "cur_net:NET_002")
+    g.add_edge("cur_comp:W1", "cur_net:NET_003")
+    return g
+
+
+def _build_cur_extra_resistor_on_signal_only() -> nx.Graph:
+    """Same as `_build_cur_extra_resistor` — R2 between two signal nets,
+    nothing critical. Kept as a regression guard to verify R1 doesn't
+    over-fire on benign extras."""
+
+    return _build_cur_extra_resistor()
+
+
+class TestR1CriticalExtras:
+    def test_extra_on_signal_stays_pass(self) -> None:
+        """Extra component connecting two signal nets must still pass
+        under the lenient ``equivalent_with_extra`` semantics."""
+
+        result = compare_logical_graphs(
+            _build_ref(), _build_cur_extra_resistor_on_signal_only(),
+        )
+        assert result["logic_correct"] is True
+        assert result["details"]["match_type"] == "equivalent_with_extra"
+        assert not any(
+            i["error_code"] == "CRITICAL_EXTRA_CONNECTION"
+            for i in result["report"]["items"]
+        )
+
+    def test_extra_resistor_to_vcc_fails(self) -> None:
+        """Extra resistor connecting signal → VCC (role=power) must
+        flip logic_correct to False under R1 Position B."""
+
+        result = compare_logical_graphs(
+            _build_ref(), _build_cur_extra_resistor_to_vcc(),
+        )
+        assert result["logic_correct"] is False
+        assert result["is_correct"] is False
+        assert result["is_match"] is False
+        assert result["details"]["match_type"] == "extra_on_critical_net"
+        assert any(
+            i["error_code"] == "CRITICAL_EXTRA_CONNECTION"
+            and i["severity"] == "error"
+            and i["expected"]["role"] == "power"
+            for i in result["report"]["items"]
+        )
+        # details.critical_extras surfaces the offending role(s)
+        crit = result["details"]["critical_extras"]
+        assert any(c["role"] == "power" and c["extra_edges"] >= 1 for c in crit)
+
+    def test_extra_wire_on_gnd_fails(self) -> None:
+        """Extra Wire that bumps degree on a ground net must fail."""
+
+        result = compare_logical_graphs(
+            _build_ref(), _build_cur_extra_wire_on_gnd(),
+        )
+        assert result["logic_correct"] is False
+        assert result["details"]["match_type"] == "extra_on_critical_net"
+        crit_items = [
+            i for i in result["report"]["items"]
+            if i["error_code"] == "CRITICAL_EXTRA_CONNECTION"
+        ]
+        assert any(i["expected"]["role"] == "ground" for i in crit_items)
+
+    def test_critical_extra_marks_report_topology_errors(self) -> None:
+        """The promoted item should land in report.topology_errors
+        bucket (validator_report_v2 convention)."""
+
+        result = compare_logical_graphs(
+            _build_ref(), _build_cur_extra_resistor_to_vcc(),
+        )
+        report = result["report"]
+        # summary mirror updated
+        assert report["summary"]["logic_correct"] is False
+        assert report["summary"]["match_type"] == "extra_on_critical_net"
+        # topology bucket carries the critical item
+        assert any(
+            i["error_code"] == "CRITICAL_EXTRA_CONNECTION"
+            for i in report.get("topology_errors", [])
+        )
+        # total_item_count reflects the bump
+        assert report["summary"]["total_item_count"] >= len(report["items"])

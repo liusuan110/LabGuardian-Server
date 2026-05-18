@@ -2,7 +2,7 @@
   "format": "logical_reference_v1",
   "reference_id": "test_all_signal_v1",
   "name": "Test All Signal",
-  "description": "Reference with only signal nets for testing",
+  "description": "Reference with input/internal/output signal nets — R6 (RULE_SEMANTICS §6.4): role_label disambiguation lets _node_match + _enrich_result distinguish the three nets so signal-net rewirings can be caught by the rule path.",
   "components": [
     {
       "ref_id": "R1",
@@ -22,8 +22,8 @@
     }
   ],
   "nets": [
-    { "net": "NET_A", "role": "signal" },
-    { "net": "NET_B", "role": "signal" },
-    { "net": "NET_C", "role": "signal" }
+    { "net": "NET_A", "role": "input",  "role_label": "UI1" },
+    { "net": "NET_B", "role": "signal", "role_label": "internal" },
+    { "net": "NET_C", "role": "output", "role_label": "UO1" }
   ]
 }

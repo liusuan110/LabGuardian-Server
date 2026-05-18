@@ -312,6 +312,103 @@ def _build_ref_artifacts(
     return payload, ref_hcg, ref_graph, subtypes
 
 
+def _hcg_to_netlist_v2(
+    cur_hcg: HeteroCircuitGraph,
+    *,
+    subtype_by_source_id: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """**P5 quality v2** — synthesise a `netlist_v2` dict from a cur HCG.
+
+    The rule comparator's :func:`_enrich_result` only runs when both
+    ``ref_payload`` and ``cur_netlist_v2`` are non-None. Production
+    code always passes both; the evaluator originally passed
+    ``None`` and was therefore measuring an artificially-weak rule
+    path that misses pin-level wiring checks. This adapter closes
+    the gap by emitting a netlist_v2 from the cur HCG (which the
+    evaluator already reconstructs via
+    :func:`reconstruct_cur_hcg`).
+
+    Schema fields that the rule path actually reads (from
+    :mod:`app.domain.compare.diff_report`):
+
+    - ``components[*].component_id``, ``component_type``, ``pins[*]``
+    - ``pins[*].pin_name``, ``pin_name`` and ``electrical_net_id``
+    - ``nets[*].electrical_net_id``, ``role``, ``role_label`` /
+      ``canonical_name`` / ``power_role``
+
+    Fields not consumed by the rule path (``board_schema_id``,
+    ``scene_id``, ``confidence``, ``hole_id``, etc.) are set to
+    plausible defaults — we're synthesising for comparison, not
+    re-uploading to detection.
+    """
+
+    components: list[dict[str, Any]] = []
+    # Group ports by parent component
+    ports_by_comp: dict[str, list] = {}
+    for port in cur_hcg.ports.values():
+        ports_by_comp.setdefault(port.parent_component_id, []).append(port)
+
+    # Build edge lookup: port_id -> net source_id
+    net_by_port: dict[str, str | None] = {}
+    for edge in cur_hcg.edges:
+        net = cur_hcg.nets[edge.dst_net_id]
+        net_by_port[edge.src_port_id] = net.source_id
+
+    subtype_by_source_id = subtype_by_source_id or {}
+    for comp in cur_hcg.components.values():
+        pin_list: list[dict[str, Any]] = []
+        for i, port in enumerate(ports_by_comp.get(comp.node_id, [])):
+            pin_list.append({
+                "pin_id": i,
+                "pin_name": port.port_key,
+                "hole_id": f"H_{comp.source_id}_{port.port_key}",
+                "electrical_net_id": net_by_port.get(port.node_id),
+                "metadata": {"pin_role": port.port_type},
+            })
+        components.append({
+            "component_id": comp.source_id,
+            "component_type": comp.ctype,
+            "package_type": comp.package or "",
+            # Critical for IC subtypes (UA741 / LM358) — without this,
+            # build_from_netlist_v2 falls back to generic pin roles and
+            # the GNN sees a different port_type vector, dropping SEAL F1.
+            "part_subtype": subtype_by_source_id.get(comp.source_id, ""),
+            "polarity": comp.polarity_class or "none",
+            "pins": pin_list,
+        })
+
+    nets: list[dict[str, Any]] = []
+    for net in cur_hcg.nets.values():
+        # ``current_netlist_v2_to_graph`` priority is:
+        # manual_role > role_label > power_role > role. Use
+        # ``manual_role`` so the HCG's role wins — without this the
+        # downstream `normalize_net_role` is fed the role_label (which
+        # for refs like LM358 looks like "VIN_A" — not recognised as
+        # input/output) and collapses to "signal". That broke identity
+        # on LM358 / NPN ref fixtures.
+        nets.append({
+            "electrical_net_id": net.source_id,
+            "canonical_name": net.role_label or net.source_id,
+            "role": net.role,
+            "manual_role": net.role,
+            "role_label": net.role_label,
+            "power_role": (
+                net.role_label
+                if net.role in {"power", "ground"} and net.role_label
+                else ""
+            ),
+            "member_node_ids": [],
+            "member_hole_ids": [],
+        })
+
+    return {
+        "scene_id": "evaluator_synthetic",
+        "board_schema_id": "evaluator_synthetic",
+        "components": components,
+        "nets": nets,
+    }
+
+
 def _roc_auc(scores: list[float], labels: list[int]) -> float | None:
     pos = [s for s, y in zip(scores, labels) if y == 1]
     neg = [s for s, y in zip(scores, labels) if y == 0]
@@ -419,14 +516,23 @@ def _evaluate_sample(
         return None
 
     cur_graph = hcg_to_nx(cur_hcg, target_side="cur")
+    cur_netlist_v2 = _hcg_to_netlist_v2(
+        cur_hcg, subtype_by_source_id=subtypes,
+    )
 
     # ---- Rule path -----------------------------------------------------
+    # Pass both ref_payload + cur_netlist_v2 so the rule path runs its
+    # full pin-level enrichment (which catches input_output_swapped /
+    # floating_net cases the bare nx.Graph iso misses). The orchestrator's
+    # internal GNN hook also fires whenever ``should_use_gnn`` says yes;
+    # rather than double-invoke ``advise()``, we read its scored block
+    # out of ``rule_result["report"]["summary"]["gnn"]`` below.
     t0 = time.time()
     rule_result = compare_logical_graphs(
         ref_graph,
         cur_graph,
-        ref_payload=None,         # disable GNN attachment here — we run advisor below
-        cur_netlist_v2=None,
+        ref_payload=ref_payload,
+        cur_netlist_v2=cur_netlist_v2,
     )
     rule_ms = (time.time() - t0) * 1000
 
@@ -438,9 +544,33 @@ def _evaluate_sample(
     gnn_predicted_positive: bool | None = None
     advice: GNNAdvice | None = None
     if advisor is not None:
-        t1 = time.time()
-        advice = advisor.advise(ref_hcg, cur_hcg, timeout_ms=2000)
-        gnn_ms = (time.time() - t1) * 1000
+        # Prefer reusing the GNN block the orchestrator already attached
+        # to ``rule_result`` (zero re-cost). Fall back to an explicit
+        # ``advise()`` call when the orchestrator skipped (tiny circuit
+        # or other ``should_use_gnn`` early exit).
+        gnn_block = (
+            (rule_result.get("report") or {})
+            .get("summary", {})
+            .get("gnn")
+        )
+        from app.domain.gnn import GNNAdvice as _AdviceCls
+        if gnn_block:
+            advice = _AdviceCls(
+                model_version=gnn_block["model_version"],
+                inference_ms=gnn_block["inference_ms"],
+                n_edges_scored=gnn_block["n_edges_scored"],
+                edge_predictions=tuple(gnn_block.get("edge_predictions", [])),
+                hotspots=tuple(gnn_block.get("hotspots", [])),
+                graph_similarity=gnn_block.get("graph_similarity", 0.0),
+                graph_similarity_confidence=gnn_block.get(
+                    "graph_similarity_confidence", 0.0
+                ),
+            )
+            gnn_ms = advice.inference_ms
+        else:
+            t1 = time.time()
+            advice = advisor.advise(ref_hcg, cur_hcg, timeout_ms=2000)
+            gnn_ms = (time.time() - t1) * 1000
         if advice is not None:
             n_edges_scored = advice.n_edges_scored
             probs = [

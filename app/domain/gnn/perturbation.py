@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional, Tuple  # noqa: UP035 — runtime value on py<3.10
+from typing import TYPE_CHECKING, Any, Optional, Tuple  # noqa: UP035 — runtime value on py<3.10
 
 import networkx as nx  # type: ignore[import-untyped]
 
@@ -107,12 +107,34 @@ def hcg_to_nx(
             source_id=comp.source_id,
         )
     for _, net in ref_hcg.nets.items():
+        # R6 (RULE_SEMANTICS §6.4) — propagate role_label so the rule
+        # comparator's ``_node_match`` + ``_node_match_for_role_inference``
+        # can distinguish e.g. ref:NET_B(signal/INTERNAL) from
+        # cur:NET_A(input/UI1). Without this, role-inference happily
+        # remaps cur's labelled signal nets onto wrong ref nets and
+        # ``wrong_connection`` perturbations slip through as
+        # ``full_isomorphism_with_inferred_roles``.
+        node_attrs: dict[str, Any] = {
+            "kind": "net",
+            "role": net.role,
+            "source_id": net.source_id,
+        }
+        if net.role_label:
+            node_attrs["role_label"] = net.role_label
+            # When the cur side originated from a netlist_v2 with an
+            # explicit role_label, the production graph builder tags
+            # role_source="role_label"; mirror that here so
+            # role-inference treats the label as authoritative.
+            node_attrs["role_source"] = "role_label"
+        if net.aliases:
+            node_attrs["aliases"] = list(net.aliases)
         g.add_node(
             f"{target_side}_net:{net.source_id}",
-            kind="net",
-            role=net.role,
-            source_id=net.source_id,
+            **node_attrs,
         )
+    # Late import to avoid pulling logical_reference into the
+    # perturbation module's import-time graph (it pulls big deps).
+    from app.domain.logical_reference import normalize_pin_role
     for edge in ref_hcg.edges:
         rp = ref_hcg.ports[edge.src_port_id]
         comp = ref_hcg.components[rp.parent_component_id]
@@ -121,7 +143,12 @@ def hcg_to_nx(
             f"{target_side}_comp:{comp.source_id}",
             f"{target_side}_net:{net.source_id}",
             pin=rp.port_key,
-            pin_role=rp.port_key,
+            # R6 fix: normalize pin_role so it agrees with the ref-side
+            # produced by ``logical_reference_to_graph``. Without this
+            # IC pin "2" / "1" stays as "2"/"1" but ref-side has
+            # "pin2"/"pin1" → ``_edge_match`` fails → identity on
+            # LM358 / UA741 was returning logic_correct=False.
+            pin_role=normalize_pin_role(comp.ctype, rp.port_key),
             comp_type=comp.ctype,
         )
     return g
@@ -189,11 +216,24 @@ def _hcg_to_nodes_only_nx(
     for net in ref_hcg.nets.values():
         if net.source_id in drop_n:
             continue
+        # R6 (RULE_SEMANTICS §6.4): propagate role_label / aliases so
+        # the rebuilt cur HCG retains the disambiguating metadata
+        # that lets _node_match + role-inference treat e.g. UI1 vs
+        # internal as different nets. Without this, wrong_connection
+        # perturbations on signal-labelled refs slip through
+        # `full_isomorphism_with_inferred_roles`.
+        node_attrs: dict[str, Any] = {
+            "kind": "net",
+            "role": net.role,
+            "source_id": net.source_id,
+        }
+        if net.role_label:
+            node_attrs["role_label"] = net.role_label
+        if net.aliases:
+            node_attrs["aliases"] = list(net.aliases)
         g.add_node(
             f"{target_side}_net:{net.source_id}",
-            kind="net",
-            role=net.role,
-            source_id=net.source_id,
+            **node_attrs,
         )
     return g
 

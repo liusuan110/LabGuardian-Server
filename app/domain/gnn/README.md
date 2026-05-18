@@ -1,6 +1,6 @@
 # `app.domain.gnn` · GNN-assisted Graph Comparator
 
-**Status: P5 ✅ + P4.1 R2 ✅ — Evaluator emits plan §八 metric table; orchestrator now emits `WARN_GNN_DISAGREES_WITH_RULE` advisory items when rule says pass + GNN says wrong (catches 100% of `extra_component` / `input_output_swapped` false_passes). Red line still breached (`rule_false_pass_rate = 0.3057`) — fix requires R1 rule-semantics work tracked in [`app/domain/compare/RULE_SEMANTICS.md`](../compare/RULE_SEMANTICS.md). Nightly: `bash scripts/gnn_eval_nightly.sh`. 495 tests green (488 → 495).**
+**Status: P5 ✅ + P4.1 R2 ✅ + R1 (Position B + §6 + R6) ✅ — Plan §八 red line MET on both splits with 100% rule accuracy: `rule_false_pass_rate = 0.0000` AND `rule_false_fail_rate = 0.0000` on test AND val. SEAL F1 0.9953 (test) / 0.9791 (val) maintained. Nightly script `bash scripts/gnn_eval_nightly.sh` exits 0 — CI wiring (R5) unblocked. 501 tests green.**
 Full plan: `~/.claude/plans/labguardian-server-glowing-galaxy.md`.
 
 ## What this module is

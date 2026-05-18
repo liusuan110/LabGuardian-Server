@@ -9,6 +9,7 @@ from .diff_report import (
     _approximate_similarity,
     _component_count,
     _component_progress,
+    _critical_extra_items,
     _dedupe_items,
     _difference_items,
     _enrich_result,
@@ -37,6 +38,83 @@ _GNN_WRONG_EDGE_P_FLOOR = 0.3
 _GNN_DISAGREE_ERROR_CODE = "WARN_GNN_DISAGREES_WITH_RULE"
 
 log = logging.getLogger(__name__)
+
+
+def _promote_critical_extras(
+    result: dict[str, Any],
+    reference_graph: nx.Graph,
+    current_graph: nx.Graph,
+) -> dict[str, Any]:
+    """**R1 Position B** (RULE_SEMANTICS §3) — when the rule path has
+    returned ``logic_correct=True`` via the ``equivalent_with_extra``
+    branch **and** the cur graph has extra edges on a role-critical net
+    (power / ground / input / output), promote to a hard fail.
+
+    Layered after :func:`_enrich_result` so the detailed wiring-mismatch
+    items it produces survive. Idempotent on circuits with no critical
+    extras (no-op).
+
+    Plan §一 invariant: when the rule path itself decides to flip
+    ``logic_correct`` based on its own analysis, that's not a violation —
+    the rule is owning the verdict. (GNN cannot do this, only the rule
+    can. R2's warning items still remain advisory.)
+    """
+
+    critical = _critical_extra_items(reference_graph, current_graph)
+    if not critical:
+        return result
+
+    # Append items to both result.items + report.items (mirroring R2 shape).
+    result_items = list(result.get("items", []) or [])
+    result_items.extend(critical)
+    result["items"] = result_items
+    result["logic_correct"] = False
+    result["is_correct"] = False
+    result["is_match"] = False
+    result["message"] = (
+        "参考电路逻辑已存在，但在关键网络（电源 / 地 / 输入 / 输出）上"
+        "检测到多余连接，可能影响电路核心功能。"
+    )
+    # Update similarity floor (a circuit with critical extras is further
+    # from ref than a clean equivalent_with_extra).
+    result["similarity"] = min(
+        result.get("similarity", 1.0),
+        max(0.70, _approximate_similarity(reference_graph, current_graph)),
+    )
+
+    details = dict(result.get("details", {}))
+    details["match_type"] = "extra_on_critical_net"
+    details["critical_extras"] = [
+        {
+            "role": item["expected"]["role"],
+            "extra_edges": (
+                item["actual"]["edge_count_on_role_nets"]
+                - item["expected"]["edge_count_on_role_nets"]
+            ),
+        }
+        for item in critical
+    ]
+    result["details"] = details
+
+    report = dict(result.get("report", {}))
+    summary = dict(report.get("summary", {}))
+    summary["logic_correct"] = False
+    summary["match_type"] = "extra_on_critical_net"
+    summary["similarity"] = round(float(result["similarity"]), 3)
+    report["summary"] = summary
+
+    report_items = list(report.get("items", []) or [])
+    report_items.extend(critical)
+    report["items"] = report_items
+    summary["total_item_count"] = len(report_items)
+    # Move critical items into the topology_errors bucket as the
+    # validator_report_v2 convention.
+    report["topology_errors"] = list(
+        report.get("topology_errors", []) or []
+    ) + critical
+    result["report"] = report
+
+    return result
 
 
 def _maybe_attach_gnn_advice(
@@ -284,6 +362,14 @@ def compare_logical_graphs(
                 reference_graph,
                 current_graph,
             )
+        # R1 Position B (RULE_SEMANTICS §3) — promote extras on
+        # role-critical nets (power / ground / input / output) to a
+        # hard fail. Extras on signal / internal nets stay as warnings
+        # under the unchanged ``equivalent_with_extra`` match type.
+        # Layered AFTER enrich so detailed_items from enrich aren't lost.
+        result = _promote_critical_extras(
+            result, reference_graph, current_graph
+        )
         return result
 
     if _contains_subgraph(reference_graph, current_graph):

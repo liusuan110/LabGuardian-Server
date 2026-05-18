@@ -53,6 +53,22 @@ def _node_match_for_role_inference(ref_data: dict[str, Any], cur_data: dict[str,
         and cur_label != ref_label
     ):
         return _node_match(ref_data, cur_data)
+    # RULE_SEMANTICS §6.4 R6 — when the reference demands a critical
+    # I/O label (UI1 / UO1 etc.) and the cur side already has its
+    # own definite labeling that differs, refuse the inference. This
+    # blocks ``wrong_connection`` perturbations from being absorbed
+    # via relabeling (e.g. cur:NET_B labelled "internal" cannot be
+    # silently relabelled to "UI1" just because the iso wants it).
+    # Cur nets with role_source=="default_signal" are still left
+    # open — those are exactly the case role-inference was built
+    # for (see ``test_unlabeled_port_roles_are_inferred``).
+    if (
+        ref_role in {"input", "output"}
+        and ref_label in CRITICAL_ROLE_LABELS
+        and cur_role_source not in {"", "default_signal"}
+        and cur_label != ref_label
+    ):
+        return _node_match(ref_data, cur_data)
     if cur_role_source != "default_signal" and cur_role in STRICT_INFERRED_ROLES:
         return _node_match(ref_data, cur_data)
     if cur_role_source != "manual_role":
