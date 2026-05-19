@@ -40,10 +40,125 @@ _GNN_DISAGREE_ERROR_CODE = "WARN_GNN_DISAGREES_WITH_RULE"
 log = logging.getLogger(__name__)
 
 
+def _is_wire_component(data: dict[str, Any]) -> bool:
+    ctype = str(data.get("ctype") or data.get("component_type") or "")
+    return ctype in {"Wire", "Jumper"}
+
+
+def _collapse_wire_components(graph: nx.Graph) -> nx.Graph:
+    """Collapse Wire/Jumper components into direct net unions for compare.
+
+    The visual detector may expose ordinary jumper wires as components, but
+    logical comparison should treat them as conductors. We keep the original
+    graph for critical bridge auditing, and compare against this collapsed
+    graph so benign jumpers do not create extra-component noise.
+    """
+    wire_nodes = {
+        node
+        for node, data in graph.nodes(data=True)
+        if data.get("kind") == "comp" and _is_wire_component(data)
+    }
+    if not wire_nodes:
+        return graph
+
+    parent: dict[Any, Any] = {}
+
+    def find(node: Any) -> Any:
+        parent.setdefault(node, node)
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    def union(a: Any, b: Any) -> None:
+        ra = find(a)
+        rb = find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    net_nodes = {
+        node
+        for node, data in graph.nodes(data=True)
+        if data.get("kind") == "net"
+    }
+    for node in net_nodes:
+        parent[node] = node
+
+    for wire_node in wire_nodes:
+        nets = [
+            neighbor
+            for neighbor in graph.neighbors(wire_node)
+            if graph.nodes[neighbor].get("kind") == "net"
+        ]
+        if len(nets) < 2:
+            continue
+        first = nets[0]
+        for net in nets[1:]:
+            union(first, net)
+
+    groups: dict[Any, list[Any]] = {}
+    for node in net_nodes:
+        groups.setdefault(find(node), []).append(node)
+
+    collapsed = nx.Graph()
+    net_to_rep: dict[Any, Any] = {}
+    for root, members in groups.items():
+        rep = min(members, key=str)
+        for member in members:
+            net_to_rep[member] = rep
+        collapsed.add_node(rep, **_merged_net_attrs(graph, members, rep))
+
+    for node, data in graph.nodes(data=True):
+        if node in wire_nodes or data.get("kind") == "net":
+            continue
+        collapsed.add_node(node, **dict(data))
+
+    for left, right, data in graph.edges(data=True):
+        if left in wire_nodes or right in wire_nodes:
+            continue
+        mapped_left = net_to_rep.get(left, left)
+        mapped_right = net_to_rep.get(right, right)
+        if mapped_left == mapped_right:
+            continue
+        collapsed.add_edge(mapped_left, mapped_right, **dict(data))
+
+    collapsed.graph.update(graph.graph)
+    return collapsed
+
+
+def _merged_net_attrs(graph: nx.Graph, members: list[Any], rep: Any) -> dict[str, Any]:
+    attrs = dict(graph.nodes[rep])
+    if len(members) == 1:
+        return attrs
+
+    roles = [str(graph.nodes[node].get("role") or "signal") for node in members]
+    labels = [
+        str(graph.nodes[node].get("role_label") or graph.nodes[node].get("canonical_name") or "")
+        for node in members
+        if graph.nodes[node].get("role_label") or graph.nodes[node].get("canonical_name")
+    ]
+    source_ids = [
+        str(graph.nodes[node].get("source_id") or str(node).split(":", 1)[-1])
+        for node in members
+    ]
+    for role in ("ground", "power", "input", "output", "signal"):
+        if role in roles:
+            attrs["role"] = role
+            break
+    if labels:
+        attrs["role_label"] = labels[0]
+        attrs["canonical_name"] = labels[0]
+    attrs["merged_source_ids"] = list(dict.fromkeys(source_ids))
+    attrs["source_id"] = source_ids[0]
+    return attrs
+
+
 def _promote_critical_extras(
     result: dict[str, Any],
     reference_graph: nx.Graph,
     current_graph: nx.Graph,
+    *,
+    wire_only: bool = False,
 ) -> dict[str, Any]:
     """**R1 Position B** (RULE_SEMANTICS §3) — when the rule path has
     returned ``logic_correct=True`` via the ``equivalent_with_extra``
@@ -61,6 +176,11 @@ def _promote_critical_extras(
     """
 
     critical = _critical_extra_items(reference_graph, current_graph)
+    if wire_only:
+        critical = [
+            item for item in critical
+            if "bridged_critical_nets" in ((item.get("actual") or {}))
+        ]
     if not critical:
         return result
 
@@ -84,16 +204,28 @@ def _promote_critical_extras(
 
     details = dict(result.get("details", {}))
     details["match_type"] = "extra_on_critical_net"
-    details["critical_extras"] = [
-        {
-            "role": item["expected"]["role"],
-            "extra_edges": (
-                item["actual"]["edge_count_on_role_nets"]
-                - item["expected"]["edge_count_on_role_nets"]
-            ),
-        }
-        for item in critical
-    ]
+    critical_details: list[dict[str, Any]] = []
+    for item in critical:
+        expected = item.get("expected") or {}
+        actual = item.get("actual") or {}
+        if "role" in expected:
+            critical_details.append(
+                {
+                    "role": expected["role"],
+                    "extra_edges": (
+                        actual["edge_count_on_role_nets"]
+                        - expected["edge_count_on_role_nets"]
+                    ),
+                }
+            )
+        else:
+            critical_details.append(
+                {
+                    "wire_component": actual.get("wire_component"),
+                    "bridged_critical_nets": actual.get("bridged_critical_nets", []),
+                }
+            )
+    details["critical_extras"] = critical_details
     result["details"] = details
 
     report = dict(result.get("report", {}))
@@ -266,6 +398,8 @@ def compare_logical_graphs(
     cur_netlist_v2: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """比较参考电路图与当前电路图，返回包含差异报告的比较结果。"""
+    raw_current_graph = current_graph
+    current_graph = _collapse_wire_components(current_graph)
     role_inferences: list[dict[str, Any]] = []
     inference_applied = False
     auto_symmetry_groups: list[dict[str, Any]] = []
@@ -322,6 +456,9 @@ def compare_logical_graphs(
             )
         if inference_applied:
             _attach_role_inferences(result, role_inferences)
+        result = _promote_critical_extras(
+            result, reference_graph, raw_current_graph, wire_only=True
+        )
         return result
 
     if _contains_subgraph(current_graph, reference_graph):
@@ -368,7 +505,7 @@ def compare_logical_graphs(
         # under the unchanged ``equivalent_with_extra`` match type.
         # Layered AFTER enrich so detailed_items from enrich aren't lost.
         result = _promote_critical_extras(
-            result, reference_graph, current_graph
+            result, reference_graph, raw_current_graph
         )
         return result
 
@@ -409,6 +546,9 @@ def compare_logical_graphs(
                 reference_graph,
                 current_graph,
             )
+        result = _promote_critical_extras(
+            result, reference_graph, raw_current_graph, wire_only=True
+        )
         return result
 
     result = _result(
@@ -435,4 +575,7 @@ def compare_logical_graphs(
             reference_graph,
             current_graph,
         )
+    result = _promote_critical_extras(
+        result, reference_graph, raw_current_graph, wire_only=True
+    )
     return result

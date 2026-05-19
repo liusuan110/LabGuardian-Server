@@ -134,12 +134,34 @@ class NetlistV2:
         components: 被识别并解析连通关联的元气件（ComponentInstance）实体集合列表。
         nets: 体系中抽离提取出的全部连通电位网集簇列表 (ElectricalNet)。
         node_index: 维护网络底层 Node ID 映射至其涵盖 Hole IDs 集合的高速检索引擎。
+            **仅包含挂有元件 pin 的孔位**。一根 strip 上空闲的孔不会出现在这里。
+            前端若要知道"某个电气节点物理上覆盖哪些孔"应读
+            ``board_topology.node_to_holes``（见下）。
+        board_topology: **R10.B0 (P0) fix** — 把面板 schema 里
+            "node → 所有归属此 node 的孔" 的完整映射 + 当前生效的电源轨
+            标签透传给前端，让 UI 能在拖拽时正确高亮整条导通带，避免出现
+            "拖到同 strip 的别的孔但前端以为是新孔" 的错觉。可选字段，下游
+            消费者忽略不会破坏老链路。结构::
+
+                {
+                    "schema_id": "breadboard_legacy_v1",
+                    "board_type": "competition_breadboard_63row_dualrail",
+                    "node_to_holes": {
+                        "ROW_5_L": ["A5","B5","C5","D5","E5"],
+                        "TRACK_LP_SEG1": ["LP1",...,"LP31"],
+                        ...
+                    },
+                    "rail_assignments": {
+                        "top_plus": "VCC", "bot_minus": "GND", ...
+                    },
+                }
     """
     scene_id: str
     board_schema_id: str
     components: List[ComponentInstance]
     nets: List[ElectricalNet]
     node_index: Dict[str, List[str]] = field(default_factory=dict)
+    board_topology: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

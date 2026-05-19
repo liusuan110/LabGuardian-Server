@@ -313,22 +313,27 @@ def test_open_circuit_detected() -> None:
             {"net": "GND", "role": "ground"},
         ],
     }
-    # 故意把 R1.pin2 和 R2.pin1 放到面包板同一行的左右两侧（不通），形成开路
+    # 故意把 R1.pin2 (A3 → ROW_3_L) 和 R2.pin1 (F3 → ROW_3_R) 放到
+    # 面包板同一行的左右两侧（中间凹槽断开），形成开路。
+    # P0.B1 audit fix (2026-05-19): 老版本写的是 A3+E3 但 electrical_node_id
+    # 标 ROW_3_R，靠 stale-electrical_node_id 兜底机制才把 E3 强行算成右侧
+    # strip。 hole_id 现在是 source of truth，E3 (E ∈ A-E) 实际属于左侧
+    # ROW_3_L，所以改用 F3 (F ∈ F-J) 才能真正测试跨槽开路。
     components = [
         {
             "component_id": "R1",
             "component_type": "Resistor",
             "pins": [
-                {"pin_id": 1, "pin_name": "pin1", "hole_id": "A1", "electrical_node_id": "ROW_1_L"},
-                {"pin_id": 2, "pin_name": "pin2", "hole_id": "A3", "electrical_node_id": "ROW_3_L"},
+                {"pin_id": 1, "pin_name": "pin1", "hole_id": "A1"},
+                {"pin_id": 2, "pin_name": "pin2", "hole_id": "A3"},
             ],
         },
         {
             "component_id": "R2",
             "component_type": "Resistor",
             "pins": [
-                {"pin_id": 1, "pin_name": "pin1", "hole_id": "E3", "electrical_node_id": "ROW_3_R"},
-                {"pin_id": 2, "pin_name": "pin2", "hole_id": "A5", "electrical_node_id": "ROW_5_L"},
+                {"pin_id": 1, "pin_name": "pin1", "hole_id": "F3"},
+                {"pin_id": 2, "pin_name": "pin2", "hole_id": "A5"},
             ],
         },
     ]

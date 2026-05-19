@@ -113,7 +113,11 @@ class GNNAdvice:
 # or when the deployed checkpoint lives outside the repo.
 _DEFAULT_CKPT_ENV = "LABGUARDIAN_GNN_CKPT"
 _DEFAULT_CKPT_CANDIDATES: tuple[str, ...] = (
-    "checkpoints/p3_followup_v2/best_f1.pt",  # current best baseline
+    # R10 (2026-05-18) — retrained against updated opamp_inverting
+    # fixture that adds R_p (textbook bias compensation resistor).
+    # val F1 0.959 / test F1 0.994. See RISK_REGISTER §5 R10.
+    "checkpoints/p3_followup_v3/best_f1.pt",
+    "checkpoints/p3_followup_v2/best_f1.pt",
     "checkpoints/p3_followup_v1/best_f1.pt",
     "checkpoints/p3_v1/best_f1.pt",
 )

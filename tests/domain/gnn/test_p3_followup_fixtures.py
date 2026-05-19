@@ -52,14 +52,17 @@ def test_opamp_inverting_fixture_loads_with_ua741_pin_specs() -> None:
     hcg = build_from_logical_reference(
         payload, extra_subtypes_by_source_id={"U1": "UA741"}
     )
-    # 1 IC + 2 resistors → 3 components, 8 + 2 + 2 = 12 ports
+    # R10 fixture refresh: 1 IC + 3 resistors (R_in, R_f, **R_p** for
+    # bias compensation per textbook canon) → 4 components.
+    # UA741 fully materialised (8 ports incl. NC/OPTIONAL) + 3 R × 2
+    # pins each = 14 ports.
     s = hcg.summary()
-    assert s["n_components"] == 3
-    assert s["n_ports"] == 12, (
-        f"UA741 fully materialised + 2 R × 2 pins each = 12, got {s['n_ports']}"
+    assert s["n_components"] == 4
+    assert s["n_ports"] == 14, (
+        f"UA741 fully materialised + 3 R × 2 pins each = 14, got {s['n_ports']}"
     )
-    # 5 nets: VIN, INV, VOUT, VCC, GND
-    assert s["n_nets"] == 5
+    # 6 nets: VIN, INV, VOUT, V_P, VCC, GND
+    assert s["n_nets"] == 6
     # FORBIDDEN: pin 8 (NC); OPTIONAL: pin 1, 5 (offset_null)
     by_policy = {"required": 0, "optional": 0, "forbidden": 0}
     for p in hcg.ports.values():

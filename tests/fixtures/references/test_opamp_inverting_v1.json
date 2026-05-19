@@ -1,8 +1,8 @@
 {
   "format": "logical_reference_v1",
   "reference_id": "test_opamp_inverting_v1",
-  "name": "UA741 Inverting Amplifier (textbook gain = -Rf/Rin)",
-  "description": "UA741 in inverting configuration. R_in from VIN to inverting input (pin 2); R_f as feedback from output (pin 6) back to pin 2; non-inverting input (pin 3) tied to GND; dual supply via pins 4/7. P3 follow-up: paired with the unity-gain buffer (held-out test) to give the model IC-side training experience and close the val/test OOD gap measured in P3.1 ablation (0.92 → 0.70).",
+  "name": "UA741 Inverting Amplifier (textbook canon, gain = -Rf/R_in, with R_p bias compensation)",
+  "description": "UA741 in inverting configuration following the textbook canon (e.g. Sedra/Smith ch.2): R_in from VIN to pin 2 (inverting input); R_f as feedback from pin 6 (output) back to pin 2; **R_p between pin 3 (non-inverting input) and GND, sized ≈ R_in ∥ R_f to compensate for input bias current** (standard practice; omitting it produces a small DC offset). Dual supply via pins 4/7. R10 fixture refresh (2026-05-18): added R_p to match the curriculum image — previously the fixture had pin 3 wired directly to GND which caused students who followed the textbook to fail with CRITICAL_EXTRA_CONNECTION.",
   "components": [
     {
       "ref_id": "U1",
@@ -11,7 +11,7 @@
       "pins": [
         { "pin": "1", "nc": true },
         { "pin": "2", "net": "INV" },
-        { "pin": "3", "net": "GND" },
+        { "pin": "3", "net": "V_P" },
         { "pin": "4", "net": "GND" },
         { "pin": "5", "nc": true },
         { "pin": "6", "net": "VOUT" },
@@ -34,12 +34,21 @@
         { "pin": "pin1", "net": "INV" },
         { "pin": "pin2", "net": "VOUT" }
       ]
+    },
+    {
+      "ref_id": "R_p",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "V_P" },
+        { "pin": "pin2", "net": "GND" }
+      ]
     }
   ],
   "nets": [
     { "net": "VIN", "role": "input" },
     { "net": "VOUT", "role": "output" },
     { "net": "INV", "role": "signal" },
+    { "net": "V_P", "role": "signal" },
     { "net": "VCC", "role": "power" },
     { "net": "GND", "role": "ground" }
   ]

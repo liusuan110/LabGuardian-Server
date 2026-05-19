@@ -102,12 +102,23 @@ def _from_structured_component(
         if not hole_id:
             continue
         pin_name = str(pin.get("pin_name") or f"pin{idx}")
+        # P0.B1 — always resolve electrical_node_id from hole_id (the
+        # source of truth). Falling back to ``pin.get("electrical_node_id")``
+        # only when hole_id is empty preserves the rare unmapped-pin
+        # case while making sure manual corrections never get masked by
+        # stale upstream values.
+        normalized_hole = board_schema.normalize_hole_id(str(hole_id))
+        fresh_node_id = (
+            board_schema.resolve_hole_to_node(normalized_hole)
+            if normalized_hole
+            else pin.get("electrical_node_id")
+        )
         pins.append(
             PinAssignment(
                 pin_id=int(pin.get("pin_id") or idx),
                 pin_name=pin_name,
-                hole_id=board_schema.normalize_hole_id(str(hole_id)),
-                electrical_node_id=pin.get("electrical_node_id"),
+                hole_id=normalized_hole,
+                electrical_node_id=fresh_node_id,
                 observations=_pin_observations_from_payload(pin.get("observations", [])),
                 confidence=float(pin.get("confidence", comp.get("confidence", 1.0))),
                 is_ambiguous=bool(pin.get("is_ambiguous", False)),

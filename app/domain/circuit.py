@@ -197,15 +197,18 @@ class CircuitAnalyzer:
         normalized_pins: list[PinAssignment] = []
         for pin in comp.pins:
             hole_id = self.board_schema.normalize_hole_id(pin.hole_id)
+            # P0.B1 — hole_id 是 source of truth；hole_id 缺失才退到上游送的值。
+            fresh_node_id = (
+                self.board_schema.resolve_hole_to_node(hole_id)
+                if hole_id
+                else pin.electrical_node_id
+            )
             normalized_pins.append(
                 PinAssignment(
                     pin_id=pin.pin_id,
                     pin_name=pin.pin_name,
                     hole_id=hole_id,
-                    electrical_node_id=(
-                        pin.electrical_node_id
-                        or self.board_schema.resolve_hole_to_node(hole_id)
-                    ),
+                    electrical_node_id=fresh_node_id,
                     electrical_net_id=pin.electrical_net_id,
                     observations=list(pin.observations or []),
                     confidence=pin.confidence,
@@ -269,10 +272,19 @@ class CircuitAnalyzer:
             self._uf.union(net_names[0], net_names[1])
 
     def _instance_pin_nodes(self, comp: ComponentInstance) -> list[tuple[PinAssignment, str]]:
-        """返回组件每个 pin 对应的 electrical node。"""
+        """返回组件每个 pin 对应的 electrical node。
+
+        **P0.B1** — hole_id 是 source of truth；只有 hole_id 缺失时才
+        退到 ``pin.electrical_node_id``。之前的"stale 优先"模式会让
+        前端修正 hole_id 后没把 electrical_node_id 一起重算的 pin 走
+        旧 net。
+        """
         pin_nodes: list[tuple[PinAssignment, str]] = []
         for pin in comp.pins:
-            node_id = pin.electrical_node_id or self.board_schema.resolve_hole_to_node(pin.hole_id)
+            if pin.hole_id:
+                node_id = self.board_schema.resolve_hole_to_node(pin.hole_id)
+            else:
+                node_id = pin.electrical_node_id
             pin_nodes.append((pin, node_id))
         return pin_nodes
 
@@ -543,7 +555,18 @@ class CircuitAnalyzer:
             return "VCC"
         if u.startswith("+") and any(c.isdigit() for c in u):
             return "VCC"
-        if any(kw in u for kw in ("GND", "VSS", "V-", "0V", "地", "负极", "电源负", "接地")):
+        negative_keywords = (
+            "VEE",
+            "NEGATIVE_SUPPLY",
+            "NEGATIVE SUPPLY",
+            "负电源",
+            "负电压",
+        )
+        if any(kw in u for kw in negative_keywords):
+            return "VEE"
+        if u.startswith("-") and any(c.isdigit() for c in u):
+            return "VEE"
+        if any(kw in u for kw in ("GND", "VSS", "0V", "地", "负极", "电源负", "接地")):
             return "GND"
         if "V" in u and any(c.isdigit() for c in u):
             return "VCC"
@@ -561,6 +584,36 @@ class CircuitAnalyzer:
         roots = {self._uf.find(n) for n in all_nets}
         return len(roots)
 
+    def _pin_refs_by_root(self) -> dict[str, list[tuple[ComponentInstance, PinAssignment, str]]]:
+        """Return component pins grouped by their union-find root."""
+        refs: dict[str, list[tuple[ComponentInstance, PinAssignment, str]]] = {}
+        for comp in self.component_instances:
+            for pin, node_id in self._instance_pin_nodes(comp):
+                refs.setdefault(self._uf.find(node_id), []).append((comp, pin, node_id))
+        return refs
+
+    def _floating_ic_singleton_roots(self) -> set[str]:
+        """IC package pins that occupy an otherwise empty breadboard row.
+
+        A detected DIP package contributes physical legs even when no wire or
+        component is inserted into that row. Treat those singleton package pins
+        as floating by omitting an electrical_net_id instead of inventing a
+        normal signal net. If the singleton is on an assigned rail we keep the
+        net, because the user explicitly declared that rail's electrical role.
+        """
+        pin_refs_by_root = self._pin_refs_by_root()
+        floating_roots: set[str] = set()
+        for root, refs in pin_refs_by_root.items():
+            if len(refs) != 1:
+                continue
+            comp, _pin, node_id = refs[0]
+            if self._norm_type(comp.component_type) != "IC":
+                continue
+            if node_id in self.power_nets:
+                continue
+            floating_roots.add(root)
+        return floating_roots
+
     def export_netlist_v2(self, scene_id: str = "runtime_scene") -> dict:
         """导出保留 hole_id / pin_name / electrical_net 的新网表格式。"""
         self._identify_power_nets()
@@ -574,9 +627,12 @@ class CircuitAnalyzer:
         nets: list[ElectricalNet] = []
         member_holes_by_net: dict[str, set] = {}
         member_nodes_by_net: dict[str, set] = {}
+        floating_ic_roots = self._floating_ic_singleton_roots()
 
         instances = self.component_instances
         for idx, (root, members) in enumerate(uf_groups.items()):
+            if root in floating_ic_roots:
+                continue
             net_id = f"NET_{idx:03d}"
             for member in members:
                 node_to_net_id[member] = net_id
@@ -588,10 +644,12 @@ class CircuitAnalyzer:
         for comp in instances:
             exported_pins: list[PinAssignment] = []
             for pin in comp.pins:
-                node_id = (
-                    pin.electrical_node_id
-                    or self.board_schema.resolve_hole_to_node(pin.hole_id)
-                )
+                # P0.B1 — hole_id is source of truth; fall back to
+                # pin.electrical_node_id only when hole_id missing.
+                if pin.hole_id:
+                    node_id = self.board_schema.resolve_hole_to_node(pin.hole_id)
+                else:
+                    node_id = pin.electrical_node_id
                 net_id = node_to_net_id.get(self._uf.find(node_id))
                 if net_id:
                     member_holes_by_net.setdefault(net_id, set()).add(pin.hole_id)
@@ -628,6 +686,8 @@ class CircuitAnalyzer:
             )
 
         for idx, (root, members) in enumerate(uf_groups.items()):
+            if root in floating_ic_roots:
+                continue
             net_id = f"NET_{idx:03d}"
             power_role = ""
             for member in members:
@@ -643,12 +703,25 @@ class CircuitAnalyzer:
                 )
             )
 
+        # P0.B0 (audit 2026-05-19) — emit the schema's full
+        # node→holes index + the currently-effective rail labels so the
+        # frontend can highlight the complete conducting strip on drag
+        # and so callers see what rail roles are in effect (the rail
+        # defaults live on BoardSchema since P0.B2).
+        board_topology = {
+            "schema_id": self.board_schema.schema_id,
+            "board_type": self.board_schema.board_type,
+            "node_to_holes": self.board_schema.node_to_hole_index(),
+            "rail_assignments": dict(self.rail_assignments),
+        }
+
         netlist = NetlistV2(
             scene_id=scene_id,
             board_schema_id=self.board_schema.schema_id,
             components=exported_components,
             nets=nets,
             node_index=node_index,
+            board_topology=board_topology,
         )
         return netlist.to_dict()
 

@@ -492,6 +492,17 @@ def _build_cur_extra_wire_on_gnd() -> nx.Graph:
     return g
 
 
+def _build_cur_redundant_jumper_on_gnd() -> nx.Graph:
+    """A normal jumper extending GND to another board segment."""
+
+    g = _build_cur_match()
+    g.add_node("cur_comp:W1", kind="comp", ctype="Wire")
+    g.add_node("cur_net:NET_GND_EXT", kind="net", role="ground")
+    g.add_edge("cur_comp:W1", "cur_net:NET_002")
+    g.add_edge("cur_comp:W1", "cur_net:NET_GND_EXT")
+    return g
+
+
 def _build_cur_extra_resistor_on_signal_only() -> nx.Graph:
     """Same as `_build_cur_extra_resistor` — R2 between two signal nets,
     nothing critical. Kept as a regression guard to verify R1 doesn't
@@ -536,19 +547,20 @@ class TestR1CriticalExtras:
         crit = result["details"]["critical_extras"]
         assert any(c["role"] == "power" and c["extra_edges"] >= 1 for c in crit)
 
-    def test_extra_wire_on_gnd_fails(self) -> None:
-        """Extra Wire that bumps degree on a ground net must fail."""
+    def test_extra_wire_on_gnd_stays_pass(self) -> None:
+        """Normal Wire/Jumper clutter that touches only one critical net
+        should not be promoted to CRITICAL_EXTRA_CONNECTION."""
 
         result = compare_logical_graphs(
-            _build_ref(), _build_cur_extra_wire_on_gnd(),
+            _build_ref(), _build_cur_redundant_jumper_on_gnd(),
         )
-        assert result["logic_correct"] is False
-        assert result["details"]["match_type"] == "extra_on_critical_net"
-        crit_items = [
-            i for i in result["report"]["items"]
-            if i["error_code"] == "CRITICAL_EXTRA_CONNECTION"
-        ]
-        assert any(i["expected"]["role"] == "ground" for i in crit_items)
+        assert result["logic_correct"] is True
+        assert result["details"]["match_type"] == "full_isomorphism"
+        assert result["report"]["items"] == []
+        assert not any(
+            i["error_code"] == "CRITICAL_EXTRA_CONNECTION"
+            for i in result["report"]["items"]
+        )
 
     def test_critical_extra_marks_report_topology_errors(self) -> None:
         """The promoted item should land in report.topology_errors
@@ -573,9 +585,8 @@ class TestR1CriticalExtras:
 # ---------------------------------------------------------------------------
 # R8 — Wire-drop production bug fix (RISK_REGISTER §5, plan §十 R6 follow-up)
 # A stray Wire bridging two role-critical nets must now reach the rule
-# comparator. Previously: dropped by `current_netlist_v2_to_graph` and
-# `_payload_raw_pin_edges_cur`. Now it lands as a cur node + bumps the
-# degree on the bridged nets so `_critical_extra_items` catches it.
+# comparator. Normal jumpers are collapsed before compare; only bridges
+# across different critical reference nets remain as critical extras.
 # ---------------------------------------------------------------------------
 
 
@@ -649,8 +660,9 @@ class TestR8WireDropFix:
             if i["error_code"] == "CRITICAL_EXTRA_CONNECTION"
         ]
         assert crit, "expected CRITICAL_EXTRA_CONNECTION on power/ground"
-        seen_roles = {i["expected"]["role"] for i in crit}
-        assert seen_roles & {"power", "ground"}
+        bridged = crit[0]["actual"]["bridged_critical_nets"]
+        seen_labels = {item["label"] for item in bridged}
+        assert {"VCC", "GND"} <= seen_labels
 
     def test_clean_circuit_with_no_wire_still_passes(self) -> None:
         """Regression: removing the Wire-skip must not introduce
@@ -704,7 +716,7 @@ class TestR8WireDropFix:
         )
         assert result["logic_correct"] is True
 
-    def test_wire_on_non_critical_signal_net_stays_passing(self) -> None:
+    def test_wire_on_non_critical_signal_net_is_not_critical_extra(self) -> None:
         """Wire bridging two signal-internal nets should NOT trigger
         R1's critical-extra promotion — Position B only fires on
         power/ground/input/output."""
@@ -752,6 +764,11 @@ class TestR8WireDropFix:
             ref_payload=ref_payload,
             cur_netlist_v2=cur_netlist,
         )
-        # equivalent_with_extra path; not flipped to fail
-        assert result["logic_correct"] is True
-        assert result["details"]["match_type"] == "equivalent_with_extra"
+        # The wire is collapsed into the graph, so shorting two distinct
+        # signal nets may still fail as a normal topology mismatch, but it
+        # must not be reported as CRITICAL_EXTRA_CONNECTION.
+        assert result["logic_correct"] is False
+        assert not any(
+            item["error_code"] == "CRITICAL_EXTRA_CONNECTION"
+            for item in result["report"]["items"]
+        )

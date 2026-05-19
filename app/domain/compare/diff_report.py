@@ -464,6 +464,10 @@ def _critical_extra_items(reference_graph: nx.Graph, current_graph: nx.Graph) ->
 
     from app.domain.compare.matcher import CRITICAL_NET_ROLES
 
+    def _is_wire_node(data: dict[str, Any]) -> bool:
+        ctype = normalize_component_type(data.get("ctype") or data.get("component_type") or "")
+        return ctype in {"Wire", "Jumper"}
+
     def _role_degrees(g: nx.Graph) -> dict[str, int]:
         per_role: dict[str, int] = {}
         for node, data in g.nodes(data=True):
@@ -472,7 +476,12 @@ def _critical_extra_items(reference_graph: nx.Graph, current_graph: nx.Graph) ->
             role = normalize_net_role(data.get("role"))
             if role not in CRITICAL_NET_ROLES:
                 continue
-            per_role[role] = per_role.get(role, 0) + g.degree(node)
+            non_wire_degree = sum(
+                1
+                for neighbor in g.neighbors(node)
+                if not _is_wire_node(dict(g.nodes[neighbor]))
+            )
+            per_role[role] = per_role.get(role, 0) + non_wire_degree
         return per_role
 
     ref_deg = _role_degrees(reference_graph)
@@ -497,7 +506,80 @@ def _critical_extra_items(reference_graph: nx.Graph, current_graph: nx.Graph) ->
                     "电源 / 地 / 输入 / 输出 不应出现非参考要求的额外接线。"
                 ),
             ))
+    items.extend(_critical_wire_bridge_items(current_graph))
     return items
+
+
+def _critical_wire_bridge_items(current_graph: nx.Graph) -> list[dict[str, Any]]:
+    from app.domain.compare.matcher import CRITICAL_NET_ROLES
+
+    items: list[dict[str, Any]] = []
+    for node, data in current_graph.nodes(data=True):
+        if data.get("kind") != "comp":
+            continue
+        ctype = normalize_component_type(data.get("ctype") or data.get("component_type") or "")
+        if ctype not in {"Wire", "Jumper"}:
+            continue
+
+        critical_nets: dict[str, dict[str, Any]] = {}
+        for neighbor in current_graph.neighbors(node):
+            net_data = dict(current_graph.nodes[neighbor])
+            if net_data.get("kind") != "net":
+                continue
+            role = normalize_net_role(net_data.get("role"))
+            if role not in CRITICAL_NET_ROLES:
+                continue
+            key = _critical_net_identity(neighbor, net_data)
+            critical_nets.setdefault(
+                key,
+                {
+                    "node": neighbor,
+                    "role": role,
+                    "label": key,
+                },
+            )
+
+        if len(critical_nets) < 2:
+            continue
+
+        bridged = sorted(critical_nets.values(), key=lambda item: item["label"])
+        items.append(_item(
+            "CRITICAL_EXTRA_CONNECTION",
+            "extra_connection",
+            "error",
+            (
+                f"跳线 {data.get('source_id') or node} 桥接了多个关键网络："
+                f"{', '.join(item['label'] for item in bridged)}。"
+            ),
+            expected={
+                "critical_reference_nets_should_be_separate": [
+                    item["label"] for item in bridged
+                ],
+            },
+            actual={
+                "wire_component": data.get("source_id") or node,
+                "bridged_critical_nets": bridged,
+            },
+            suggested_action=(
+                "请移除这根跨关键网络的跳线；电源、地、输入、输出等关键参考网络"
+                "不能被额外导线桥接。"
+            ),
+        ))
+    return items
+
+
+def _critical_net_identity(node_id: str, data: dict[str, Any]) -> str:
+    for key in ("role_label", "canonical_name"):
+        value = normalize_role_label(data.get(key))
+        if value:
+            return value
+    role = normalize_net_role(data.get("role"))
+    if role != "signal":
+        return role
+    value = normalize_role_label(data.get("source_id"))
+    if value:
+        return value
+    return str(node_id).split(":", 1)[-1]
 
 
 def _difference_items(reference_graph: nx.Graph, current_graph: nx.Graph) -> list[dict[str, Any]]:

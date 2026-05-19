@@ -1422,8 +1422,11 @@ def _build_ic_geometry_pins(
     pins_by_id: Dict[int, dict] = {}
     for slot in range(half):
         if notch_at_low_index:
-            e_pin_id = slot + 1
-            f_pin_id = 2 * half - slot
+            # Left/up notch: pin1 starts at the lower row near the notch,
+            # then numbering proceeds counterclockwise. Thus bottom/f row is
+            # 1→4 and top/e row returns 8→5.
+            e_pin_id = 2 * half - slot
+            f_pin_id = slot + 1
         else:
             e_pin_id = half - slot
             f_pin_id = half + 1 + slot

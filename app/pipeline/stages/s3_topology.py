@@ -16,12 +16,14 @@ from app.pipeline.topology_input import build_analyzer_from_components
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_RAIL_ASSIGNMENTS: Dict[str, str] = {
-    "top_plus": "VCC",
-    "top_minus": "VCC",
-    "bot_plus": "GND",
-    "bot_minus": "GND",
-}
+# P0.B2 (audit 2026-05-19) — the canonical defaults now live on
+# ``BoardSchema.default_rail_assignments()`` so different physical board
+# variants can ship different rail conventions. This module-level
+# constant is kept as a deprecation shim; new callers should ask the
+# schema. Mutating this dict no longer affects ``run_topology``.
+DEFAULT_RAIL_ASSIGNMENTS: Dict[str, str] = (
+    BoardSchema.default_breadboard().default_rail_assignments()
+)
 
 
 def run_topology(
@@ -33,8 +35,8 @@ def run_topology(
     Args:
         components: S2 映射后的元件列表
         rail_assignments: 电源轨道指定, 如
-            {"top_plus": "VCC", "top_minus": "GND",
-             "bot_plus": "VCC", "bot_minus": "GND"}
+            {"top_plus": "VCC", "top_minus": "VEE",
+             "bot_plus": "GND", "bot_minus": "GND"}
 
     Returns:
         {
@@ -53,7 +55,9 @@ def run_topology(
         components,
         board_schema=board_schema,
     )
-    effective_rails = dict(DEFAULT_RAIL_ASSIGNMENTS)
+    # P0.B2 — defaults live on the schema. `rail_assignments=None` /
+    # `{}` falls back fully; partial dicts merge on top.
+    effective_rails = board_schema.default_rail_assignments()
     if rail_assignments:
         effective_rails.update(rail_assignments)
     for track_id, label in effective_rails.items():

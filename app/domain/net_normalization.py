@@ -425,14 +425,52 @@ def _resolve_net(
     raw: dict[str, Any],
     indexes: dict[str, dict[Any, dict[str, Any]]],
 ) -> tuple[dict[str, Any] | None, str]:
+    """**R11 follow-up fix (2026-05-19)** — try every present locator and
+    return the first that successfully maps to a real net.
+
+    Previously this function early-returned on the **first non-empty
+    field** (electrical_net_id checked first), so a frontend that sent
+    a stale or synthetic ``electrical_net_id`` (e.g. ``LOCAL_NET_0``
+    introduced by the R11 frontend recompute) would short-circuit
+    here and the whole annotation would be silently dropped — even
+    though the same payload also carried a perfectly valid
+    ``hole_id`` / ``component_id`` + ``pin_name`` / ``electrical_node_id``.
+
+    Order of preference is unchanged (electrical_net_id is still tried
+    first when present); the only change is the fallback path.
+    """
+
+    candidates: list[tuple[dict[str, Any] | None, str]] = []
     if raw.get("electrical_net_id"):
-        return indexes["id"].get(str(raw["electrical_net_id"])), "electrical_net_id"
+        candidates.append((
+            indexes["id"].get(str(raw["electrical_net_id"])),
+            "electrical_net_id",
+        ))
     if raw.get("component_id") and raw.get("pin_name"):
-        return indexes["comp_pin"].get((str(raw["component_id"]), str(raw["pin_name"]))), "component_pin"
+        candidates.append((
+            indexes["comp_pin"].get(
+                (str(raw["component_id"]), str(raw["pin_name"]))
+            ),
+            "component_pin",
+        ))
     if raw.get("hole_id"):
-        return indexes["hole"].get(str(raw["hole_id"])), "hole_id"
+        candidates.append((
+            indexes["hole"].get(str(raw["hole_id"])),
+            "hole_id",
+        ))
     if raw.get("electrical_node_id"):
-        return indexes["node"].get(str(raw["electrical_node_id"])), "electrical_node_id"
+        candidates.append((
+            indexes["node"].get(str(raw["electrical_node_id"])),
+            "electrical_node_id",
+        ))
+    for net, source in candidates:
+        if net is not None:
+            return net, source
+    # Nothing resolved — return the first attempt's miss tag for
+    # downstream warning consistency (callers log the resolver they
+    # tried first; preserves old log shape on outright misses).
+    if candidates:
+        return None, candidates[0][1]
     return None, ""
 
 

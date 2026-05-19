@@ -289,6 +289,64 @@ class TestS3Topology:
         assert result["component_count"] == 1
         # 应该不影响基本功能
 
+    def test_default_top_minus_rail_exports_vee(self):
+        """默认 op-amp 轨道配置应保留 VEE 负电源，而不是折叠成 GND。"""
+        from app.pipeline.stages.s3_topology import run_topology
+
+        components = [
+            make_mapped_component("R1", "Resistor", [
+                make_pin(1, hole_id="LN1"),
+                make_pin(2, hole_id="A1"),
+            ]),
+        ]
+
+        result = run_topology(components=components)
+        vee_net = next(
+            net
+            for net in result["netlist_v2"]["nets"]
+            if "TRACK_LN_SEG1" in net.get("member_node_ids", [])
+        )
+
+        assert vee_net["power_role"] == "VEE"
+
+    def test_ic_singleton_package_pins_export_as_floating(self):
+        """未接任何元件的 IC package 行不应自动生成普通 signal net。"""
+        from app.pipeline.stages.s3_topology import run_topology
+
+        ic_pins = [
+            {"pin_id": 1, "pin_name": "pin1", "hole_id": "F17"},
+            {"pin_id": 2, "pin_name": "pin2", "hole_id": "F18"},
+            {"pin_id": 3, "pin_name": "pin3", "hole_id": "F19"},
+            {"pin_id": 4, "pin_name": "pin4", "hole_id": "F20"},
+            {"pin_id": 5, "pin_name": "pin5", "hole_id": "E20"},
+            {"pin_id": 6, "pin_name": "pin6", "hole_id": "E19"},
+            {"pin_id": 7, "pin_name": "pin7", "hole_id": "E18"},
+            {"pin_id": 8, "pin_name": "pin8", "hole_id": "E17"},
+        ]
+        components = [
+            {
+                "component_id": "U1",
+                "component_type": "IC",
+                "package_type": "dip8",
+                "part_subtype": "UA741",
+                "pins": ic_pins,
+                "confidence": 1.0,
+            },
+            make_mapped_component("R_IN", "Resistor", [
+                make_pin(1, hole_id="G18"),
+                make_pin(2, hole_id="G25"),
+            ]),
+        ]
+
+        result = run_topology(components=components)
+        u1 = next(c for c in result["netlist_v2"]["components"] if c["component_id"] == "U1")
+        pins = {p["pin_name"]: p for p in u1["pins"]}
+
+        assert pins["pin1"]["electrical_net_id"] is None
+        assert pins["pin5"]["electrical_net_id"] is None
+        assert pins["pin8"]["electrical_net_id"] is None
+        assert pins["pin2"]["electrical_net_id"] is not None
+
     def test_t6_10_pin_hole_id_in_net(self):
         """验证每个 pin 的 hole_id 出现在 net 的 member_hole_ids 中"""
         from app.pipeline.stages.s3_topology import run_topology

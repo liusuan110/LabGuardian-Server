@@ -1,6 +1,6 @@
 # `app.domain.gnn` · GNN-assisted Graph Comparator
 
-**Status: P5 ✅ + P4.1 R2 ✅ + R1 ✅ + R5 CI ✅ + R6 Sim→Real ✅ + R8 Wire-drop ✅ + R9 Phase 3 Real-Ingest ✅ — Plan §八 red line MET on synthetic AND across every sim→real (profile × split) cell: false_pass = 0.0000 throughout. R9 ships Phase 3 plumbing: `app/domain/gnn/real_netlist_loader.py` + `evaluator.evaluate_real_samples` + `gnn_eval --real-dir` + nightly auto-pickup; the system is ready to ingest production data the moment it arrives. Smoke validated on 5 hand-rolled fixtures in `tests/fixtures/real_student_simulated/`. See [`docs/REAL_STUDENT_NETLIST.md`](../../../docs/REAL_STUDENT_NETLIST.md). 547 tests green.**
+**Status: P5 ✅ + R1..R10 ✅ + R11 Hole-move audit ✅ — Plan §八 red line MET on every split with 100% rule accuracy. R11 ships three independent fixes for the manual-correction UX bug ("moving a pin doesn't form a new connection"): **B0** netlist_v2 now exports `board_topology.node_to_holes` so frontend can highlight the full 5-hole conducting strip on drag; **B1** `hole_id` is now strictly the source of truth for `electrical_node_id` across 5 pipeline sites (stale upstream values no longer mask manual corrections); **B2** rail defaults moved onto `BoardSchema.default_rail_assignments()` and are echoed back in `board_topology.rail_assignments`. 7 new contract tests + fixed 1 test that was pinning the bug. 554 tests green.**
 Full plan: `~/.claude/plans/labguardian-server-glowing-galaxy.md`.
 
 ## What this module is

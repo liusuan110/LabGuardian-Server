@@ -295,6 +295,114 @@ class TestApplyNetRoleAssignments:
         assert netlist["nets"][0]["role"] == "output"
         assert netlist["nets"][0]["role_label"] == ""
 
+    def test_apply_role_assignment_by_empty_hole_in_occupied_row(self) -> None:
+        netlist = {
+            "components": [
+                {
+                    "component_id": "R1",
+                    "pins": [
+                        {
+                            "pin_name": "pin1",
+                            "hole_id": "A3",
+                            "electrical_node_id": "ROW_3_L",
+                            "electrical_net_id": "NET_001",
+                        }
+                    ],
+                }
+            ],
+            "nets": [
+                {
+                    "electrical_net_id": "NET_001",
+                    "member_node_ids": ["ROW_3_L"],
+                    "member_hole_ids": ["A3"],
+                }
+            ],
+        }
+
+        warnings, applied = apply_net_role_assignments(
+            netlist,
+            [{"role": "VIN", "hole_id": "C3"}],
+        )
+
+        assert warnings == []
+        assert applied[0]["electrical_net_id"] == "NET_001"
+        assert applied[0]["resolved_by"] == "hole_id"
+        assert netlist["nets"][0]["manual_role"] == "input"
+
+    def test_apply_role_assignment_by_row_prefix_when_unambiguous(self) -> None:
+        netlist = {
+            "components": [],
+            "nets": [
+                {
+                    "electrical_net_id": "NET_007",
+                    "member_node_ids": ["ROW_12_R"],
+                    "member_hole_ids": ["F12"],
+                }
+            ],
+        }
+
+        warnings, applied = apply_net_role_assignments(
+            netlist,
+            [{"role": "VOUT", "electrical_node_id": "ROW_12"}],
+        )
+
+        assert warnings == []
+        assert applied[0]["electrical_net_id"] == "NET_007"
+        assert applied[0]["resolved_by"] == "electrical_node_id"
+        assert netlist["nets"][0]["manual_role"] == "output"
+
+    def test_port_annotation_electrical_net_id_locator_resolves_to_logical_net(self) -> None:
+        netlist = {
+            "components": [
+                {
+                    "component_id": "Q1",
+                    "pins": [
+                        {
+                            "pin_name": "base",
+                            "hole_id": "H24",
+                            "electrical_node_id": "ROW_24_R",
+                            "electrical_net_id": "NET_024",
+                        }
+                    ],
+                }
+            ],
+            "nets": [
+                {
+                    "electrical_net_id": "NET_016",
+                    "member_node_ids": ["ROW_16_R"],
+                    "member_hole_ids": ["F16"],
+                },
+                {
+                    "electrical_net_id": "NET_024",
+                    "member_node_ids": ["ROW_24_R"],
+                    "member_hole_ids": ["H24"],
+                },
+            ],
+        }
+
+        warnings, applied = apply_net_role_assignments(
+            netlist,
+            [],
+            port_annotations=[
+                {
+                    "role": "input",
+                    "target": {"electrical_net_id": "ROW_16_R"},
+                    "label": "UI1",
+                },
+                {
+                    "role": "output",
+                    "target": {"electrical_net_id": "H24"},
+                    "label": "UO1",
+                },
+            ],
+        )
+
+        assert warnings == []
+        assert [item["electrical_net_id"] for item in applied] == ["NET_016", "NET_024"]
+        assert {item["resolved_by"] for item in applied} == {"electrical_net_id_locator"}
+        assert netlist["nets"][0]["role_label"] == "UI1"
+        assert netlist["nets"][1]["role_label"] == "UO1"
+
 
 class TestGraphCompareRoleMismatch:
     def test_input_node_mismatch_detected(self) -> None:

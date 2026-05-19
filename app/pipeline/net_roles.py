@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
+from app.domain.board_schema import BoardSchema
 from app.domain.logical_reference import normalize_net_role, normalize_role_label
+
+_ROW_NODE_RE = re.compile(r"^ROW_(\d+)(?:_([LR]))?$", re.IGNORECASE)
 
 
 def apply_net_role_assignments(
@@ -41,6 +45,7 @@ def _build_net_indexes(netlist_v2: dict[str, Any]) -> dict[str, Any]:
     netlist_nets_by_hole: dict[str, dict[str, Any]] = {}
     netlist_nets_by_node: dict[str, dict[str, Any]] = {}
     netlist_nets_by_comp_pin: dict[tuple[str, str], dict[str, Any]] = {}
+    board_schema = BoardSchema.default_breadboard()
 
     for net in netlist_v2.get("nets", []) or []:
         if not isinstance(net, dict):
@@ -53,6 +58,8 @@ def _build_net_indexes(netlist_v2: dict[str, Any]) -> dict[str, Any]:
             netlist_nets_by_hole[str(hole_id)] = net
         for node_id in net.get("member_node_ids", []) or []:
             netlist_nets_by_node[str(node_id)] = net
+            for hole_id in _holes_for_node_id(str(node_id), board_schema):
+                netlist_nets_by_hole.setdefault(hole_id, net)
 
     for comp in netlist_v2.get("components", []) or []:
         if not isinstance(comp, dict):
@@ -158,19 +165,15 @@ def _resolve_target_net_id(
     indexes: dict[str, Any],
     raw: dict[str, Any],
 ) -> tuple[str | None, str, dict[str, Any] | None]:
+    attempted_electrical_net_id: str | None = None
     if raw.get("electrical_net_id"):
         target_net_id = str(raw["electrical_net_id"])
-        if target_net_id not in indexes["by_id"]:
-            return (
-                target_net_id,
-                "electrical_net_id",
-                {
-                    "warning_code": "ROLE_TARGET_NOT_FOUND",
-                    "message": f"指定的电气网络 {target_net_id} 在当前 netlist 中不存在",
-                    "assignment": raw,
-                },
-            )
-        return target_net_id, "electrical_net_id", None
+        if target_net_id in indexes["by_id"]:
+            return target_net_id, "electrical_net_id", None
+        attempted_electrical_net_id = target_net_id
+        net_obj = _resolve_locator_as_board_node_or_hole(indexes, target_net_id)
+        if net_obj:
+            return str(net_obj.get("electrical_net_id") or ""), "electrical_net_id_locator", None
 
     if raw.get("component_id") and raw.get("pin_name"):
         net_obj = indexes["by_comp_pin"].get((str(raw["component_id"]), str(raw["pin_name"])))
@@ -178,16 +181,102 @@ def _resolve_target_net_id(
             return str(net_obj.get("electrical_net_id") or ""), "component_pin", None
 
     if raw.get("hole_id"):
-        net_obj = indexes["by_hole"].get(str(raw["hole_id"]))
+        hole_id = str(raw["hole_id"])
+        net_obj = indexes["by_hole"].get(hole_id)
+        if not net_obj:
+            normalized_hole = BoardSchema.default_breadboard().normalize_hole_id(hole_id)
+            net_obj = indexes["by_hole"].get(normalized_hole)
         if net_obj:
             return str(net_obj.get("electrical_net_id") or ""), "hole_id", None
 
     if raw.get("electrical_node_id"):
-        net_obj = indexes["by_node"].get(str(raw["electrical_node_id"]))
+        node_id = str(raw["electrical_node_id"])
+        net_obj = indexes["by_node"].get(node_id)
+        if not net_obj:
+            net_obj = _resolve_row_node_prefix(indexes["by_node"], node_id)
         if net_obj:
             return str(net_obj.get("electrical_net_id") or ""), "electrical_node_id", None
 
+    if attempted_electrical_net_id:
+        return (
+            attempted_electrical_net_id,
+            "electrical_net_id",
+            {
+                "warning_code": "ROLE_TARGET_NOT_FOUND",
+                "message": f"指定的电气网络 {attempted_electrical_net_id} 在当前 netlist 中不存在",
+                "assignment": raw,
+            },
+        )
+
     return None, "", None
+
+
+def _resolve_locator_as_board_node_or_hole(
+    indexes: dict[str, Any],
+    value: str,
+) -> dict[str, Any] | None:
+    """Treat a non-NET target value as a breadboard locator.
+
+    Some port-annotation clicks send ROW_16_R / ROW_21_L / H24-like board
+    primitives in ``target.electrical_net_id``. They are not final NET_xxx ids,
+    so resolve them through the same node/hole indexes before declaring a miss.
+    """
+    locator = str(value or "")
+    if not locator:
+        return None
+
+    net_obj = indexes["by_node"].get(locator)
+    if not net_obj:
+        net_obj = _resolve_row_node_prefix(indexes["by_node"], locator)
+    if net_obj:
+        return net_obj
+
+    net_obj = indexes["by_hole"].get(locator)
+    if not net_obj:
+        normalized_hole = BoardSchema.default_breadboard().normalize_hole_id(locator)
+        net_obj = indexes["by_hole"].get(normalized_hole)
+    return net_obj
+
+
+def _holes_for_node_id(node_id: str, board_schema: BoardSchema) -> list[str]:
+    """Expand a board electrical node to every hole in that node.
+
+    S3 stores occupied holes only, but manual role selection often clicks an
+    empty hole in the same breadboard row. Indexing all holes for each occupied
+    ROW/TRACK node lets ROW_x / hole_id resolve back to the existing NET_x.
+    """
+    normalized = str(node_id or "")
+    if not normalized:
+        return []
+    return [
+        hole_id
+        for hole_id, spec in board_schema.holes.items()
+        if spec.electrical_node_id == normalized
+    ]
+
+
+def _resolve_row_node_prefix(
+    nodes: dict[str, dict[str, Any]],
+    raw_node_id: str,
+) -> dict[str, Any] | None:
+    normalized = str(raw_node_id or "").strip().upper()
+    match = _ROW_NODE_RE.match(normalized)
+    if not match or match.group(2):
+        return None
+    prefix = f"ROW_{match.group(1)}_"
+    matches = [
+        net
+        for node_id, net in nodes.items()
+        if str(node_id).upper().startswith(prefix)
+    ]
+    unique_by_id = {
+        str(net.get("electrical_net_id") or net.get("net_id") or ""): net
+        for net in matches
+    }
+    unique_by_id.pop("", None)
+    if len(unique_by_id) == 1:
+        return next(iter(unique_by_id.values()))
+    return None
 
 
 def _port_annotations_to_assignments(annotations: list[Any] | None) -> list[dict[str, Any]]:

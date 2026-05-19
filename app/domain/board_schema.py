@@ -40,6 +40,18 @@ class HoleSpec:
     col: Optional[str] = None
 
 
+_DEFAULT_RAIL_ASSIGNMENTS: Dict[str, str] = {
+    # P0.B2 (audit 2026-05-19) — schema-level default for the standard
+    # competition breadboard (top rails wired to V±, bottom rails to GND
+    # for the dual-supply lab kit). Callers can override via the
+    # ``rail_assignments=`` kwarg on ``run_topology``.
+    "top_plus": "VCC",
+    "top_minus": "VEE",
+    "bot_plus": "GND",
+    "bot_minus": "GND",
+}
+
+
 @dataclass
 class BoardSchema:
     """面包板孔位与静态导通规则。"""
@@ -48,6 +60,38 @@ class BoardSchema:
     board_type: str
     aliases: Dict[str, str] = field(default_factory=dict)
     holes: Dict[str, HoleSpec] = field(default_factory=dict)
+
+    # ------------------------------------------------------------------
+    # P0.B0 + P0.B2 helpers (audit 2026-05-19)
+    # ------------------------------------------------------------------
+
+    def node_to_hole_index(self) -> Dict[str, list[str]]:
+        """**B0 fix** — return the inverse of ``self.holes``: each
+        electrical node ID → the **complete** list of hole IDs that the
+        schema knows belong to it (sorted).
+
+        This is the source of truth for "which holes share a strip /
+        track". Frontend uses this to highlight the full conducting
+        region when the user drags a pin, so the user doesn't get the
+        illusion that nearby holes on the same strip are "different
+        nets". See ``app/domain/circuit.py:export_netlist_v2`` for how
+        this lands in the response under ``board_topology.node_to_holes``.
+        """
+
+        out: Dict[str, list[str]] = {}
+        for hole_id, spec in self.holes.items():
+            out.setdefault(spec.electrical_node_id, []).append(hole_id)
+        for node_id, holes in out.items():
+            holes.sort()
+        return out
+
+    def default_rail_assignments(self) -> Dict[str, str]:
+        """**B2 fix** — return the schema's default rail labels. Lives
+        on BoardSchema (instead of as a module-level constant in
+        s3_topology) so different physical boards can ship different
+        defaults. Returns a fresh dict the caller can mutate."""
+
+        return dict(_DEFAULT_RAIL_ASSIGNMENTS)
 
     @classmethod
     def default_breadboard(cls) -> "BoardSchema":

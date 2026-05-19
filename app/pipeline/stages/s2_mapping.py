@@ -119,7 +119,15 @@ def _map_component_pins(
             continue
 
         selected_logic = _first_logic_for_hole(observations, hole_id)
-        electrical_node_id = pin.get("electrical_node_id") or board_schema.resolve_hole_to_node(hole_id)
+        # P0.B1 (audit 2026-05-19) — hole_id is the source of truth.
+        # Previously this code preferred the upstream's stale
+        # electrical_node_id (set from a prior pipeline run before the
+        # hole was moved), which made manual corrections silently drop.
+        electrical_node_id = (
+            board_schema.resolve_hole_to_node(hole_id)
+            if hole_id
+            else pin.get("electrical_node_id")
+        )
         candidate_hole_ids = vote_result["candidate_hole_ids"]
         candidate_node_ids = _candidate_node_ids(candidate_hole_ids, board_schema)
         ambiguity_reasons = _pin_ambiguity_reasons(
