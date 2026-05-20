@@ -79,57 +79,55 @@ FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "references"
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
+    # **Phase D · v5 (2026-05-21 prune)**: dropped 4 non-demo refs
+    # (`divider`, `all_signal`, `npn_switch`, `lm358_dual_buffer`) because
+    # they don't appear in the Intel-cup demo circuit set. Total refs:
+    # 10 → 6. Dataset size: 6000 → 3600 samples, ~115k rows, ~410 MB
+    # prebaked. Cut motivation: v5 first training attempt on 6000 samples
+    # got stuck on Windows DataLoader I/O bottleneck (9 min prebaked load
+    # alone, GPU at 34% utilization). Smaller dataset + demo-aligned refs
+    # makes the training tractable and focuses signal on edges the demo
+    # actually exercises.
     "refs": [
+        # === Demo-aligned refs (kept) ===
+        # 1) 一阶 RC
         {
             "ref_id": "rc_lowpass",
             "payload_path": str(FIXTURES_DIR / "test_rc_v1.json"),
         },
-        {
-            "ref_id": "divider",
-            "payload_path": str(FIXTURES_DIR / "test_voltage_divider_v1.json"),
-        },
-        {
-            "ref_id": "all_signal",
-            "payload_path": str(FIXTURES_DIR / "test_all_signal_v1.json"),
-        },
+        # 2) 电压跟随器 (op-amp buffer; still used as held-out test set
+        #    per v4 convention — see `test_ref_ids` below)
         {
             "ref_id": "opamp_buffer",
             "payload_path": str(FIXTURES_DIR / "test_opamp_buffer_v1.json"),
         },
-        # P3 follow-up additions to close the OOD gap measured in P3.1
-        # ablation (val 0.92 → test 0.70 with only 4 fixtures).
+        # 3) UA741 反相放大器
         {
             "ref_id": "opamp_inverting",
             "payload_path": str(FIXTURES_DIR / "test_opamp_inverting_v1.json"),
         },
-        {
-            "ref_id": "npn_switch",
-            "payload_path": str(FIXTURES_DIR / "test_npn_switch_v1.json"),
-        },
-        # P3 follow-up #2: LM358 dual-channel buffer — different IC
-        # subtype, no NC pin → exercises a different connection-policy
-        # footprint than UA741 and gives the model IC-heterogeneity
-        # signal (not just UA741 variations).
-        {
-            "ref_id": "lm358_dual_buffer",
-            "payload_path": str(FIXTURES_DIR / "test_lm358_dual_buffer_v1.json"),
-        },
-        # Phase D · v5 — close 4 blind spots measured on real student
-        # boards (see tests/fixtures/real_student/{bjt_diff_amp,
-        # opamp_inverting_lpf, opamp_summing}_correct_v1.expected.json):
-        # VEE / Potentiometer / BJT diff-pair / multi-resistor fan-in.
+        # 4) 差分放大器 (BJT diff pair w/ Potentiometer-as-trim + current
+        #    source) — exercises Transistor.base→input, Pot.wiper, VEE rail.
         {
             "ref_id": "bjt_diff_amp",
             "payload_path": str(FIXTURES_DIR / "test_bjt_diff_amp_v1.json"),
         },
+        # 5) 反相一阶 LPF (Rf ∥ C1 feedback) — exercises Capacitor in
+        #    feedback loop + dual-supply pin4=VEE convention.
         {
             "ref_id": "opamp_inverting_lpf",
             "payload_path": str(FIXTURES_DIR / "test_opamp_inverting_lpf_v1.json"),
         },
+        # 6) 反相加法器 (two-input summing, R11/R12 = VCC→VI1→GND divider)
+        #    — exercises multi-resistor fan-in OOD.
         {
             "ref_id": "opamp_summing",
             "payload_path": str(FIXTURES_DIR / "test_opamp_summing_v1.json"),
         },
+        # === Refs dropped from v4 → v5 (not in demo set):
+        #     divider, all_signal, npn_switch, lm358_dual_buffer.
+        #     If signal quality issues arise on these topologies during
+        #     evaluation, restore them in a v5.1 retrain.
     ],
     # Plan: 600 samples / ref × 10 refs = 6000 total. Tuned so pos_neg_ratio
     # stays in the [0.3, 3.0] gate and every required source fires on ≥ 1
@@ -200,11 +198,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "num_hops": 2,
     "checkpoint_every": 50,
     "subtypes_by_ref_id": {
-        # Make payload-less subtype overrides explicit
+        # Make payload-less subtype overrides explicit. lm358_dual_buffer
+        # removed in v5 prune (see refs list comment above).
         "opamp_buffer": {"U1": "UA741"},
         "opamp_inverting": {"U1": "UA741"},
-        "lm358_dual_buffer": {"U1": "LM358"},
-        # Phase D · v5
         "opamp_inverting_lpf": {"U1": "UA741"},
         "opamp_summing": {"U1": "UA741"},
     },

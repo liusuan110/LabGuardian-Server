@@ -123,11 +123,14 @@ def test_new_fixture_runs_every_perturbation_with_coverage(
 
 
 def test_default_config_includes_new_p3_followup_fixtures() -> None:
+    """opamp_inverting (UA741 反相) is still part of v5 demo set.
+    npn_switch was dropped in v5 prune (non-demo); see
+    test_default_config_demo_aligned_six_refs."""
+
     from scripts.gnn_generate_dataset import DEFAULT_CONFIG
 
     ref_ids = {r["ref_id"] for r in DEFAULT_CONFIG["refs"]}
     assert "opamp_inverting" in ref_ids, "new fixture missing from DEFAULT_CONFIG"
-    assert "npn_switch" in ref_ids
     # opamp_inverting needs UA741 subtype override
     subtypes = DEFAULT_CONFIG.get("subtypes_by_ref_id", {})
     assert subtypes.get("opamp_inverting") == {"U1": "UA741"}
@@ -162,34 +165,47 @@ def test_default_config_includes_insert_same_net_wire_perturbation() -> None:
     )
 
 
-def test_default_config_grew_to_ten_refs() -> None:
+def test_default_config_demo_aligned_six_refs() -> None:
     """Locks down the dataset size against accidental fixture drops.
 
     History: started at 4 (P1 acceptance) → 6 (P3 follow-up #1: added
     opamp_inverting + npn_switch) → 7 (P3 follow-up #2: added
     lm358_dual_buffer for IC subtype diversity) → 10 (Phase D · v5:
     added bjt_diff_amp + opamp_inverting_lpf + opamp_summing to close
-    4 OOD blind spots measured on real student boards)."""
+    4 OOD blind spots) → 6 (Phase D · v5 prune: dropped 4 non-demo
+    refs (`divider`, `all_signal`, `npn_switch`, `lm358_dual_buffer`)
+    after first v5 training attempt got stuck on Windows DataLoader
+    I/O bottleneck. v5 dataset now focuses signal on the 6 Intel-cup
+    demo circuits exclusively)."""
 
     from scripts.gnn_generate_dataset import DEFAULT_CONFIG
 
-    assert len(DEFAULT_CONFIG["refs"]) == 10, (
-        f"expected 10 refs after Phase D · v5, got {len(DEFAULT_CONFIG['refs'])}"
+    assert len(DEFAULT_CONFIG["refs"]) == 6, (
+        f"expected 6 demo-aligned refs after v5 prune, got {len(DEFAULT_CONFIG['refs'])}"
     )
     ref_ids = {r["ref_id"] for r in DEFAULT_CONFIG["refs"]}
-    # P3 follow-ups still present
-    assert "lm358_dual_buffer" in ref_ids
-    assert "opamp_inverting" in ref_ids
-    assert "npn_switch" in ref_ids
-    # Phase D · v5 additions
-    assert "bjt_diff_amp" in ref_ids
-    assert "opamp_inverting_lpf" in ref_ids
-    assert "opamp_summing" in ref_ids
+    # 6 demo circuits
+    assert ref_ids == {
+        "rc_lowpass",            # 一阶 RC
+        "opamp_buffer",          # 电压跟随器 (held-out test)
+        "opamp_inverting",       # UA741 反相
+        "bjt_diff_amp",          # 差分放大器
+        "opamp_inverting_lpf",   # 反相 LPF
+        "opamp_summing",         # 加法器
+    }, f"ref set drift: {ref_ids}"
+    # Dropped non-demo refs
+    assert "divider" not in ref_ids
+    assert "all_signal" not in ref_ids
+    assert "npn_switch" not in ref_ids
+    assert "lm358_dual_buffer" not in ref_ids
     # Subtype overrides for IC refs
     subtypes = DEFAULT_CONFIG.get("subtypes_by_ref_id", {})
-    assert subtypes.get("lm358_dual_buffer") == {"U1": "LM358"}
+    assert subtypes.get("opamp_buffer") == {"U1": "UA741"}
+    assert subtypes.get("opamp_inverting") == {"U1": "UA741"}
     assert subtypes.get("opamp_inverting_lpf") == {"U1": "UA741"}
     assert subtypes.get("opamp_summing") == {"U1": "UA741"}
+    # lm358_dual_buffer subtype no longer registered
+    assert "lm358_dual_buffer" not in subtypes
 
 
 def test_lm358_fixture_loads_with_correct_port_types() -> None:
