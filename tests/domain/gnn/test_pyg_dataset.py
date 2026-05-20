@@ -122,7 +122,7 @@ def test_reconstruct_cur_hcg_matches_dataset_builder_output(
     entry = entries[0]
     ref_id, sample_id = entry.split("/", 1)
     payload = json.loads(
-        (labels_dir / ref_id / f"{sample_id}.json").read_text()
+        (labels_dir / ref_id / f"{sample_id}.json").read_text(encoding="utf-8")
     )
     cur_hcg = reconstruct_cur_hcg(
         reg.ref_hcg(ref_id),
@@ -154,7 +154,7 @@ def test_flat_seal_dataset_yields_one_data_per_row(tmp_path: Path) -> None:
     for entry in entries:
         ref_id, sid = entry.split("/", 1)
         payload = json.loads(
-            (labels_dir / ref_id / f"{sid}.json").read_text()
+            (labels_dir / ref_id / f"{sid}.json").read_text(encoding="utf-8")
         )
         expected_total += len(payload["samples"])
     assert len(ds) == expected_total
@@ -240,7 +240,7 @@ def test_flat_seal_dataset_replays_with_correct_subtypes(
     # Find an opamp identity sample specifically
     opamp_identity = labels_dir / "opamp" / "opamp__identity_0000.json"
     assert opamp_identity.is_file(), "expected identity opamp sample to exist"
-    payload = json.loads(opamp_identity.read_text())
+    payload = json.loads(opamp_identity.read_text(encoding="utf-8"))
     cur_hcg = reconstruct_cur_hcg(
         reg.ref_hcg("opamp"),
         payload["cur_metadata"],

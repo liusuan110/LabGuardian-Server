@@ -43,7 +43,7 @@ FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "references"
 
 
 def _ref_payload() -> dict:
-    return json.loads((FIXTURES / "test_voltage_divider_v1.json").read_text())
+    return json.loads((FIXTURES / "test_voltage_divider_v1.json").read_text(encoding="utf-8"))
 
 
 def _matching_cur_netlist_v2() -> dict:
@@ -949,7 +949,7 @@ def test_display_helper_renders_inverting_amp_port_and_net_labels() -> None:
     from app.domain.compare.gnn_display import build_display_maps
 
     inv_amp_ref = json.loads(
-        (FIXTURES / "test_opamp_inverting_v1.json").read_text()
+        (FIXTURES / "test_opamp_inverting_v1.json").read_text(encoding="utf-8")
     )
     cur = {
         "components": [

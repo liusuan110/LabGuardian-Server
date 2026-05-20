@@ -250,7 +250,7 @@ def test_materialize_supplies_floating_for_ua741_nc_pins() -> None:
         / "references"
         / "test_opamp_buffer_v1.json"
     )
-    hcg = build_from_logical_reference(json.loads(fp.read_text()))
+    hcg = build_from_logical_reference(json.loads(fp.read_text(encoding="utf-8")))
     floating = {p.port_key for p in hcg.ports.values() if p.is_floating}
     connected = {p.port_key for p in hcg.ports.values() if not p.is_floating}
     assert floating == {"1", "5", "8"}
@@ -282,7 +282,7 @@ def test_materialize_does_nothing_for_already_full_components() -> None:
         / "references"
         / "test_rc_v1.json"
     )
-    hcg = build_from_logical_reference(json.loads(fp.read_text()))
+    hcg = build_from_logical_reference(json.loads(fp.read_text(encoding="utf-8")))
     assert all(p.is_floating is False for p in hcg.ports.values())
     assert hcg.summary()["n_ports"] == hcg.summary()["n_edges"] == 4
 

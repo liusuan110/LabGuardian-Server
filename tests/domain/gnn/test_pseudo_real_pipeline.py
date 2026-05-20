@@ -51,7 +51,7 @@ def test_export_writes_netlist_meta_and_manifest_per_profile(tmp_path: Path):
         assert profile_dir.is_dir(), f"missing profile dir {profile_dir}"
         manifest = profile_dir / "manifest.json"
         assert manifest.is_file()
-        m = json.loads(manifest.read_text())
+        m = json.loads(manifest.read_text(encoding="utf-8"))
         assert m["profile"] == profile
         assert m["n_input"] == 8
         assert m["n_exported"] >= 6, (
@@ -71,7 +71,7 @@ def test_export_writes_netlist_meta_and_manifest_per_profile(tmp_path: Path):
         meta = sample.with_name(sample.stem + ".meta.json")
         assert meta.is_file(), f"missing sidecar {meta}"
 
-        doc = json.loads(sample.read_text())
+        doc = json.loads(sample.read_text(encoding="utf-8"))
         # Adapter-shape netlist_v2 has these top-level keys
         assert "components" in doc and "nets" in doc
         assert doc["metadata"]["realism_profile"] == profile
@@ -107,8 +107,8 @@ def test_high_profile_differs_from_clean_on_same_sample(tmp_path: Path):
     assert common, "expected at least one sample exported under both profiles"
 
     rel = common[0]
-    clean_doc = json.loads((clean_dir / rel).read_text())
-    high_doc = json.loads((high_dir / rel).read_text())
+    clean_doc = json.loads((clean_dir / rel).read_text(encoding="utf-8"))
+    high_doc = json.loads((high_dir / rel).read_text(encoding="utf-8"))
     # Different metadata.realism_profile is guaranteed; the rest of the
     # change set proves noise actually flowed through.
     assert clean_doc["metadata"]["realism_profile"] == "clean"

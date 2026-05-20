@@ -43,7 +43,7 @@ FIXTURE_OPAMP = (
 
 
 def test_ua741_buffer_materializes_eight_ports() -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     assert hcg.summary()["n_ports"] == 8
     keys = {p.port_key for p in hcg.ports.values()}
     assert keys == {"1", "2", "3", "4", "5", "6", "7", "8"}
@@ -63,13 +63,13 @@ def test_ua741_buffer_materializes_eight_ports() -> None:
     ],
 )
 def test_ua741_connection_policy_per_pin(pin_key: str, expected_policy: str) -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     port = next(p for p in hcg.ports.values() if p.port_key == pin_key)
     assert port.connection_policy == expected_policy
 
 
 def test_ua741_nc_and_offset_pins_are_floating_others_connected() -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     by_key = {p.port_key: p for p in hcg.ports.values()}
     for nc_key in ("1", "5", "8"):
         assert by_key[nc_key].is_floating is True, nc_key
@@ -78,7 +78,7 @@ def test_ua741_nc_and_offset_pins_are_floating_others_connected() -> None:
 
 
 def test_ua741_offset_null_pins_share_symmetry_class() -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     by_key = {p.port_key: p for p in hcg.ports.values()}
     assert by_key["1"].symmetry_class_id == by_key["5"].symmetry_class_id
     # Each remaining IC pin is in its own class — strictly different from the
@@ -89,7 +89,7 @@ def test_ua741_offset_null_pins_share_symmetry_class() -> None:
 
 
 def test_ua741_component_pin_symmetry_groups_reports_offset_null_pair() -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     comp = next(iter(hcg.components.values()))
     # Should contain exactly one non-trivial group: {"1", "5"}
     assert comp.pin_symmetry_groups == (("1", "5"),)
@@ -98,7 +98,7 @@ def test_ua741_component_pin_symmetry_groups_reports_offset_null_pair() -> None:
 
 
 def test_ua741_pin_numbers_assigned() -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     by_key = {p.port_key: p for p in hcg.ports.values()}
     for n in range(1, 9):
         assert by_key[str(n)].pin_number == n, n

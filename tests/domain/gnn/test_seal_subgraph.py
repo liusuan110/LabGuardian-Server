@@ -95,7 +95,7 @@ def test_drnl_unreachable_returns_zero() -> None:
 
 
 def test_extract_rejects_missing_anchor() -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text(encoding="utf-8")))
     with pytest.raises(KeyError, match="port"):
         extract_seal_subgraph(hcg, "ref_port:DOES_NOT_EXIST", "ref_net:GND")
     with pytest.raises(KeyError, match="net"):
@@ -103,7 +103,7 @@ def test_extract_rejects_missing_anchor() -> None:
 
 
 def test_extract_rc_anchors_get_label_1() -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text(encoding="utf-8")))
     sg = extract_seal_subgraph(hcg, "ref_port:R1.pin1", "ref_net:VIN")
     assert sg.target_port_id == "ref_port:R1.pin1"
     assert sg.target_net_id == "ref_net:VIN"
@@ -119,7 +119,7 @@ def test_extract_rc_anchors_get_label_1() -> None:
 def test_extract_candidate_edge_excluded_from_edge_list() -> None:
     """SEAL convention: the model must not see the link it's predicting."""
 
-    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text(encoding="utf-8")))
     sg = extract_seal_subgraph(hcg, "ref_port:R1.pin1", "ref_net:VIN")
     assert sg.edge_present is True
     for src_port, dst_net in sg.edges:
@@ -129,7 +129,7 @@ def test_extract_candidate_edge_excluded_from_edge_list() -> None:
 
 
 def test_extract_edge_present_auto_detection() -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text(encoding="utf-8")))
     # (R1.pin1, VIN) does exist
     sg_existing = extract_seal_subgraph(hcg, "ref_port:R1.pin1", "ref_net:VIN")
     assert sg_existing.edge_present is True
@@ -142,7 +142,7 @@ def test_extract_edge_present_explicit_override() -> None:
     """Passing edge_present=False for an actually-existing edge forces the
     "negative sample" interpretation (used in training data construction)."""
 
-    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text(encoding="utf-8")))
     sg = extract_seal_subgraph(
         hcg, "ref_port:R1.pin1", "ref_net:VIN", edge_present=False
     )
@@ -170,7 +170,7 @@ def test_extract_rc_drnl_on_subgraph() -> None:
     So only the two anchors should be in the subgraph.
     """
 
-    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text(encoding="utf-8")))
     sg = extract_seal_subgraph(hcg, "ref_port:R1.pin1", "ref_net:VIN")
     assert set(sg.node_ids()) == {"ref_port:R1.pin1", "ref_net:VIN"}
     assert sg.num_edges() == 0  # the only edge between them was the candidate
@@ -187,7 +187,7 @@ def test_extract_rc_two_hop_radius_reaches_through_pin2() -> None:
     Enclosing subgraph (num_hops=2): {R1.pin2, VC, C1.pin1}.
     """
 
-    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text(encoding="utf-8")))
     sg = extract_seal_subgraph(hcg, "ref_port:R1.pin2", "ref_net:VC")
     assert set(sg.node_ids()) == {
         "ref_port:R1.pin2",
@@ -208,7 +208,7 @@ def test_extract_negative_sample_yields_richer_subgraph() -> None:
     pin2/VC via R1; GND reaches C1.pin2/VC via C1; depending on hops).
     """
 
-    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text(encoding="utf-8")))
     sg = extract_seal_subgraph(hcg, "ref_port:R1.pin1", "ref_net:GND")
     assert sg.edge_present is False
     node_ids = set(sg.node_ids())
@@ -227,7 +227,7 @@ def test_extract_negative_sample_yields_richer_subgraph() -> None:
 def test_extract_h_hop_boundary_respected() -> None:
     """num_hops=1 must not pull in 2-hop neighbors."""
 
-    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text(encoding="utf-8")))
     sg = extract_seal_subgraph(
         hcg, "ref_port:R1.pin2", "ref_net:VC", num_hops=1
     )
@@ -246,7 +246,7 @@ def test_extract_h_hop_boundary_respected() -> None:
 
 
 def test_observed_edge_batch_count_matches_hcg_edges() -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     sgs = extract_subgraphs_for_observed_edges(hcg)
     assert len(sgs) == len(hcg.edges) == 5
     # Each subgraph anchors on a real edge
@@ -267,7 +267,7 @@ def test_floating_batch_default_only_required() -> None:
     has no REQUIRED-floating pins (pins 1/5 are OPTIONAL, pin 8 FORBIDDEN),
     so the default call must return an empty list."""
 
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     sgs = extract_subgraphs_for_floating_ports(hcg)
     assert sgs == []
 
@@ -276,7 +276,7 @@ def test_floating_batch_optional_only_yields_offset_null_pins() -> None:
     """Explicitly requesting OPTIONAL surfaces pins 1 and 5; FORBIDDEN pin 8
     stays out unless also requested."""
 
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     sgs = extract_subgraphs_for_floating_ports(
         hcg, policies=frozenset({ConnectionPolicy.OPTIONAL})
     )
@@ -288,7 +288,7 @@ def test_floating_batch_optional_only_yields_offset_null_pins() -> None:
 
 
 def test_floating_batch_required_plus_optional_includes_pin1_and_pin5() -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     sgs = extract_subgraphs_for_floating_ports(
         hcg,
         policies=frozenset({ConnectionPolicy.REQUIRED, ConnectionPolicy.OPTIONAL}),
@@ -299,7 +299,7 @@ def test_floating_batch_required_plus_optional_includes_pin1_and_pin5() -> None:
 
 
 def test_floating_batch_all_three_policies_includes_forbidden() -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     sgs = extract_subgraphs_for_floating_ports(
         hcg,
         policies=frozenset(
@@ -321,7 +321,7 @@ def test_floating_batch_policies_accept_string_values_too() -> None:
     """Caller convenience: policies set may contain either ConnectionPolicy
     enum members or their string values; both should work."""
 
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     sgs_enum = extract_subgraphs_for_floating_ports(
         hcg, policies=frozenset({ConnectionPolicy.OPTIONAL})
     )
@@ -335,7 +335,7 @@ def test_floating_batch_policies_accept_string_values_too() -> None:
 
 
 def test_floating_batch_with_explicit_candidate_nets() -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     only_gnd = ["ref_net:GND"]
     sgs = extract_subgraphs_for_floating_ports(
         hcg,
@@ -350,7 +350,7 @@ def test_floating_batch_with_explicit_candidate_nets() -> None:
 
 def test_floating_batch_when_no_floating_ports_returns_empty() -> None:
     # RC fixture has no floating ports — empty under any policy combo.
-    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text(encoding="utf-8")))
     sgs = extract_subgraphs_for_floating_ports(
         hcg,
         policies=frozenset(
@@ -373,7 +373,7 @@ def test_ua741_extract_for_inverting_input_edge() -> None:
     """Spot-check the SEAL extraction on the U1.2 (inverting input) → VOUT
     feedback edge from the unity-gain buffer fixture."""
 
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     sg = extract_seal_subgraph(hcg, "ref_port:U1.2", "ref_net:VOUT")
     assert sg.edge_present is True
     # With (U1.2, VOUT) removed, U1.2 becomes isolated (only edge was the
@@ -387,7 +387,7 @@ def test_ua741_extract_for_inverting_input_edge() -> None:
 
 
 def test_ua741_isinstance_and_immutable() -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     sg = extract_seal_subgraph(hcg, "ref_port:U1.3", "ref_net:VIN")
     assert isinstance(sg, SealSubgraph)
     with pytest.raises((AttributeError, TypeError)):
@@ -400,7 +400,7 @@ def test_ua741_isinstance_and_immutable() -> None:
 
 
 def test_same_component_edges_field_defaults_empty() -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     sg = extract_seal_subgraph(hcg, "ref_port:U1.2", "ref_net:VOUT")
     assert sg.same_component_edges == ()
 
@@ -410,7 +410,7 @@ def test_same_component_edges_populated_when_requested_on_ic() -> None:
     subgraph (both pins on U1). Asking for same-component edges should
     surface the ``(U1.2, U1.6)`` pair."""
 
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     sg = extract_seal_subgraph(
         hcg,
         "ref_port:U1.2",
@@ -424,7 +424,7 @@ def test_same_component_edges_do_not_affect_drnl_labels() -> None:
     """The whole point of the flag being a P2-level decision: turning it on
     must produce identical ``drnl_labels`` (DRNL stays bipartite-only)."""
 
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     sg_off = extract_seal_subgraph(hcg, "ref_port:U1.2", "ref_net:VOUT")
     sg_on = extract_seal_subgraph(
         hcg,
@@ -444,7 +444,7 @@ def test_same_component_edges_empty_when_single_port_per_component() -> None:
     ports in the subgraph, so the same-component list is empty even with
     the flag on."""
 
-    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_RC.read_text(encoding="utf-8")))
     sg = extract_seal_subgraph(
         hcg,
         "ref_port:R1.pin1",
@@ -570,7 +570,7 @@ def test_enumerate_same_component_helper_groups_per_component() -> None:
 
 
 def test_batched_observed_edges_propagates_same_component_flag() -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     sgs_off = extract_subgraphs_for_observed_edges(hcg)
     sgs_on = extract_subgraphs_for_observed_edges(
         hcg, include_same_component_edges=True
@@ -584,7 +584,7 @@ def test_batched_observed_edges_propagates_same_component_flag() -> None:
 
 
 def test_batched_floating_ports_propagates_same_component_flag() -> None:
-    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text()))
+    hcg = build_from_logical_reference(json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8")))
     sgs = extract_subgraphs_for_floating_ports(
         hcg,
         policies=frozenset({ConnectionPolicy.OPTIONAL}),

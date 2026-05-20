@@ -105,7 +105,7 @@ def test_load_respects_limit():
 def test_skips_netlist_without_meta(tmp_path: Path):
     ref_dir = tmp_path / "divider"
     ref_dir.mkdir()
-    (ref_dir / "orphan.json").write_text(json.dumps(_minimal_netlist()))
+    (ref_dir / "orphan.json").write_text(json.dumps(_minimal_netlist()), encoding="utf-8")
 
     samples, stats = load_real_samples(tmp_path)
     assert samples == []
@@ -116,10 +116,10 @@ def test_skips_netlist_without_meta(tmp_path: Path):
 def test_skips_meta_with_unknown_outcome(tmp_path: Path):
     ref_dir = tmp_path / "divider"
     ref_dir.mkdir()
-    (ref_dir / "bad.json").write_text(json.dumps(_minimal_netlist()))
+    (ref_dir / "bad.json").write_text(json.dumps(_minimal_netlist()), encoding="utf-8")
     (ref_dir / "bad.meta.json").write_text(json.dumps(
         _minimal_meta(expected="garbage")
-    ))
+    ), encoding="utf-8")
 
     samples, stats = load_real_samples(tmp_path)
     assert samples == []
@@ -129,10 +129,10 @@ def test_skips_meta_with_unknown_outcome(tmp_path: Path):
 def test_skips_meta_with_no_ref_id(tmp_path: Path):
     ref_dir = tmp_path / "divider"
     ref_dir.mkdir()
-    (ref_dir / "no_ref.json").write_text(json.dumps(_minimal_netlist()))
+    (ref_dir / "no_ref.json").write_text(json.dumps(_minimal_netlist()), encoding="utf-8")
     meta = _minimal_meta()
     meta["ref_id"] = ""
-    (ref_dir / "no_ref.meta.json").write_text(json.dumps(meta))
+    (ref_dir / "no_ref.meta.json").write_text(json.dumps(meta), encoding="utf-8")
 
     samples, stats = load_real_samples(tmp_path)
     assert samples == []
@@ -149,8 +149,8 @@ def test_skips_netlist_with_invalid_schema(tmp_path: Path):
         ],
         "nets": [{"electrical_net_id": "n_a"}],
     }
-    (ref_dir / "broken.json").write_text(json.dumps(bad))
-    (ref_dir / "broken.meta.json").write_text(json.dumps(_minimal_meta()))
+    (ref_dir / "broken.json").write_text(json.dumps(bad), encoding="utf-8")
+    (ref_dir / "broken.meta.json").write_text(json.dumps(_minimal_meta()), encoding="utf-8")
 
     samples, stats = load_real_samples(tmp_path)
     assert samples == []
@@ -160,8 +160,8 @@ def test_skips_netlist_with_invalid_schema(tmp_path: Path):
 def test_skips_netlist_with_non_object_top_level(tmp_path: Path):
     ref_dir = tmp_path / "divider"
     ref_dir.mkdir()
-    (ref_dir / "bad.json").write_text(json.dumps(["not", "a", "dict"]))
-    (ref_dir / "bad.meta.json").write_text(json.dumps(_minimal_meta()))
+    (ref_dir / "bad.json").write_text(json.dumps(["not", "a", "dict"]), encoding="utf-8")
+    (ref_dir / "bad.meta.json").write_text(json.dumps(_minimal_meta()), encoding="utf-8")
 
     samples, stats = load_real_samples(tmp_path)
     assert samples == []
@@ -174,9 +174,9 @@ def test_ignores_manifest_and_sidecar_files(tmp_path: Path):
 
     ref_dir = tmp_path / "divider"
     ref_dir.mkdir()
-    (tmp_path / "manifest.json").write_text(json.dumps({"profile": "real"}))
-    (ref_dir / "ok.json").write_text(json.dumps(_minimal_netlist()))
-    (ref_dir / "ok.meta.json").write_text(json.dumps(_minimal_meta()))
+    (tmp_path / "manifest.json").write_text(json.dumps({"profile": "real"}), encoding="utf-8")
+    (ref_dir / "ok.json").write_text(json.dumps(_minimal_netlist()), encoding="utf-8")
+    (ref_dir / "ok.meta.json").write_text(json.dumps(_minimal_meta()), encoding="utf-8")
 
     samples, stats = load_real_samples(tmp_path)
     assert len(samples) == 1

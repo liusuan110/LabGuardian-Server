@@ -73,7 +73,7 @@ def test_generate_dataset_writes_labels_and_manifest(tmp_path: Path) -> None:
     assert len(div_labels) == 6
 
     # Manifest file exists & valid
-    manifest_payload = json.loads((tmp_path / "ds" / "manifest.json").read_text())
+    manifest_payload = json.loads((tmp_path / "ds" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest_payload["n_processed"] == 12
 
 
@@ -90,7 +90,7 @@ def test_each_label_file_is_valid_payload(tmp_path: Path) -> None:
     )
     assert len(label_files) == 4
     for fp in label_files:
-        payload = json.loads(fp.read_text())
+        payload = json.loads(fp.read_text(encoding="utf-8"))
         # Round-trip back through deserialize → ensures full schema validity
         result = deserialize_label_build_result(payload)
         assert result.stats.total_samples > 0
@@ -130,8 +130,8 @@ def test_sample_ids_are_unique_and_deterministic(tmp_path: Path) -> None:
 
     # File-by-file content equivalence (deterministic seed)
     for fname in files1:
-        p1 = json.loads(((tmp_path / "ds" / "labels" / "rc_lowpass") / fname).read_text())
-        p2 = json.loads(((tmp_path / "ds2" / "labels" / "rc_lowpass") / fname).read_text())
+        p1 = json.loads(((tmp_path / "ds" / "labels" / "rc_lowpass") / fname).read_text(encoding="utf-8"))
+        p2 = json.loads(((tmp_path / "ds2" / "labels" / "rc_lowpass") / fname).read_text(encoding="utf-8"))
         # stats must match exactly
         assert p1["stats"] == p2["stats"]
 
@@ -249,18 +249,18 @@ def test_ref_spec_subtype_override_applied_to_ref_hcg(tmp_path: Path) -> None:
     import json as _json
 
     opamp_payload = _json.loads(
-        (FIXTURES_DIR / "test_opamp_buffer_v1.json").read_text()
+        (FIXTURES_DIR / "test_opamp_buffer_v1.json").read_text(encoding="utf-8")
     )
     # Strip the subtype so the fixture is "naked" (no IC spec hints)
     for c in opamp_payload["components"]:
         c.pop("subtype", None)
     stripped = tmp_path / "opamp_no_subtype.json"
-    stripped.write_text(_json.dumps(opamp_payload))
+    stripped.write_text(_json.dumps(opamp_payload), encoding="utf-8")
 
     # WITHOUT override → ref builder treats U1 as a plain IC, no pin specs
     from app.domain.gnn import build_from_logical_reference
 
-    ref_no_override = build_from_logical_reference(_json.loads(stripped.read_text()))
+    ref_no_override = build_from_logical_reference(_json.loads(stripped.read_text(encoding="utf-8")))
     # All ports would be plain REQUIRED (no FORBIDDEN/OPTIONAL discrimination)
     forbidden_no_override = [
         p for p in ref_no_override.ports.values()
@@ -272,7 +272,7 @@ def test_ref_spec_subtype_override_applied_to_ref_hcg(tmp_path: Path) -> None:
 
     # WITH override → ref pin 8 = FORBIDDEN, pin 1/5 = OPTIONAL
     ref_with_override = build_from_logical_reference(
-        _json.loads(stripped.read_text()),
+        _json.loads(stripped.read_text(encoding="utf-8")),
         extra_subtypes_by_source_id={"U1": "UA741"},
     )
     forbidden_with_override = [
@@ -449,7 +449,7 @@ def test_phase_b_operators_complete_through_pipeline(tmp_path: Path) -> None:
     assert {d.name for d in labels_root.iterdir()} == {"opamp", "divider"}
     for ref_dir in labels_root.iterdir():
         for label_file in ref_dir.glob("*.json"):
-            payload = json.loads(label_file.read_text())
+            payload = json.loads(label_file.read_text(encoding="utf-8"))
             # Phase B chain entries should appear in some samples
             assert "perturbation_chain" in payload["cur_metadata"]
 
@@ -538,13 +538,13 @@ def test_resume_with_corrupted_label_regenerates(tmp_path: Path) -> None:
     rc_dir = tmp_path / "ds" / "labels" / "rc"
     label_files = sorted(rc_dir.glob("*.json"))
     # Corrupt the first
-    label_files[0].write_text("{not json}")
+    label_files[0].write_text("{not json}", encoding="utf-8")
 
     m2 = generate_dataset(spec, resume=True)
     assert m2.n_processed == 2
     assert m2.n_skipped_failures == 0
     # Corrupted file must now be valid JSON
-    payload = json.loads(label_files[0].read_text())
+    payload = json.loads(label_files[0].read_text(encoding="utf-8"))
     assert "stats" in payload
 
 
@@ -653,8 +653,8 @@ def test_workers_gt1_writes_identical_label_payloads_as_serial(
     s_dir = tmp_path / "s" / "labels" / "rc"
     p_dir = tmp_path / "p" / "labels" / "rc"
     for fname in sorted(f.name for f in s_dir.glob("*.json")):
-        s_payload = json.loads((s_dir / fname).read_text())
-        p_payload = json.loads((p_dir / fname).read_text())
+        s_payload = json.loads((s_dir / fname).read_text(encoding="utf-8"))
+        p_payload = json.loads((p_dir / fname).read_text(encoding="utf-8"))
         assert s_payload == p_payload, (
             f"label payload mismatch for {fname} between serial and parallel"
         )

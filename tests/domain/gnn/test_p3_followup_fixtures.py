@@ -48,7 +48,7 @@ FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "references"
 
 
 def test_opamp_inverting_fixture_loads_with_ua741_pin_specs() -> None:
-    payload = json.loads((FIXTURES / "test_opamp_inverting_v1.json").read_text())
+    payload = json.loads((FIXTURES / "test_opamp_inverting_v1.json").read_text(encoding="utf-8"))
     hcg = build_from_logical_reference(
         payload, extra_subtypes_by_source_id={"U1": "UA741"}
     )
@@ -72,7 +72,7 @@ def test_opamp_inverting_fixture_loads_with_ua741_pin_specs() -> None:
 
 
 def test_npn_switch_fixture_loads_with_transistor_ports() -> None:
-    payload = json.loads((FIXTURES / "test_npn_switch_v1.json").read_text())
+    payload = json.loads((FIXTURES / "test_npn_switch_v1.json").read_text(encoding="utf-8"))
     hcg = build_from_logical_reference(payload)
     s = hcg.summary()
     # Q1 (3 pins) + R_b (2) + R_load (2) + LED (2) = 9 ports
@@ -101,7 +101,7 @@ def test_npn_switch_fixture_loads_with_transistor_ports() -> None:
 def test_new_fixture_runs_every_perturbation_with_coverage(
     fixture: str, subtypes: dict | None
 ) -> None:
-    payload = json.loads((FIXTURES / fixture).read_text())
+    payload = json.loads((FIXTURES / fixture).read_text(encoding="utf-8"))
     hcg = build_from_logical_reference(
         payload, extra_subtypes_by_source_id=subtypes
     )
@@ -189,7 +189,7 @@ def test_lm358_fixture_loads_with_correct_port_types() -> None:
     import json
 
     payload = json.loads(
-        (FIXTURES / "test_lm358_dual_buffer_v1.json").read_text()
+        (FIXTURES / "test_lm358_dual_buffer_v1.json").read_text(encoding="utf-8")
     )
     hcg = build_from_logical_reference(
         payload, extra_subtypes_by_source_id={"U1": "LM358"}

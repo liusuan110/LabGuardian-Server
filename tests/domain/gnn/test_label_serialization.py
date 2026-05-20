@@ -40,7 +40,7 @@ _UA741_SUBTYPES = {"U1": "UA741"}
 
 def _build_result(perturbations=None, *, use_ua741: bool = False):
     fixture = FIXTURE_OPAMP if use_ua741 else FIXTURE_RC
-    ref = build_from_logical_reference(json.loads(fixture.read_text()))
+    ref = build_from_logical_reference(json.loads(fixture.read_text(encoding="utf-8")))
     cur_g = hcg_to_cur_nx(ref, perturbations=perturbations)
     cur = build_hetero_circuit_graph(
         cur_g,
@@ -209,9 +209,9 @@ def test_file_round_trip_via_tmp_path(tmp_path: Path) -> None:
     payload = serialize_label_build_result(
         result, sample_id="rc__neg_001", ref_id="test_rc_v1"
     )
-    fp.write_text(json.dumps(payload, indent=2))
+    fp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     # Reload
-    restored = deserialize_label_build_result(json.loads(fp.read_text()))
+    restored = deserialize_label_build_result(json.loads(fp.read_text(encoding="utf-8")))
     assert restored.stats == result.stats
     assert len(restored.samples) == len(result.samples)
     for a, b in zip(result.samples, restored.samples):

@@ -144,7 +144,7 @@ def test_github_actions_workflow_file_exists() -> None:
 
     wf = REPO_ROOT / ".github" / "workflows" / "gnn-eval-nightly.yml"
     assert wf.is_file(), f"missing CI workflow at {wf}"
-    text = wf.read_text()
+    text = wf.read_text(encoding="utf-8")
     # Schedule + manual dispatch + push-on-relevant-paths all present
     assert "cron:" in text
     assert "workflow_dispatch" in text
@@ -157,6 +157,6 @@ def test_ci_docs_pointer_present() -> None:
 
     doc = REPO_ROOT / "docs" / "CI_NIGHTLY.md"
     assert doc.is_file()
-    text = doc.read_text()
+    text = doc.read_text(encoding="utf-8")
     assert "Exit codes" in text or "exit codes" in text.lower()
     assert "SKIP_IF_MISSING_DATA" in text

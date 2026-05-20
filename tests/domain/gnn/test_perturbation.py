@@ -50,7 +50,7 @@ FIXTURE_LED = (
 
 
 def _load_ref(path: Path):
-    return build_from_logical_reference(json.loads(path.read_text()))
+    return build_from_logical_reference(json.loads(path.read_text(encoding="utf-8")))
 
 
 # ---------------------------------------------------------------------------

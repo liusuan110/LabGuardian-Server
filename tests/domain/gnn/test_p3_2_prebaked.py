@@ -270,9 +270,9 @@ def test_train_full_with_prebaked_path_yields_same_initial_loss(
     splits_dir = tmp_path / "ds" / "splits"
     splits_dir.mkdir(parents=True, exist_ok=True)
     n = len(entries)
-    (splits_dir / "train.json").write_text(json.dumps(entries[: n // 2 or 1]))
-    (splits_dir / "val.json").write_text(json.dumps(entries[n // 2 : n - 1] or entries[:1]))
-    (splits_dir / "test.json").write_text(json.dumps(entries[-1:] or entries[:1]))
+    (splits_dir / "train.json").write_text(json.dumps(entries[: n // 2 or 1]), encoding="utf-8")
+    (splits_dir / "val.json").write_text(json.dumps(entries[n // 2 : n - 1] or entries[:1]), encoding="utf-8")
+    (splits_dir / "test.json").write_text(json.dumps(entries[-1:] or entries[:1]), encoding="utf-8")
 
     refs_config = [
         {"ref_id": "rc", "payload_path": str(FIXTURES / "test_rc_v1.json")},

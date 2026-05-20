@@ -40,7 +40,7 @@ FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "references"
 
 def _load(name: str, subtypes: dict | None = None):
     return build_from_logical_reference(
-        json.loads((FIXTURES / name).read_text()),
+        json.loads((FIXTURES / name).read_text(encoding="utf-8")),
         extra_subtypes_by_source_id=subtypes,
     )
 

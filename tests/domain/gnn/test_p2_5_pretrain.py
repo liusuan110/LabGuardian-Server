@@ -102,7 +102,7 @@ def test_component_type_map_covers_all_observed_types() -> None:
     for fp in SPICENETLIST_DIR.glob("*.json"):
         import json
 
-        for c in json.loads(fp.read_text()):
+        for c in json.loads(fp.read_text(encoding="utf-8")):
             seen.add(str(c.get("component_type", "")))
     # All observed types are in our mapping (or fall back to UNKNOWN
     # via _map_component_type for any genuinely unknown one)

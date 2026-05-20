@@ -50,7 +50,7 @@ def _write_tiny_config(tmp_path: Path) -> Path:
         "subtypes_by_ref_id": {"opamp": {"U1": "UA741"}},
     }
     p = tmp_path / "cfg.json"
-    p.write_text(json.dumps(cfg))
+    p.write_text(json.dumps(cfg), encoding="utf-8")
     return p
 
 
@@ -116,12 +116,12 @@ def test_cli_end_to_end_creates_labels_manifest_splits(tmp_path: Path) -> None:
     label_files = list((out / "labels").rglob("*.json"))
     assert len(label_files) == 6
     # manifest
-    manifest = json.loads((out / "manifest.json").read_text())
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["n_processed"] == 6
     # splits: opamp = test, rc+div = train/val
-    train = json.loads((out / "splits" / "train.json").read_text())
-    val = json.loads((out / "splits" / "val.json").read_text())
-    test = json.loads((out / "splits" / "test.json").read_text())
+    train = json.loads((out / "splits" / "train.json").read_text(encoding="utf-8"))
+    val = json.loads((out / "splits" / "val.json").read_text(encoding="utf-8"))
+    test = json.loads((out / "splits" / "test.json").read_text(encoding="utf-8"))
     assert all(s.startswith("opamp/") for s in test)
     assert all(not s.startswith("opamp/") for s in train)
     assert all(not s.startswith("opamp/") for s in val)
@@ -136,7 +136,7 @@ def test_cli_resume_idempotent(tmp_path: Path) -> None:
         ["--output-dir", str(out), "--config", str(cfg_path), "--resume"]
     )
     assert rc2 == 0
-    manifest = json.loads((out / "manifest.json").read_text())
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["n_processed"] == 6
 
 
@@ -155,7 +155,8 @@ def test_cli_returns_nonzero_on_bad_config(tmp_path: Path) -> None:
                 "test_ref_ids": [],
                 "enforce_healthy": False,
             }
-        )
+        ),
+        encoding="utf-8",
     )
     rc = main(
         ["--output-dir", str(tmp_path / "ds"), "--config", str(bad_cfg)]

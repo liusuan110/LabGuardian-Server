@@ -58,7 +58,7 @@ def _scaled_config(out_dir: Path, *, workers: int = 1) -> Path:
     # Keep enforce_healthy at the DEFAULT_CONFIG value (True) so the test
     # actually exercises assert_manifest_healthy on the scaled distribution.
     path = out_dir / "scaled.json"
-    path.write_text(json.dumps(cfg))
+    path.write_text(json.dumps(cfg), encoding="utf-8")
     return path
 
 
@@ -72,7 +72,7 @@ def test_p1_acceptance_scaled_runs_end_to_end_serial(tmp_path: Path) -> None:
     )
     assert rc == 0, "scaled P1 run failed; see captured stdout"
 
-    manifest = json.loads((out / "manifest.json").read_text())
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     expected_total = sum(ACCEPTANCE_SCALED_PLAN.values()) * len(DEFAULT_CONFIG["refs"])
     assert manifest["n_processed"] == expected_total
     assert manifest["n_skipped_failures"] == 0
@@ -112,8 +112,8 @@ def test_p1_acceptance_scaled_runs_end_to_end_parallel(tmp_path: Path) -> None:
     main(["--output-dir", str(out_parallel), "--config", str(cfg),
           "--base-seed", "0", "--workers", "3"])
 
-    m_serial = json.loads((out_serial / "manifest.json").read_text())
-    m_parallel = json.loads((out_parallel / "manifest.json").read_text())
+    m_serial = json.loads((out_serial / "manifest.json").read_text(encoding="utf-8"))
+    m_parallel = json.loads((out_parallel / "manifest.json").read_text(encoding="utf-8"))
 
     # Strip non-deterministic / ratio fields then compare
     for k in (
@@ -136,9 +136,9 @@ def test_p1_acceptance_splits_held_out_topology(tmp_path: Path) -> None:
     out = tmp_path / "ds"
     main(["--output-dir", str(out), "--config", str(cfg), "--base-seed", "0"])
 
-    train = json.loads((out / "splits" / "train.json").read_text())
-    val = json.loads((out / "splits" / "val.json").read_text())
-    test = json.loads((out / "splits" / "test.json").read_text())
+    train = json.loads((out / "splits" / "train.json").read_text(encoding="utf-8"))
+    val = json.loads((out / "splits" / "val.json").read_text(encoding="utf-8"))
+    test = json.loads((out / "splits" / "test.json").read_text(encoding="utf-8"))
 
     assert all(s.startswith("opamp_buffer/") for s in test)
     assert all(not s.startswith("opamp_buffer/") for s in train)

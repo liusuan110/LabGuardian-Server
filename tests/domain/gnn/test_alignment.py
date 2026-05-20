@@ -28,7 +28,7 @@ FIXTURE_RC = Path(__file__).resolve().parents[2] / "fixtures" / "references" / "
 
 
 def _build_ref_and_cur(perturbations=None):
-    ref = build_from_logical_reference(json.loads(FIXTURE_RC.read_text()))
+    ref = build_from_logical_reference(json.loads(FIXTURE_RC.read_text(encoding="utf-8")))
     cur_g = hcg_to_cur_nx(ref, perturbations=perturbations)
     cur = build_hetero_circuit_graph(cur_g, side="cur")
     return ref, cur

@@ -50,7 +50,7 @@ FIXTURE_OPAMP = (
 
 
 def _build_ref(path: Path):
-    return build_from_logical_reference(json.loads(path.read_text()))
+    return build_from_logical_reference(json.loads(path.read_text(encoding="utf-8")))
 
 
 def _build_cur(ref, perturbations=None, subtype_by_source_id=None):

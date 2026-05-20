@@ -299,7 +299,7 @@ def test_hcg_to_netlist_v2_roundtrip_preserves_ids():
     if not split_ids:
         pytest.skip("opamp_buffer fixtures not generated")
     label = json.loads(
-        (LABEL_ROOT / f"{split_ids[0]}.json").read_text()
+        (LABEL_ROOT / f"{split_ids[0]}.json").read_text(encoding="utf-8")
     )
     cur_meta = label["cur_metadata"]
     _, ref_hcg, _, subtypes = _build_ref_artifacts(
@@ -346,7 +346,7 @@ def test_hcg_to_netlist_v2_omitting_subtypes_loses_ic_port_types(monkeypatch):
     if not split_ids:
         pytest.skip("opamp_buffer fixtures not generated")
     label = json.loads(
-        (LABEL_ROOT / f"{split_ids[0]}.json").read_text()
+        (LABEL_ROOT / f"{split_ids[0]}.json").read_text(encoding="utf-8")
     )
     cur_meta = label["cur_metadata"]
     _, ref_hcg, _, subtypes = _build_ref_artifacts(

@@ -39,7 +39,7 @@ FIXTURE_RC = (
 
 
 def _build(perturbations=None):
-    ref = build_from_logical_reference(json.loads(FIXTURE_RC.read_text()))
+    ref = build_from_logical_reference(json.loads(FIXTURE_RC.read_text(encoding="utf-8")))
     cur_g = hcg_to_cur_nx(ref, perturbations=perturbations)
     cur = build_hetero_circuit_graph(cur_g, side="cur")
     return ref, cur, identity_alignment(ref, cur)
@@ -220,7 +220,7 @@ def test_manifest_to_json_writes_file(tmp_path: Path) -> None:
     out = tmp_path / "manifest.json"
     m.to_json(out)
     assert out.exists()
-    payload = json.loads(out.read_text())
+    payload = json.loads(out.read_text(encoding="utf-8"))
     assert payload["n_processed"] == 2
     assert payload["n_skipped_failures"] == 1
     assert payload["total_samples"] == result.stats.total_samples
@@ -326,7 +326,8 @@ def test_dataset_builder_pattern_end_to_end(tmp_path: Path) -> None:
                     serialize_label_build_result(
                         result, sample_id=sample_id, ref_id="test_rc_v1"
                     )
-                )
+                ),
+                encoding="utf-8",
             )
         except CoverageError as e:
             m.record_failure(sample_id, f"coverage: {e}")
@@ -338,6 +339,6 @@ def test_dataset_builder_pattern_end_to_end(tmp_path: Path) -> None:
 
     # Write final manifest
     m.to_json(tmp_path / "manifest.json")
-    final = json.loads((tmp_path / "manifest.json").read_text())
+    final = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
     assert final["n_processed"] == 3
     assert final["total_samples"] > 0

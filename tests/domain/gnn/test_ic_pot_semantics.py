@@ -224,7 +224,7 @@ def test_power_port_set_includes_opamp_supplies() -> None:
 
 
 def test_opamp_buffer_fixture_resolves_all_connected_pins() -> None:
-    payload = json.loads(FIXTURE_OPAMP.read_text())
+    payload = json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8"))
     hcg = build_from_logical_reference(payload)
     summary = hcg.summary()
     # P0.6: all 8 package pins materialized (5 connected + 3 floating); only
@@ -262,7 +262,7 @@ def test_opamp_buffer_preserves_parallel_feedback_pins() -> None:
     raw nx.Graph collapsed them into a single edge, losing pin 2 entirely.
     """
 
-    payload = json.loads(FIXTURE_OPAMP.read_text())
+    payload = json.loads(FIXTURE_OPAMP.read_text(encoding="utf-8"))
     hcg = build_from_logical_reference(payload)
     vout_edges = [e for e in hcg.edges if e.dst_net_id.endswith(":VOUT")]
     src_ports = {e.src_port_id for e in vout_edges}

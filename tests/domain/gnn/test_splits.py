@@ -39,7 +39,7 @@ def _make_labels_dir(
         ref_dir = labels_dir / ref_id
         ref_dir.mkdir()
         for sid in sample_ids:
-            (ref_dir / f"{sid}.json").write_text("{}")
+            (ref_dir / f"{sid}.json").write_text("{}", encoding="utf-8")
     return labels_dir
 
 
@@ -83,8 +83,8 @@ def test_discover_samples_missing_dir_returns_empty(tmp_path: Path) -> None:
 def test_discover_samples_ignores_non_json(tmp_path: Path) -> None:
     labels = tmp_path / "labels"
     (labels / "ref_a").mkdir(parents=True)
-    (labels / "ref_a" / "s1.json").write_text("{}")
-    (labels / "ref_a" / "s1.bak").write_text("ignore")
+    (labels / "ref_a" / "s1.json").write_text("{}", encoding="utf-8")
+    (labels / "ref_a" / "s1.bak").write_text("ignore", encoding="utf-8")
     (labels / "ref_a" / "subdir").mkdir()  # nested dirs also ignored
     assert discover_samples(labels) == {"ref_a": ["s1"]}
 
