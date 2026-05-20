@@ -47,8 +47,19 @@ _GNN_REASON_CHECKPOINT_MISSING = "checkpoint_missing"     # no .pt on disk
 _GNN_REASON_TINY_CIRCUIT = "tiny_circuit"                  # ≥ 8-node trigger
 _GNN_REASON_TRIGGER_SKIPPED = "trigger_predicate_skipped"  # safety / polarity etc.
 _GNN_REASON_MODEL_FAILED = "model_failed"                  # advisor.advise crashed
+# Phase C Stage 5 (2026-05-20) — when the GNN is clearly OOD on the
+# current circuit (most observed edges flagged AND minimum p_correct is
+# essentially zero), suppress R2 warnings and surface this reason so the
+# user / UI knows GNN sat out *because* it couldn't form a useful
+# opinion. Prevents the v3-era "GNN suspects 9/9 edges with p<0.001"
+# pseudo-alarm from reaching the screen.
+_GNN_REASON_OOD_DISAGREEMENT = "ood_disagreement_too_broad"
 # (`payload_missing` intentionally not emitted — the caller is signalling "I
 # don't want GNN this time" by withholding ref_payload / cur_netlist_v2.)
+
+# Phase C Stage 5 — OOD self-suppression thresholds.
+_GNN_OOD_SUSPICIOUS_RATIO_FLOOR = 0.5   # > 50% of observed edges flagged
+_GNN_OOD_WORST_P_FLOOR = 0.05           # worst p_correct < this → noise, not signal
 
 log = logging.getLogger(__name__)
 
@@ -388,6 +399,30 @@ def _maybe_attach_gnn_advice(
         if float(e.get("p_correct", 1.0)) < _GNN_WRONG_EDGE_P_FLOOR
     ]
     disagreement = rule_pass and len(suspicious_edges) > 0
+
+    # Phase C Stage 5 · OOD 自抑制门 ----------------------------------------
+    # 如果**多数边都被怀疑**（>50%）**且**最低分接近 0（<0.05），那不是
+    # "GNN 挑出可疑边"，而是"GNN 在该电路上完全 OOD，每条边都乱叫"。这
+    # 种 R2 警告毫无信息量，强制静音并把原因写进 gnn_disabled_reason 供
+    # 调试。原始的 edge_predictions 仍在 summary.gnn 里供开发查看。
+    n_scored = advice_dict.get("n_edges_scored", 0) or 0
+    if (
+        disagreement
+        and n_scored > 0
+        and len(suspicious_edges) / n_scored > _GNN_OOD_SUSPICIOUS_RATIO_FLOOR
+    ):
+        worst_p = min(
+            float(e["p_correct"]) for e in suspicious_edges
+        )
+        if worst_p < _GNN_OOD_WORST_P_FLOOR:
+            disagreement = False
+            log.info(
+                "gnn_advise: OOD self-suppression engaged "
+                "(suspicious=%d/%d, worst_p=%.4f) — R2 warning silenced",
+                len(suspicious_edges), n_scored, worst_p,
+            )
+            _set_gnn_disabled_reason(result, _GNN_REASON_OOD_DISAGREEMENT)
+
     advice_dict["disagreement_with_rule"] = disagreement
 
     # Stuff into report.summary.gnn (plan §六 validator_report_v2 schema)

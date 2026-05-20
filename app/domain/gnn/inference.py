@@ -123,6 +123,15 @@ class GNNAdvice:
 # or when the deployed checkpoint lives outside the repo.
 _DEFAULT_CKPT_ENV = "LABGUARDIAN_GNN_CKPT"
 _DEFAULT_CKPT_CANDIDATES: tuple[str, ...] = (
+    # **Phase C Stage 5 (2026-05-20)** — retrained with
+    # `insert_same_net_wire` perturbation + WIRE_SAME_NET_POSITIVE
+    # label class to fix the wire OOD identified on real student data
+    # (tests/fixtures/real_student/inverting_amp_correct_v1.json).
+    # Metrics: val F1 0.967 / val top-3 1.000 / test F1 0.989 / test
+    # top-3 1.000 (held-out opamp_buffer). Golden sample: 16/17 edges
+    # p > 0.9 (vs v3's 7/17 fail). See RISK_REGISTER Phase C for the
+    # one remaining outlier (W3.pin1 SEAL subgraph asymmetry).
+    "checkpoints/p3_followup_v4/best_f1.pt",
     # R10 (2026-05-18) — retrained against updated opamp_inverting
     # fixture that adds R_p (textbook bias compensation resistor).
     # val F1 0.959 / test F1 0.994. See RISK_REGISTER §5 R10.

@@ -1108,6 +1108,113 @@ def test_display_falls_back_to_raw_when_mapping_absent() -> None:
     assert enriched["suggested_targets"][0]["port_display"] == "cur_port:Foo.pinX"
 
 
+def test_ood_self_suppression_engages_on_uniform_low_confidence(monkeypatch) -> None:
+    """**Phase C Stage 5** — 当 advisor 把超过 50% 的边都判低分（且最低分
+    < 0.05）时，R2 warning 静音 + 写 gnn_disabled_reason=
+    "ood_disagreement_too_broad"。预防 v3 时代"GNN 怀疑 9/9 条线全错"那种
+    无信息量警告进入 UI。"""
+
+    from app.domain.compare.orchestrator import compare_logical_graphs
+
+    GNNAdvisor.reset_singleton()
+    real_advisor = GNNAdvisor.get()
+
+    def _ood_advise(ref_hcg, cur_hcg, *, timeout_ms=300, num_hops=2):  # type: ignore[no-untyped-def]
+        # 模拟 v3 在真实学生网表上的 OOD 输出：4/4 边全是接近 0 的分数
+        return GNNAdvice(
+            model_version="circuit_match:stub-ood",
+            inference_ms=10.0,
+            n_edges_scored=4,
+            edge_predictions=(
+                {"edge": ["cur_port:R_a.pin1", "cur_net:n_in"],
+                 "p_correct": 0.0001, "verdict": "likely_wrong"},
+                {"edge": ["cur_port:R_a.pin2", "cur_net:n_mid"],
+                 "p_correct": 0.0003, "verdict": "likely_wrong"},
+                {"edge": ["cur_port:R_b.pin1", "cur_net:n_mid"],
+                 "p_correct": 0.0008, "verdict": "likely_wrong"},
+                {"edge": ["cur_port:R_b.pin2", "cur_net:n_gnd"],
+                 "p_correct": 0.0011, "verdict": "likely_wrong"},
+            ),
+            hotspots=(),
+        )
+
+    monkeypatch.setattr(real_advisor, "advise", _ood_advise)
+
+    ref_payload = _ref_payload()
+    cur_netlist = _matching_cur_netlist_v2()
+    ref = logical_reference_to_graph(ref_payload)
+    cur = current_netlist_v2_to_graph(cur_netlist)
+    result = compare_logical_graphs(
+        ref, cur, ref_payload=ref_payload, cur_netlist_v2=cur_netlist,
+    )
+
+    # 规则路径仍判通过
+    assert result["logic_correct"] is True
+    # disagreement_with_rule 被强制设为 False（自抑制生效）
+    gnn_block = result["report"]["summary"]["gnn"]
+    assert gnn_block["disagreement_with_rule"] is False
+    # ood_disagreement_too_broad 原因码写入
+    summary = result["report"]["summary"]
+    assert summary.get("gnn_disabled_reason") == "ood_disagreement_too_broad"
+    # 零 R2 warning（被静音了）
+    assert not any(
+        item.get("error_code") == "WARN_GNN_DISAGREES_WITH_RULE"
+        for item in (result.get("items") or [])
+    )
+
+    GNNAdvisor.reset_singleton()
+
+
+def test_ood_self_suppression_does_not_engage_on_single_outlier(monkeypatch) -> None:
+    """正常 R2 仍要触发 —— 只 1/4 边可疑 + 其他都高分 → 不进 OOD 自抑制
+    分支，R2 警告正常发出。"""
+
+    from app.domain.compare.orchestrator import compare_logical_graphs
+
+    GNNAdvisor.reset_singleton()
+    real_advisor = GNNAdvisor.get()
+
+    def _single_outlier_advise(ref_hcg, cur_hcg, *, timeout_ms=300, num_hops=2):  # type: ignore[no-untyped-def]
+        return GNNAdvice(
+            model_version="circuit_match:stub-outlier",
+            inference_ms=10.0,
+            n_edges_scored=4,
+            edge_predictions=(
+                {"edge": ["cur_port:R_a.pin1", "cur_net:n_in"],
+                 "p_correct": 0.95, "verdict": "ok"},
+                {"edge": ["cur_port:R_a.pin2", "cur_net:n_mid"],
+                 "p_correct": 0.97, "verdict": "ok"},
+                {"edge": ["cur_port:R_b.pin1", "cur_net:n_mid"],
+                 "p_correct": 0.91, "verdict": "ok"},
+                {"edge": ["cur_port:R_b.pin2", "cur_net:n_gnd"],
+                 "p_correct": 0.05, "verdict": "likely_wrong"},  # 单异常
+            ),
+        )
+
+    monkeypatch.setattr(real_advisor, "advise", _single_outlier_advise)
+
+    ref_payload = _ref_payload()
+    cur_netlist = _matching_cur_netlist_v2()
+    ref = logical_reference_to_graph(ref_payload)
+    cur = current_netlist_v2_to_graph(cur_netlist)
+    result = compare_logical_graphs(
+        ref, cur, ref_payload=ref_payload, cur_netlist_v2=cur_netlist,
+    )
+
+    # 1/4 = 25% < 50% 阈值 → OOD 自抑制不应触发
+    gnn_block = result["report"]["summary"]["gnn"]
+    assert gnn_block["disagreement_with_rule"] is True  # R2 正常触发
+    summary = result["report"]["summary"]
+    assert summary.get("gnn_disabled_reason") is None  # 没有自抑制原因
+    warnings = [
+        item for item in (result.get("items") or [])
+        if item.get("error_code") == "WARN_GNN_DISAGREES_WITH_RULE"
+    ]
+    assert len(warnings) == 1  # R2 警告正常发出
+
+    GNNAdvisor.reset_singleton()
+
+
 def test_no_disabled_reason_when_advisor_succeeds() -> None:
     """Happy path: when the advisor runs successfully and writes the
     full ``gnn`` block, no ``gnn_disabled_reason`` field should leak
