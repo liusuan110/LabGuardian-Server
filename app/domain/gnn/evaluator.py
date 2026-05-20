@@ -296,7 +296,7 @@ def _load_ref_payload(
             f"no payload path registered for ref_id={ref_id!r}; "
             "pass ref_payload_paths={...} to evaluate_split()"
         )
-    payload: dict[str, Any] = json.loads(path.read_text())
+    payload: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     return payload
 
 
@@ -492,7 +492,7 @@ def _evaluate_sample(
             on a different edge set.
     """
 
-    label = json.loads(label_path.read_text())
+    label = json.loads(label_path.read_text(encoding="utf-8"))
     ref_id = label["ref_id"]
     sample_id = label["sample_id"]
     cur_meta = label.get("cur_metadata") or {}
@@ -738,14 +738,14 @@ def evaluate_split(
 
         netlist_override: dict[str, Any] | None = None
         if netlist_v2_dir is not None:
-            label_doc = json.loads(label_path.read_text())
+            label_doc = json.loads(label_path.read_text(encoding="utf-8"))
             ref_id = label_doc["ref_id"]
             sample_id = label_doc["sample_id"]
             netlist_path = netlist_v2_dir / ref_id / f"{sample_id}.json"
             if not netlist_path.is_file():
                 n_netlist_missing += 1
                 continue
-            netlist_override = json.loads(netlist_path.read_text())
+            netlist_override = json.loads(netlist_path.read_text(encoding="utf-8"))
 
         ev = _evaluate_sample(
             label_path,

@@ -355,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
         }
         (args.output_dir / f"fold_{fold_idx}.json").write_text(
             json.dumps(summary_for_json, indent=2)
-        )
+        , encoding="utf-8")
 
     mean_auc = sum(f["best_val_auc"] for f in fold_summaries) / len(fold_summaries)
     # Symlink the best fold's checkpoint as backbone.pt for P3 to pick up
@@ -383,7 +383,7 @@ def main(argv: list[str] | None = None) -> int:
             "output_dir": str(args.output_dir),
         },
     }
-    (args.output_dir / "summary.json").write_text(json.dumps(final, indent=2, default=str))
+    (args.output_dir / "summary.json").write_text(json.dumps(final, indent=2, default=str), encoding="utf-8")
 
     print(
         f"[pretrain] folds={len(fold_summaries)} "

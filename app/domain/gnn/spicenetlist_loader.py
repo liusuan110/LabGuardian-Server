@@ -299,7 +299,7 @@ def load_spicenetlist_dir(json_dir: Path) -> list[SpiceNetlistCircuit]:
     out: list[SpiceNetlistCircuit] = []
     for fp in files:
         try:
-            payload = json.loads(fp.read_text())
+            payload = json.loads(fp.read_text(encoding="utf-8"))
             out.append(load_circuit_json(payload, circuit_id=fp.stem))
         except Exception as e:  # noqa: BLE001 — skip bad files but log
             import logging

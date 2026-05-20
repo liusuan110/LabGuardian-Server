@@ -47,7 +47,7 @@ class LabelManifest:
             (LABELS_DIR / ref.id / f"{sample_id}.json").write_text(
                 json.dumps(serialize_label_build_result(
                     result, sample_id=sample_id, ref_id=ref.id,
-                ))
+                ), encoding="utf-8")
             )
         except CoverageError as e:
             manifest.record_failure(sample_id, f"coverage: {e}")
@@ -60,7 +60,7 @@ class LabelManifest:
                      manifest.n_processed, periodic)
 
     final = manifest.summary()
-    (DATASET_DIR / "manifest.json").write_text(json.dumps(final, indent=2))
+    (DATASET_DIR / "manifest.json").write_text(json.dumps(final, indent=2), encoding="utf-8")
     if final["n_skipped_failures"] > 0:
         log.warning("%d samples failed coverage; see manifest.failures",
                     final["n_skipped_failures"])
@@ -175,7 +175,7 @@ class LabelManifest:
     def to_json(self, path: Path) -> None:
         """便利：写最终 manifest 到磁盘。"""
 
-        path.write_text(json.dumps(self.summary(), indent=2))
+        path.write_text(json.dumps(self.summary(), indent=2), encoding="utf-8")
 
     # -- internals -------------------------------------------------------
 

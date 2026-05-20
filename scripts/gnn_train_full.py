@@ -226,9 +226,9 @@ def build_loaders(
     """
 
     splits_dir = dataset_dir / "splits"
-    train_entries = json.loads((splits_dir / "train.json").read_text())
-    val_entries = json.loads((splits_dir / "val.json").read_text())
-    test_entries = json.loads((splits_dir / "test.json").read_text())
+    train_entries = json.loads((splits_dir / "train.json").read_text(encoding="utf-8"))
+    val_entries = json.loads((splits_dir / "val.json").read_text(encoding="utf-8"))
+    test_entries = json.loads((splits_dir / "test.json").read_text(encoding="utf-8"))
 
     if prebaked_path is not None:
         from app.domain.gnn.prebaked_dataset import PrebakedSealDataset
@@ -343,7 +343,7 @@ def main(argv: list[str] | None = None) -> int:
         refs_config = DEFAULT_CONFIG["refs"]
         subtypes = DEFAULT_CONFIG.get("subtypes_by_ref_id", {})
     else:
-        cfg = json.loads(args.refs_config.read_text())
+        cfg = json.loads(args.refs_config.read_text(encoding="utf-8"))
         refs_config = cfg["refs"]
         subtypes = cfg.get("subtypes_by_ref_id", {})
 
@@ -428,7 +428,7 @@ def main(argv: list[str] | None = None) -> int:
     }
     (args.output_dir / "summary.json").write_text(
         json.dumps(final, indent=2, default=str)
-    )
+    , encoding="utf-8")
 
     we_t = test_metrics.get("wrong_edge", {})
     me_t = test_metrics.get("missing_edge", {})

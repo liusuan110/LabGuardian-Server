@@ -33,7 +33,7 @@ log = logging.getLogger("gnn.eval.cli")
 def _parse_split(path: Path | None) -> list[str] | None:
     if path is None:
         return None
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -172,9 +172,10 @@ def main(argv: list[str] | None = None) -> int:
 
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "metrics.json").write_text(
-        json.dumps(report.to_dict(), indent=2, default=str)
+        json.dumps(report.to_dict(), indent=2, default=str),
+        encoding="utf-8",
     )
-    (args.output / "report.md").write_text(report.to_markdown())
+    (args.output / "report.md").write_text(report.to_markdown(), encoding="utf-8")
 
     print(
         f"wrote {args.output / 'metrics.json'} and {args.output / 'report.md'}\n"

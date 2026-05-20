@@ -58,7 +58,7 @@ def _export_one(
     ref_cache: dict,
     seed_base: int,
 ) -> dict[str, str] | None:
-    label = json.loads(label_path.read_text())
+    label = json.loads(label_path.read_text(encoding="utf-8"))
     ref_id = label["ref_id"]
     sample_id = label["sample_id"]
     cur_meta = label.get("cur_metadata") or {}
@@ -95,16 +95,19 @@ def _export_one(
     netlist_path = out_dir / f"{sample_id}.json"
     meta_path = out_dir / f"{sample_id}.meta.json"
 
-    netlist_path.write_text(json.dumps(noisy, indent=2, default=str))
-    meta_path.write_text(json.dumps({
-        "sample_id": sample_id,
-        "ref_id": ref_id,
-        "expected_outcome": cur_meta.get("expected_outcome"),
-        "perturbation_chain": list(cur_meta.get("perturbation_chain", []) or []),
-        "alignment": cur_meta.get("alignment", {}),
-        "realism_profile": profile_name,
-        "source_label_path": str(label_path.relative_to(label_path.parents[2])),
-    }, indent=2, default=str))
+    netlist_path.write_text(json.dumps(noisy, indent=2, default=str), encoding="utf-8")
+    meta_path.write_text(
+        json.dumps({
+            "sample_id": sample_id,
+            "ref_id": ref_id,
+            "expected_outcome": cur_meta.get("expected_outcome"),
+            "perturbation_chain": list(cur_meta.get("perturbation_chain", []) or []),
+            "alignment": cur_meta.get("alignment", {}),
+            "realism_profile": profile_name,
+            "source_label_path": str(label_path.relative_to(label_path.parents[2])),
+        }, indent=2, default=str),
+        encoding="utf-8",
+    )
 
     return {"sample_id": sample_id, "ref_id": ref_id}
 
@@ -194,14 +197,17 @@ def main(argv: list[str] | None = None) -> int:
             "n_skipped": n_skip,
         }
         manifest = args.output_root / profile_name / "manifest.json"
-        manifest.write_text(json.dumps({
-            "profile": profile_name,
-            "n_input": len(label_files),
-            "n_exported": n_ok,
-            "n_skipped": n_skip,
-            "label_dir": str(args.label_dir),
-            "seed_base": args.seed,
-        }, indent=2))
+        manifest.write_text(
+            json.dumps({
+                "profile": profile_name,
+                "n_input": len(label_files),
+                "n_exported": n_ok,
+                "n_skipped": n_skip,
+                "label_dir": str(args.label_dir),
+                "seed_base": args.seed,
+            }, indent=2),
+            encoding="utf-8",
+        )
 
     print("=== Export summary ===")
     for name, info in summary.items():

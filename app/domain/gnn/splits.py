@@ -217,16 +217,20 @@ def write_splits(splits: DatasetSplits, output_dir: Path) -> Path:
     splits_dir = output_dir / "splits"
     splits_dir.mkdir(parents=True, exist_ok=True)
     (splits_dir / "train.json").write_text(
-        json.dumps(list(splits.train), ensure_ascii=False, indent=2)
+        json.dumps(list(splits.train), ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
     (splits_dir / "val.json").write_text(
-        json.dumps(list(splits.val), ensure_ascii=False, indent=2)
+        json.dumps(list(splits.val), ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
     (splits_dir / "test.json").write_text(
-        json.dumps(list(splits.test), ensure_ascii=False, indent=2)
+        json.dumps(list(splits.test), ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
     (splits_dir / "stats.json").write_text(
-        json.dumps(splits.stats, ensure_ascii=False, indent=2)
+        json.dumps(splits.stats, ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
     return splits_dir
 
@@ -237,11 +241,11 @@ def load_splits(output_dir: Path) -> DatasetSplits:
     splits_dir = output_dir / "splits"
     if not splits_dir.is_dir():
         raise SplitsError(f"splits dir not found: {splits_dir}")
-    train = tuple(json.loads((splits_dir / "train.json").read_text()))
-    val = tuple(json.loads((splits_dir / "val.json").read_text()))
-    test = tuple(json.loads((splits_dir / "test.json").read_text()))
+    train = tuple(json.loads((splits_dir / "train.json").read_text(encoding="utf-8")))
+    val = tuple(json.loads((splits_dir / "val.json").read_text(encoding="utf-8")))
+    test = tuple(json.loads((splits_dir / "test.json").read_text(encoding="utf-8")))
     stats_path = splits_dir / "stats.json"
-    stats = json.loads(stats_path.read_text()) if stats_path.is_file() else {}
+    stats = json.loads(stats_path.read_text(encoding="utf-8")) if stats_path.is_file() else {}
     return DatasetSplits(train=train, val=val, test=test, stats=stats)
 
 

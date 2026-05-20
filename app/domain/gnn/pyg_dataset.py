@@ -107,7 +107,7 @@ class RefRegistry:
         if cached is not None:
             return cached
         entry = self.entries[ref_id]
-        payload = json.loads(entry.payload_path.read_text())
+        payload = json.loads(entry.payload_path.read_text(encoding="utf-8"))
         hcg = build_from_logical_reference(
             payload,
             extra_subtypes_by_source_id=entry.subtype_by_source_id or None,
@@ -231,7 +231,7 @@ class FlatSealDataset(Dataset):
             ref_id: str, sample_id: str
         ) -> tuple[HeteroCircuitGraph, LabelBuildResult, dict]:
             path = self._sample_paths[(ref_id, sample_id)]
-            payload = json.loads(path.read_text())
+            payload = json.loads(path.read_text(encoding="utf-8"))
             result = deserialize_label_build_result(payload)
             ref_hcg = self.refs.ref_hcg(ref_id)
             cur_hcg = reconstruct_cur_hcg(
@@ -284,7 +284,7 @@ class FlatSealDataset(Dataset):
 
         filtered_entries: list[str] = []
         for (ref_id, sample_id), path in self._sample_paths.items():
-            payload = json.loads(path.read_text())
+            payload = json.loads(path.read_text(encoding="utf-8"))
             if any(
                 s.get("task_type") == task_type for s in payload.get("samples", [])
             ):
@@ -305,7 +305,7 @@ def _count_samples_in_json(path: Path) -> int:
     Used by ``FlatSealDataset.__init__`` to size the row index without
     materialising every PyG ``Data``."""
 
-    payload = json.loads(path.read_text())
+    payload = json.loads(path.read_text(encoding="utf-8"))
     return len(payload.get("samples", []))
 
 

@@ -34,7 +34,7 @@ SPLITS = ("test", "val")
 def _load(path: Path) -> dict | None:
     if not path.is_file():
         return None
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _fmt(v, fmt: str = ".4f") -> str:
@@ -232,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _write_output(lines: list[str], path: Path) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines))
+    path.write_text("\n".join(lines), encoding="utf-8")
     print(f"wrote {path}")
     return 0
 

@@ -176,7 +176,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 def load_config(config_path: Path | None) -> dict[str, Any]:
     if config_path is None:
         return DEFAULT_CONFIG
-    parsed: dict[str, Any] = json.loads(config_path.read_text())
+    parsed: dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
     return parsed
 
 

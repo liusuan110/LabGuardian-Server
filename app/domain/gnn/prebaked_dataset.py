@@ -123,7 +123,7 @@ def prebake_to_disk(
             stats.n_samples_failed_to_load += 1
             continue
         try:
-            payload = json.loads(label_file.read_text())
+            payload = json.loads(label_file.read_text(encoding="utf-8"))
             result = deserialize_label_build_result(payload)
         except Exception as e:  # noqa: BLE001
             log.warning("failed to deserialize %s: %r", label_file, e)

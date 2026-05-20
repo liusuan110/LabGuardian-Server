@@ -61,7 +61,7 @@ def collect_entries(splits_dir: Path) -> list[str]:
     for name in ("train.json", "val.json", "test.json"):
         path = splits_dir / name
         if path.is_file():
-            all_entries.extend(json.loads(path.read_text()))
+            all_entries.extend(json.loads(path.read_text(encoding="utf-8")))
         else:
             log.warning("missing splits file: %s", path)
     return all_entries
@@ -109,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
         refs_cfg = DEFAULT_CONFIG["refs"]
         subtypes = DEFAULT_CONFIG.get("subtypes_by_ref_id", {})
     else:
-        cfg = json.loads(args.refs_config.read_text())
+        cfg = json.loads(args.refs_config.read_text(encoding="utf-8"))
         refs_cfg = cfg["refs"]
         subtypes = cfg.get("subtypes_by_ref_id", {})
 
@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     labels_dir = args.dataset_dir / "labels"
 
     if args.entries_file is not None:
-        text = args.entries_file.read_text().strip()
+        text = args.entries_file.read_text(encoding="utf-8").strip()
         try:
             entries = json.loads(text)
         except json.JSONDecodeError:

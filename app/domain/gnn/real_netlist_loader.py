@@ -139,7 +139,7 @@ def _read_meta(meta_path: Path) -> dict[str, Any] | None:
     if not meta_path.is_file():
         return None
     try:
-        return json.loads(meta_path.read_text())
+        return json.loads(meta_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         log.warning("meta read failed for %s: %s", meta_path, e)
         return None
@@ -180,7 +180,7 @@ def _build_sample(
         return None
 
     try:
-        netlist_v2 = json.loads(netlist_path.read_text())
+        netlist_v2 = json.loads(netlist_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         stats.n_skipped_other += 1
         stats.skipped_paths.append(str(netlist_path))

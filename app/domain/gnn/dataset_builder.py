@@ -192,7 +192,7 @@ def validate_dataset_spec(spec: DatasetSpec) -> None:
             continue
         # Try parse JSON
         try:
-            json.loads(ref_spec.payload_path.read_text())
+            json.loads(ref_spec.payload_path.read_text(encoding="utf-8"))
         except Exception as e:
             issues.append(
                 f"ref_id={ref_spec.ref_id!r}: payload not valid JSON: {e!r}"
@@ -267,7 +267,7 @@ def generate_dataset(
     #    (cheap json.loads) so they don't waste worker slots.
     pending: list[_WorkerTask] = []
     for ref_spec in spec.refs:
-        ref_payload = json.loads(ref_spec.payload_path.read_text())
+        ref_payload = json.loads(ref_spec.payload_path.read_text(encoding="utf-8"))
         # P1 audit fix: subtype override **at ref build time** —— let
         # FORBIDDEN/OPTIONAL spec apply to ref ports too. Previously this
         # only flowed to perturbation, causing ref/cur semantic mismatch
@@ -354,7 +354,7 @@ def _try_resume_sample(
     deserialize are logged + regenerated rather than silently dropped."""
 
     try:
-        payload = json.loads(label_file.read_text())
+        payload = json.loads(label_file.read_text(encoding="utf-8"))
         result = deserialize_label_build_result(payload)
     except Exception as e:
         log.warning(
@@ -440,7 +440,7 @@ def _worker_run_sample(task: _WorkerTask) -> dict[str, Any]:
             ref_id=task.ref_id,
             cur_metadata=cur_metadata,
         )
-        task.label_file.write_text(json.dumps(payload, ensure_ascii=False))
+        task.label_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         return {
             "status": "ok",
             "sample_id": task.sample_id,

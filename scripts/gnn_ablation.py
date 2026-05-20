@@ -224,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
             return rc
         summary_path = cfg_dir / "summary.json"
         if summary_path.is_file():
-            results[cfg] = json.loads(summary_path.read_text())
+            results[cfg] = json.loads(summary_path.read_text(encoding="utf-8"))
         else:
             log.warning("no summary.json for %s — skipping in report", cfg)
 
