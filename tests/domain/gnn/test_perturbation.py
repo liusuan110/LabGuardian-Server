@@ -58,8 +58,8 @@ def _load_ref(path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_registry_has_12_operators() -> None:
-    """Phase A (4) + Phase B (8) = 12 perturbation operators."""
+def test_registry_has_13_operators() -> None:
+    """Phase A (4) + Phase B (8) + Phase C (1) = 13 perturbation operators."""
 
     expected = {
         # Phase A
@@ -76,6 +76,8 @@ def test_registry_has_12_operators() -> None:
         "input_output_swapped",
         "extra_wire_bridge",
         "chained",
+        # Phase C — real-student wire formality (Stage 1)
+        "insert_same_net_wire",
     }
     assert set(PERTURBATION_REGISTRY) == expected
 
@@ -673,6 +675,131 @@ def test_extra_wire_bridge_adds_wire_component_bridging_two_nets() -> None:
     )
 
 
+# --- InsertSameNetWire (Phase C) ---
+
+
+def test_insert_same_net_wire_both_pins_on_same_net() -> None:
+    """关键不变量：每个新增 Wire 的 pin1 和 pin2 落到**同一个** net。"""
+
+    ref = _load_ref(FIXTURE_DIVIDER)
+    p = apply_perturbation("insert_same_net_wire", ref, seed=11)
+    assert p.expected_outcome == "positive"
+    assert p.notes["intentional_wires"], "intentional_wires payload missing"
+
+    # 每个 wire 的两端必须同 net
+    for entry in p.notes["intentional_wires"]:
+        wire_sid = entry["wire_sid"]
+        expected_net = entry["net_sid"]
+        wire_pins = [
+            p.cur_hcg.ports[e.src_port_id]
+            for e in p.cur_hcg.edges
+            if p.cur_hcg.ports[e.src_port_id].parent_component_id.endswith(
+                wire_sid
+            )
+        ]
+        assert len(wire_pins) == 2, f"{wire_sid} 应有 2 个 pin 边"
+        wire_nets = {
+            p.cur_hcg.nets[
+                next(e.dst_net_id for e in p.cur_hcg.edges
+                     if e.src_port_id == port.node_id)
+            ].source_id
+            for port in wire_pins
+        }
+        assert wire_nets == {expected_net}, (
+            f"{wire_sid} 两端 net 不一致: {wire_nets} (expected {{{expected_net}}})"
+        )
+
+
+def test_insert_same_net_wire_preserves_all_ref_edges() -> None:
+    """所有 ref 边在 cur 中必须保留（拓扑不变性）。"""
+
+    ref = _load_ref(FIXTURE_DIVIDER)
+    p = apply_perturbation("insert_same_net_wire", ref, seed=11)
+    ref_edges = {
+        (
+            ref.ports[e.src_port_id].parent_component_id,
+            ref.ports[e.src_port_id].port_key,
+            ref.nets[e.dst_net_id].source_id,
+        )
+        for e in ref.edges
+    }
+    # cur 上把每条边都映射回 (parent_comp_source_id, port_key, net_source_id) 形态
+    cur_edges = {
+        (
+            p.cur_hcg.components[
+                p.cur_hcg.ports[e.src_port_id].parent_component_id
+            ].source_id,
+            p.cur_hcg.ports[e.src_port_id].port_key,
+            p.cur_hcg.nets[e.dst_net_id].source_id,
+        )
+        for e in p.cur_hcg.edges
+    }
+    # ref 的每个 (comp.source_id, port_key, net_source_id) 三元组都应该在 cur 里
+    for comp_node_id, pk, net_sid in ref_edges:
+        comp_source_id = ref.components[comp_node_id].source_id
+        triple = (comp_source_id, pk, net_sid)
+        assert triple in cur_edges, (
+            f"ref 边 {triple} 丢失"
+        )
+
+
+def test_insert_same_net_wire_respects_max_wires_bound() -> None:
+    """默认 max_wires=3 时不超过 3 个 wire；候选 net 不足时按候选数封顶。"""
+
+    ref = _load_ref(FIXTURE_DIVIDER)  # divider 只有 3 个 net 全都有边
+    p = apply_perturbation("insert_same_net_wire", ref, seed=7)
+    n_wires = len(p.notes["intentional_wires"])
+    assert 1 <= n_wires <= 3
+    assert n_wires <= len(ref.nets)
+
+
+def test_insert_same_net_wire_falls_back_to_identity_on_empty_ref() -> None:
+    """当 ref 没有任何边（所有 net degree=0）→ 安全 fallback 到 identity。"""
+
+    # 用 hand-built minimal ref（comps + nets 但 0 edges）模拟极端情况
+    # 直接通过 ref 的 mutator 实现成本高 —— 这里改用注册表角度：
+    # divider 等 fixture 全部都有边，要构造 0 边场景需要单独的极小 HCG。
+    # 简化：复用 RC 但传入额外参数让 net_degrees={} —— 实际上不会出现，
+    # 所以这条测试用最低成本验证 fallback 分支可达：直接调用 .apply
+    # 并把 ref 的 edges 清空。
+    from app.domain.gnn.hetero_circuit import HeteroCircuitGraph
+    from app.domain.gnn.perturbation import (
+        InsertSameNetWirePerturbation, IdentityPerturbation,
+    )
+    import random as _rnd
+
+    ref = _load_ref(FIXTURE_RC)
+    # 复制一个 ref 但边清空
+    bare_ref = HeteroCircuitGraph(side="ref")
+    bare_ref.components = dict(ref.components)
+    bare_ref.ports = dict(ref.ports)
+    bare_ref.nets = dict(ref.nets)
+    bare_ref.port_of_component = dict(ref.port_of_component)
+    bare_ref.edges = []  # ← key: zero edges
+    bare_ref.metadata = dict(ref.metadata)
+
+    p = InsertSameNetWirePerturbation().apply(bare_ref, _rnd.Random(0))
+    # fallback 时 perturbation_chain 应该来自 IdentityPerturbation
+    assert p.perturbation_chain == ("identity",)
+
+
+def test_insert_same_net_wire_deterministic() -> None:
+    """同 seed → byte-identical edges + notes。"""
+
+    ref = _load_ref(FIXTURE_DIVIDER)
+    p1 = apply_perturbation("insert_same_net_wire", ref, seed=99)
+    p2 = apply_perturbation("insert_same_net_wire", ref, seed=99)
+    assert p1.perturbation_chain == p2.perturbation_chain
+    assert p1.notes["intentional_wires"] == p2.notes["intentional_wires"]
+    e1 = sorted(
+        (e.src_port_id, e.dst_net_id) for e in p1.cur_hcg.edges
+    )
+    e2 = sorted(
+        (e.src_port_id, e.dst_net_id) for e in p2.cur_hcg.edges
+    )
+    assert e1 == e2
+
+
 # --- Chained ---
 
 
@@ -702,6 +829,7 @@ def test_chained_composes_multiple_links() -> None:
         "power_swapped",
         "input_output_swapped",
         "extra_wire_bridge",
+        "insert_same_net_wire",
         "chained",
     ],
 )

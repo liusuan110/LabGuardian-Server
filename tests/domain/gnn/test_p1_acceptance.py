@@ -44,6 +44,8 @@ ACCEPTANCE_SCALED_PLAN = {
     "input_output_swapped": 1,
     "extra_wire_bridge": 2,
     "chained": 2,
+    # Phase C · Stage 1 — same-net wire positive class (real-student form).
+    "insert_same_net_wire": 2,
 }
 
 
@@ -85,6 +87,9 @@ def test_p1_acceptance_scaled_runs_end_to_end_serial(tmp_path: Path) -> None:
         LabelSource.WRONG_OBSERVED.value,
         LabelSource.FORBIDDEN_NEGATIVE.value,
         LabelSource.NEGATIVE_RANDOM.value,
+        # Phase C · Stage 1 gate: 没有这一 source 训练 → 模型仍学不到
+        # "wire-两端同 net 是 positive" 这一模式。
+        LabelSource.WIRE_SAME_NET_POSITIVE.value,
     }
     for src in required:
         assert manifest["by_source"][src] > 0, (

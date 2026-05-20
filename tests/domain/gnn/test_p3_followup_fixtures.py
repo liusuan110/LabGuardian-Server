@@ -140,6 +140,28 @@ def test_default_config_includes_new_p3_followup_fixtures() -> None:
     assert "opamp_inverting" not in DEFAULT_CONFIG["test_ref_ids"]
 
 
+def test_default_config_includes_insert_same_net_wire_perturbation() -> None:
+    """**Stage 3 contract** — DEFAULT_CONFIG.plan.counts 必须包含新加入的
+    insert_same_net_wire perturbation，且总样本量保持 600/ref（其他 op
+    按比例下调，不让数据集体积突然胀大）。"""
+
+    from scripts.gnn_generate_dataset import DEFAULT_CONFIG
+
+    counts = DEFAULT_CONFIG["plan"]["counts"]
+    assert "insert_same_net_wire" in counts, (
+        "Stage 3 contract: insert_same_net_wire 必须在 DEFAULT_CONFIG.plan.counts 里"
+    )
+    assert counts["insert_same_net_wire"] > 0
+    # 总样本量锁定（不变 600）
+    assert sum(counts.values()) == 600, (
+        f"DEFAULT_CONFIG counts sum 应是 600/ref, 实际 {sum(counts.values())}"
+    )
+    # 关键反例 perturbation 必须保留 —— 否则模型失去"错接 wire 应判 0"的判别力
+    assert counts.get("extra_wire_bridge", 0) > 0, (
+        "extra_wire_bridge 不能被砍空 — 模型仍需要 cross-net wire 负例"
+    )
+
+
 def test_default_config_grew_to_seven_refs() -> None:
     """Locks down the dataset size against accidental fixture drops.
 

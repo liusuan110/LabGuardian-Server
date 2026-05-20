@@ -206,6 +206,135 @@ def test_wrong_observed_coverage_invariant_holds() -> None:
     assert_observed_edges_covered(result, cur, ref, align)
 
 
+def test_same_net_wire_labeled_as_positive_y1() -> None:
+    """**Stage 2 contract** — 当 cur 里某个 Wire 组件的全部 pin 落到同一个
+    net 时，label_builder 必须把这些 edges 标成 WIRE_SAME_NET_POSITIVE
+    y=1（不是默认的 WRONG_OBSERVED y=0）。
+
+    用 `insert_same_net_wire` perturbation 把 wire 注入到反相放大器 ref。
+    """
+
+    from app.domain.gnn.perturbation import apply_perturbation
+
+    ref = _build_ref(
+        Path(__file__).resolve().parents[2]
+        / "fixtures" / "references" / "test_opamp_inverting_v1.json"
+    )
+    p = apply_perturbation("insert_same_net_wire", ref, seed=11)
+    result = build_seal_samples(ref, p.cur_hcg, p.alignment)
+
+    wire_pos = [
+        s for s in result.samples
+        if s.label_source == LabelSource.WIRE_SAME_NET_POSITIVE.value
+    ]
+    assert wire_pos, "无 WIRE_SAME_NET_POSITIVE 样本 — Stage 2 自描述规则未生效"
+
+    # 期望: 每个 intentional wire 贡献 2 条边 (pin1 + pin2)
+    expected_count = 2 * len(p.notes["intentional_wires"])
+    assert len(wire_pos) == expected_count, (
+        f"WIRE_SAME_NET_POSITIVE 数量对不上: {len(wire_pos)} vs {expected_count}"
+    )
+
+    # 每条都必须是 y=1 / WRONG_EDGE / 两端 net 一致 (candidate==expected)
+    for s in wire_pos:
+        assert s.label == 1
+        assert s.task_type == TaskType.WRONG_EDGE.value
+        assert s.candidate_edge == s.expected_edge, (
+            "same-net wire 的 expected_edge 应该自指 (两端 net 相同)"
+        )
+
+
+def test_cross_net_wire_remains_wrong_observed_y0() -> None:
+    """**Stage 2 反例不变性** — `extra_wire_bridge`（两端不同 net）仍必须
+    标 WRONG_OBSERVED y=0，**绝不**能因为是 Wire 就被误识别成 positive。"""
+
+    from app.domain.gnn.perturbation import apply_perturbation
+
+    ref = _build_ref(
+        Path(__file__).resolve().parents[2]
+        / "fixtures" / "references" / "test_voltage_divider_v1.json"
+    )
+    p = apply_perturbation("extra_wire_bridge", ref, seed=1)
+    if p.perturbation_chain == ("identity",):
+        pytest.skip("divider 上没有可桥的网络对")
+    result = build_seal_samples(ref, p.cur_hcg, p.alignment)
+
+    # 只看 wire 真正的 observed edges (在 cur_hcg.edges 里的)，不要把
+    # negative_random 给 wire 的 port 采样的非边样本算进来。
+    wire_observed_edges = {
+        (e.src_port_id, e.dst_net_id)
+        for e in p.cur_hcg.edges
+        if cur_port_belongs_to_wire(p.cur_hcg, e.src_port_id, p.notes["wire_id"])
+    }
+    assert len(wire_observed_edges) == 2, (
+        f"extra_wire_bridge 应该注入 2 条 observed edges，实际 {len(wire_observed_edges)}"
+    )
+
+    wire_observed_samples = [
+        s for s in result.samples
+        if s.candidate_edge in wire_observed_edges
+    ]
+    assert wire_observed_samples, "wire 真实 observed edges 必须被 Step 2.5 采到"
+    # 全部应该是 WRONG_OBSERVED，绝不能是 WIRE_SAME_NET_POSITIVE
+    for s in wire_observed_samples:
+        assert s.label_source == LabelSource.WRONG_OBSERVED.value, (
+            f"cross-net wire 误判: {s.label_source} (期望 wrong_observed)\n"
+            f"candidate_edge={s.candidate_edge}"
+        )
+        assert s.label == 0
+    # 同时确保整个结果里没有 WIRE_SAME_NET_POSITIVE
+    wire_pos = [
+        s for s in result.samples
+        if s.label_source == LabelSource.WIRE_SAME_NET_POSITIVE.value
+    ]
+    assert not wire_pos, (
+        f"extra_wire_bridge 不应产生 WIRE_SAME_NET_POSITIVE，但有 {len(wire_pos)} 条"
+    )
+
+
+def test_wire_with_single_pin_not_marked_positive() -> None:
+    """边界 case：Wire 只有一条边（degenerate）→ 不构成"同 net 延长线"模式
+    → 不被识别为 WIRE_SAME_NET_POSITIVE，回退到普通逻辑。"""
+
+    import networkx as nx
+    from app.domain.gnn.port_graph import build_hetero_circuit_graph
+
+    ref = _build_ref(FIXTURE_RC)
+    # 在 cur 里手动塞一个**只有 pin1 接 net** 的 Wire
+    cur_g = hcg_to_cur_nx(ref)
+    cur_g.add_node("cur_comp:LooseWire", kind="comp", ctype="Wire", source_id="LooseWire")
+    cur_g.add_edge(
+        "cur_comp:LooseWire", "cur_net:VIN",
+        kind="port_net", pin="pin1", pin_role="pin1",
+    )
+    cur = build_hetero_circuit_graph(cur_g, side="cur")
+
+    align = identity_alignment(ref, cur)
+    result = build_seal_samples(ref, cur, align)
+    # 唯一这条 wire 边不应被打成 WIRE_SAME_NET_POSITIVE（因为只有 1 pin
+    # 不构成 same-net 模式）。它应该作为 WRONG_OBSERVED 处理。
+    loose_samples = [
+        s for s in result.samples
+        if s.candidate_edge[0] == "cur_port:LooseWire.pin1"
+    ]
+    if loose_samples:  # 取决于 OPTIONAL/FORBIDDEN 处理，可能被跳过
+        for s in loose_samples:
+            assert s.label_source != LabelSource.WIRE_SAME_NET_POSITIVE.value, (
+                f"单 pin wire 被误识别为 same-net positive: {s}"
+            )
+
+
+def cur_port_belongs_to_wire(cur_hcg, port_node_id: str, wire_sid: str) -> bool:
+    """辅助：判断某 port 是否属于指定 source_id 的 wire 组件。"""
+
+    if port_node_id not in cur_hcg.ports:
+        return False
+    parent_id = cur_hcg.ports[port_node_id].parent_component_id
+    if parent_id not in cur_hcg.components:
+        return False
+    return cur_hcg.components[parent_id].source_id == wire_sid
+
+
 def test_forbidden_violated_when_pin8_wired() -> None:
     ref = _build_ref(FIXTURE_OPAMP)
     # UA741 fixture has pin 8 = NC = FORBIDDEN. Add a wrong edge to it.

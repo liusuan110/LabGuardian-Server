@@ -1052,6 +1052,129 @@ class ExtraWireBridgePerturbation(Perturbation):
         )
 
 
+class InsertSameNetWirePerturbation(Perturbation):
+    """**Phase C · Stage 1 — real-student wire formality**
+
+    Inject 1-3 Wire components, each with **both pins on the SAME net**.
+
+    Models the dominant real-world wire formality in student boards: a
+    jumper wire bridges two breadboard holes that the topology engine
+    later resolves to a single ``electrical_net_id``. Both wire pins
+    therefore end up on the same net (see e.g.
+    ``tests/fixtures/real_student/inverting_amp_correct_v1.json`` for
+    W1/W2/W3 with ``electrical_net_id`` identical on both pins).
+
+    **Electrically a no-op** — ref topology is preserved verbatim, the
+    cur just gains a few extra Wire components whose presence does not
+    change the circuit's electrical equivalence. ``expected_outcome=
+    "positive"``.
+
+    **Label semantics (Stage 2 contract)** — both new wire edges are
+    *intentional positives*, NOT WRONG_OBSERVED negatives. The
+    ``notes["intentional_wires"]`` payload enumerates the wire ids +
+    target nets so :func:`label_builder.build_seal_samples` (Stage 2
+    fix) can emit them as ``WRONG_EDGE`` rows with ``y=1`` rather than
+    the default ``WRONG_OBSERVED`` ``y=0`` path.
+
+    **Why this perturbation exists**: training data prior to Stage 1
+    only saw Wire components through :class:`ExtraWireBridgePerturbation`
+    (always negative, two pins on *different* nets). The model thus
+    learned the heuristic "Wire → output 0", catastrophically
+    misjudging real student boards where same-net wires are normal and
+    correct. This perturbation supplies the missing positive class.
+    """
+
+    name = "insert_same_net_wire"
+    expected_outcome = "positive"
+
+    DEFAULT_MIN_WIRES = 1
+    DEFAULT_MAX_WIRES = 3
+
+    def apply(
+        self,
+        ref_hcg,
+        rng,
+        *,
+        subtype_by_source_id=None,
+        min_wires: int | None = None,
+        max_wires: int | None = None,
+    ):
+        # Only consider nets that actually carry ref edges — putting a
+        # wire on a wholly disconnected net would create the only edges
+        # on that net, which doesn't match the real "extend an existing
+        # net" use case.
+        net_degrees: dict[str, int] = {}
+        for e in ref_hcg.edges:
+            sid = ref_hcg.nets[e.dst_net_id].source_id
+            net_degrees[sid] = net_degrees.get(sid, 0) + 1
+        candidate_nets = sorted(sid for sid, d in net_degrees.items() if d >= 1)
+        if not candidate_nets:
+            return IdentityPerturbation().apply(
+                ref_hcg, rng, subtype_by_source_id=subtype_by_source_id
+            )
+
+        lo = self.DEFAULT_MIN_WIRES if min_wires is None else max(1, min_wires)
+        hi = self.DEFAULT_MAX_WIRES if max_wires is None else max(lo, max_wires)
+        n_wires = rng.randint(lo, hi)
+        n_wires = min(n_wires, len(candidate_nets))
+        target_nets = rng.sample(candidate_nets, k=n_wires)
+
+        existing = {c.source_id for c in ref_hcg.components.values()}
+        raw = hcg_to_raw_pin_edges(ref_hcg)
+        extra_components: list[tuple[str, str]] = []
+        intentional: list[dict[str, str]] = []
+        idx = 0
+        for net_sid in target_nets:
+            while f"X_Wire_{idx}" in existing:
+                idx += 1
+            wire_sid = f"X_Wire_{idx}"
+            existing.add(wire_sid)
+            idx += 1
+            _add_pin_edge(
+                raw,
+                comp_source_id=wire_sid,
+                ctype="Wire",
+                port_key="pin1",
+                pin_role="pin1",
+                net_source_id=net_sid,
+            )
+            _add_pin_edge(
+                raw,
+                comp_source_id=wire_sid,
+                ctype="Wire",
+                port_key="pin2",
+                pin_role="pin2",
+                net_source_id=net_sid,
+            )
+            extra_components.append((wire_sid, "Wire"))
+            intentional.append({"wire_sid": wire_sid, "net_sid": net_sid})
+
+        cur = _rebuild_cur_from_raw(
+            ref_hcg,
+            raw,
+            subtype_by_source_id or _collect_subtypes(ref_hcg),
+            extra_components=extra_components,
+        )
+        alignment = identity_alignment(ref_hcg, cur)
+        return PerturbedCur(
+            cur_hcg=cur,
+            alignment=alignment,
+            perturbation_chain=(
+                f"{self.name}:"
+                f"{','.join(w['wire_sid'] for w in intentional)}",
+            ),
+            expected_outcome=self.expected_outcome,
+            notes={
+                "perturbation": self.name,
+                # Stage 2 label_builder reads this to flip the default
+                # WRONG_OBSERVED labeling to WRONG_EDGE positive for
+                # exactly these wire edges. The shape is stable and
+                # serialisable for `LabelStats` reporting.
+                "intentional_wires": intentional,
+            },
+        )
+
+
 # Hard-sample composer ----------------------------------------------------
 
 # Default chain pool: a mix of negatives that compose well (no double-drop).
@@ -1137,6 +1260,7 @@ def _make_registry() -> dict[str, Perturbation]:
             PowerSwappedPerturbation(),
             InputOutputSwappedPerturbation(),
             ExtraWireBridgePerturbation(),
+            InsertSameNetWirePerturbation(),
             ChainedPerturbation(),
         )
     }
@@ -1186,6 +1310,8 @@ __all__ = [
     "PowerSwappedPerturbation",
     "InputOutputSwappedPerturbation",
     "ExtraWireBridgePerturbation",
+    # Phase C
+    "InsertSameNetWirePerturbation",
     "ChainedPerturbation",
     # Registry / helpers
     "PERTURBATION_REGISTRY",

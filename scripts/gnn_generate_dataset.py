@@ -115,23 +115,38 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "payload_path": str(FIXTURES_DIR / "test_lm358_dual_buffer_v1.json"),
         },
     ],
-    # P1 acceptance plan: 600 samples / ref × 4 refs = 2400 total. Tuned so
-    # pos_neg_ratio stays in the [0.3, 3.0] gate and every required source
-    # actually fires on at least one ref. Sums to 600 exactly.
+    # Plan: 600 samples / ref × 7 refs = 4200 total. Tuned so pos_neg_ratio
+    # stays in the [0.3, 3.0] gate and every required source fires on ≥ 1
+    # ref. Sums to 600 exactly.
+    #
+    # **Stage 3 (Phase C)**: `insert_same_net_wire` is added at 100/ref
+    # (~17% of mix) to close the Wire-OOD gap measured on real student
+    # netlist samples (see tests/fixtures/real_student/
+    # inverting_amp_correct_v1.expected.json). Other operators are reduced
+    # proportionally so total stays at 600; the cut intentionally spares
+    # `identity` / `pin_swap_symmetric` (positive-only baselines) and only
+    # mildly trims `extra_wire_bridge` (keep cross-net wire negatives so
+    # the model still rejects wrong wire bridges).
     "plan": {
         "counts": {
             "identity": 80,
             "pin_swap_symmetric": 40,
-            "wrong_connection": 90,
-            "pin_reversed": 40,
-            "missing_component": 40,
-            "extra_component": 50,
-            "floating_net": 50,
-            "short_circuit": 50,
-            "power_swapped": 25,
-            "input_output_swapped": 25,
-            "extra_wire_bridge": 50,
-            "chained": 60,
+            "wrong_connection": 70,
+            "pin_reversed": 30,
+            "missing_component": 30,
+            "extra_component": 40,
+            "floating_net": 40,
+            "short_circuit": 40,
+            "power_swapped": 20,
+            "input_output_swapped": 20,
+            "extra_wire_bridge": 40,
+            "chained": 50,
+            # Stage 3 — real-student wire formality (Phase C, Stage 1).
+            # Each sample injects 1-3 same-net wires → ~4 WIRE_SAME_NET_POSITIVE
+            # rows per sample × 100 samples × 7 refs ≈ 2800 wire-positive
+            # training rows. Should be enough signal to overwrite the prior
+            # "Wire → negative" heuristic the v3 ckpt learned.
+            "insert_same_net_wire": 100,
         },
     },
     # Plan §五: hold out one ref entirely so test ≡ new topology

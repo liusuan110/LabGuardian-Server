@@ -66,6 +66,12 @@ class LabelSource(str, Enum):  # noqa: UP042 — keep (str, Enum) for py<3.11 co
     REF_SYMMETRIC_SWAP = "ref_symmetric_swap"
     REF_ABSENT_REQUIRED = "ref_absent_required"
     WRONG_OBSERVED = "wrong_observed"  # 强负，cur 中实际接但 ref 不期望
+    # P/Stage 2: cur 中物理跳线（Wire 两端 pin 都接到同一个 net）。电学上是
+    # no-op (拓扑保持)，所以模型应学到这种 edge → y=1。覆盖真实学生网表里
+    # W1/W2/W3 这种"net 延长线"形态（参见
+    # tests/fixtures/real_student/inverting_amp_correct_v1.json）。
+    # 配套 perturbation: ``insert_same_net_wire`` (Stage 1)。
+    WIRE_SAME_NET_POSITIVE = "wire_same_net_positive"
     FORBIDDEN_VIOLATED = "forbidden_violated"
     FORBIDDEN_NEGATIVE = "forbidden_negative"
     NEGATIVE_RANDOM = "negative_random"
@@ -545,8 +551,34 @@ def build_seal_samples(
                 )
             )
 
+    # ---- Step 2.45 · 预计算 same-net wire edges ---------------------------
+    # 自描述规则（Stage 2 / Option B）：cur 中任何 Wire 组件，若其**全部**
+    # observed edges 落到同一个 net，则视为电气 no-op 的物理跳线（学生面包
+    # 板上的延长线），这些 edges 在 Step 2.5 不应被打成 WRONG_OBSERVED 负
+    # 例，而应作为 WRONG_EDGE 正例 (y=1) 注入。这是真实学生数据 OOD 的核
+    # 心修复点 —— 训练前模型从未见过 Wire 正例 (extra_wire_bridge 永远是
+    # negative)，导致模型学到"看到 Wire 输出 0"的过强先验。
+    same_net_wire_edges: set[tuple[str, str]] = set()
+    for comp in cur_hcg.components.values():
+        if comp.ctype != "Wire":
+            continue
+        # 收集这个 wire 的全部 observed (port, net) 边
+        wire_edges = [
+            (e.src_port_id, e.dst_net_id)
+            for e in cur_hcg.edges
+            if cur_hcg.ports[e.src_port_id].parent_component_id == comp.node_id
+        ]
+        if len(wire_edges) < 2:
+            # 单 pin 或没边的 wire 不构成"延长线"模式 → 不做特殊处理
+            continue
+        nets_used = {edge[1] for edge in wire_edges}
+        if len(nets_used) == 1:
+            # 全部 pin 都在同一个 net → 视为 intentional positive
+            same_net_wire_edges.update(wire_edges)
+
     # ---- Step 2.5 · WRONG_OBSERVED — cur 中实际存在但非 ref-sym-correct ---
     # 关键：100% 覆盖，不留给 NEGATIVE_RANDOM 偶然采样。
+    # Stage 2 改动：same-net wire edges 改打 WIRE_SAME_NET_POSITIVE (y=1)。
     for e in cur_hcg.edges:
         candidate = (e.src_port_id, e.dst_net_id)
         if candidate in sym_aware_correct:
@@ -571,19 +603,33 @@ def build_seal_samples(
         )
         if sg is None:
             continue
-        expected = _infer_expected_net_for_port(
-            e.src_port_id, ref_hcg, cur_hcg, alignment
-        )
-        builder.add_sample(
-            SealSample(
-                subgraph=sg,
-                label=0,
-                label_source=LabelSource.WRONG_OBSERVED.value,
-                task_type=TaskType.WRONG_EDGE.value,
-                candidate_edge=candidate,
-                expected_edge=expected,
+
+        # Stage 2 fork: same-net wire → positive (y=1); else → WRONG_OBSERVED.
+        if candidate in same_net_wire_edges:
+            builder.add_sample(
+                SealSample(
+                    subgraph=sg,
+                    label=1,
+                    label_source=LabelSource.WIRE_SAME_NET_POSITIVE.value,
+                    task_type=TaskType.WRONG_EDGE.value,
+                    candidate_edge=candidate,
+                    expected_edge=candidate,  # 自指：正确目标就是当前 net
+                )
             )
-        )
+        else:
+            expected = _infer_expected_net_for_port(
+                e.src_port_id, ref_hcg, cur_hcg, alignment
+            )
+            builder.add_sample(
+                SealSample(
+                    subgraph=sg,
+                    label=0,
+                    label_source=LabelSource.WRONG_OBSERVED.value,
+                    task_type=TaskType.WRONG_EDGE.value,
+                    candidate_edge=candidate,
+                    expected_edge=expected,
+                )
+            )
 
     # ---- Step 3 · FORBIDDEN_VIOLATED ------------------------------------
     forbidden_ports = [
@@ -778,8 +824,14 @@ def assert_observed_edges_covered(
             if pair not in wrong_edge_positives_pairs:
                 missing.append(pair)
             continue
-        # 错边 —— 应在 wrong_edge_negatives_pairs 中
-        if pair not in wrong_edge_negatives_pairs:
+        # 非 ref-correct edge —— 通常应在 wrong_edge_negatives_pairs（默认
+        # WRONG_OBSERVED 路径），但 Stage 2 引入了 WIRE_SAME_NET_POSITIVE：
+        # cur 里 wire 两端同 net 的 edge 是 ref 不存在的 positive。所以这里
+        # 接受**任一**类（neg 或 pos）的存在为"已覆盖"。
+        if (
+            pair not in wrong_edge_negatives_pairs
+            and pair not in wrong_edge_positives_pairs
+        ):
             missing.append(pair)
     if missing:
         raise CoverageError(missing)
