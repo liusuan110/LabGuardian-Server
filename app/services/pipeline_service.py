@@ -19,8 +19,9 @@ from celery.result import AsyncResult
 from app.core.celery_app import celery_app
 from app.domain.board_schema import BoardSchema
 from app.domain.net_normalization import normalize_current_netlist
-from app.pipeline.orchestrator import run_pipeline
 from app.pipeline.net_roles import apply_net_role_assignments
+from app.pipeline.orchestrator import run_pipeline
+from app.pipeline.reference_subtypes import apply_reference_ic_subtypes
 from app.pipeline.stages.s3_topology import run_topology
 from app.pipeline.stages.s4_validate import run_validate
 from app.pipeline.stages.s5_semantic_analysis import run_semantic_analysis
@@ -305,6 +306,11 @@ class PipelineService:
         if missing_polarity:
             raise ValueError(f"Pin polarity assignments did not match any pins: {', '.join(missing_polarity)}")
 
+        subtype_records = apply_reference_ic_subtypes(
+            components,
+            reference_circuit if isinstance(reference_circuit, dict) else None,
+        )
+
         s3 = run_topology(components, rail_assignments=request.rail_assignments)
 
         netlist_v2 = s3.get("netlist_v2") or {}
@@ -360,6 +366,8 @@ class PipelineService:
             "source_job_id": request.job_id,
             "reference": ref_meta,
         }
+        if subtype_records:
+            runtime_metadata["reference_ic_subtypes_applied"] = subtype_records
         if manual_role_warnings:
             runtime_metadata["manual_role_warnings"] = manual_role_warnings
             runtime_metadata["port_annotation_warnings"] = [

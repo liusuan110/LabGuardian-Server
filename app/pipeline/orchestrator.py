@@ -15,14 +15,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.core.config import settings
+from app.domain.net_normalization import normalize_current_netlist
+from app.pipeline.net_roles import apply_net_role_assignments
+from app.pipeline.reference_subtypes import apply_reference_ic_subtypes
 from app.pipeline.stages.s1_detect import run_detect
 from app.pipeline.stages.s1b_pin_detect import run_pin_detect
 from app.pipeline.stages.s2_mapping import run_mapping
 from app.pipeline.stages.s3_topology import run_topology
 from app.pipeline.stages.s4_validate import run_validate
 from app.pipeline.stages.s5_semantic_analysis import run_semantic_analysis
-from app.domain.net_normalization import normalize_current_netlist
-from app.pipeline.net_roles import apply_net_role_assignments
 from app.pipeline.vision.calibrator import BreadboardCalibrator
 from app.pipeline.vision.detector import ComponentDetector
 from app.pipeline.vision.pin_model import PinRoiDetector
@@ -180,6 +181,13 @@ def run_pipeline(
 
     # ── S3: 拓扑 (传入 rail_assignments) ──
     _notify("topology", 0.0)
+    effective_reference = (
+        reference_circuit if reference_circuit is not None else ctx.reference_circuit
+    )
+    subtype_records = apply_reference_ic_subtypes(
+        s2["components"],
+        effective_reference if isinstance(effective_reference, dict) else None,
+    )
     # 默认电源轨道: op-amp 友好三电位配置；学生端可覆盖。
     effective_rails = {
         "top_plus": "VCC",
@@ -190,9 +198,6 @@ def run_pipeline(
     if rail_assignments:
         effective_rails.update(rail_assignments)
     s3 = run_topology(s2["components"], rail_assignments=effective_rails)
-    effective_reference = (
-        reference_circuit if reference_circuit is not None else ctx.reference_circuit
-    )
     manual_role_warnings, manual_roles_applied = apply_net_role_assignments(
         s3.get("netlist_v2") or {},
         net_role_assignments,
@@ -242,6 +247,8 @@ def run_pipeline(
         iou=eff_iou,
         imgsz=eff_imgsz,
     )
+    if subtype_records:
+        runtime_metadata["reference_ic_subtypes_applied"] = subtype_records
     port_roles_applied = [
         item for item in manual_roles_applied
         if item.get("source") == "port_annotation"
