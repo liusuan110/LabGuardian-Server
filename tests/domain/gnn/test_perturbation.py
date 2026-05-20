@@ -58,8 +58,8 @@ def _load_ref(path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_registry_has_13_operators() -> None:
-    """Phase A (4) + Phase B (8) + Phase C (1) = 13 perturbation operators."""
+def test_registry_has_17_operators() -> None:
+    """Phase A (4) + Phase B (8) + Phase C (1) + Phase D (4) = 17 perturbation operators."""
 
     expected = {
         # Phase A
@@ -78,6 +78,11 @@ def test_registry_has_13_operators() -> None:
         "chained",
         # Phase C — real-student wire formality (Stage 1)
         "insert_same_net_wire",
+        # Phase D — v5 OOD-fix (Stage 1)
+        "swap_dual_supply_rail",
+        "misplace_pot_wiper",
+        "swap_diff_pair_bases",
+        "extra_fanin_resistor",
     }
     assert set(PERTURBATION_REGISTRY) == expected
 
@@ -781,6 +786,241 @@ def test_insert_same_net_wire_falls_back_to_identity_on_empty_ref() -> None:
     p = InsertSameNetWirePerturbation().apply(bare_ref, _rnd.Random(0))
     # fallback 时 perturbation_chain 应该来自 IdentityPerturbation
     assert p.perturbation_chain == ("identity",)
+
+
+# ---------------------------------------------------------------------------
+# Phase D fixture paths
+# ---------------------------------------------------------------------------
+
+FIXTURE_DIFF_AMP = (
+    Path(__file__).resolve().parents[2]
+    / "fixtures"
+    / "references"
+    / "test_bjt_diff_amp_v1.json"
+)
+FIXTURE_LPF = (
+    Path(__file__).resolve().parents[2]
+    / "fixtures"
+    / "references"
+    / "test_opamp_inverting_lpf_v1.json"
+)
+FIXTURE_SUMMING = (
+    Path(__file__).resolve().parents[2]
+    / "fixtures"
+    / "references"
+    / "test_opamp_summing_v1.json"
+)
+FIXTURE_INVERTING = (
+    Path(__file__).resolve().parents[2]
+    / "fixtures"
+    / "references"
+    / "test_opamp_inverting_v1.json"
+)
+FIXTURE_NPN_SWITCH = (
+    Path(__file__).resolve().parents[2]
+    / "fixtures"
+    / "references"
+    / "test_npn_switch_v1.json"
+)
+
+
+# ---------------------------------------------------------------------------
+# Phase D · SwapDualSupplyRailPerturbation
+# ---------------------------------------------------------------------------
+
+
+def test_swap_dual_supply_rail_swaps_vcc_vee_on_diff_amp() -> None:
+    """diff amp 有 VCC + VEE 两个 power-role net → 应触发 swap，产 wrong_observed。"""
+
+    ref = _load_ref(FIXTURE_DIFF_AMP)
+    p = apply_perturbation("swap_dual_supply_rail", ref, seed=0)
+    assert p.expected_outcome == "wrong_observed"
+    swapped = p.notes["swapped_power_nets"]
+    assert len(swapped) == 2 and swapped[0] != swapped[1]
+    # 两 net 在 ref 里 role 都应该是 power
+    for nsid in swapped:
+        nodes_with_sid = [
+            n for n in ref.nets.values() if n.source_id == nsid
+        ]
+        assert nodes_with_sid, f"net {nsid} not found in ref"
+        assert nodes_with_sid[0].role == "power"
+
+
+def test_swap_dual_supply_rail_falls_back_on_single_supply() -> None:
+    """test_opamp_inverting_v1 只有 1 个 power-role net (VCC) → 应 fallback identity。"""
+
+    ref = _load_ref(FIXTURE_INVERTING)
+    p = apply_perturbation("swap_dual_supply_rail", ref, seed=0)
+    assert p.perturbation_chain == ("identity",)
+    assert p.expected_outcome == "positive"
+
+
+def test_swap_dual_supply_rail_preserves_topology_invariants() -> None:
+    """swap 后 cur HCG 必须仍然满足 assert_invariants。"""
+
+    ref = _load_ref(FIXTURE_LPF)
+    p = apply_perturbation("swap_dual_supply_rail", ref, seed=3)
+    p.cur_hcg.assert_invariants()
+
+
+# ---------------------------------------------------------------------------
+# Phase D · MisplacePotentiometerWiperPerturbation
+# ---------------------------------------------------------------------------
+
+
+def test_misplace_pot_wiper_reroutes_wiper_on_diff_amp() -> None:
+    """diff amp 有 Potentiometer Rp → wiper 应被改接到不同 net。"""
+
+    ref = _load_ref(FIXTURE_DIFF_AMP)
+    p = apply_perturbation("misplace_pot_wiper", ref, seed=0)
+    assert p.expected_outcome == "wrong_observed"
+    assert p.notes["potentiometer"] == "Rp"
+    assert p.notes["original_net"] != p.notes["wrong_net"]
+
+
+def test_misplace_pot_wiper_falls_back_when_no_potentiometer() -> None:
+    """inverting amp 没有 Potentiometer → 应 fallback identity。"""
+
+    ref = _load_ref(FIXTURE_INVERTING)
+    p = apply_perturbation("misplace_pot_wiper", ref, seed=0)
+    assert p.perturbation_chain == ("identity",)
+    assert p.expected_outcome == "positive"
+
+
+def test_misplace_pot_wiper_terminal_pins_unchanged() -> None:
+    """关键不变量：只 wiper 被改接；terminal_a / terminal_b 的 net 不变。"""
+
+    ref = _load_ref(FIXTURE_DIFF_AMP)
+    p = apply_perturbation("misplace_pot_wiper", ref, seed=5)
+    # 拿 ref 中 Rp.terminal_a / terminal_b 的 net
+    ref_pot_node_id = None
+    for c in ref.components.values():
+        if c.source_id == "Rp":
+            ref_pot_node_id = c.node_id
+            break
+    assert ref_pot_node_id is not None
+    ref_terminal_nets: dict[str, str] = {}
+    for edge in ref.edges:
+        rp = ref.ports[edge.src_port_id]
+        if rp.parent_component_id != ref_pot_node_id:
+            continue
+        if rp.port_key in ("terminal_a", "terminal_b"):
+            ref_terminal_nets[rp.port_key] = ref.nets[edge.dst_net_id].source_id
+    # cur 中应保持相同
+    cur_pot_node_id = None
+    for c in p.cur_hcg.components.values():
+        if c.source_id == "Rp":
+            cur_pot_node_id = c.node_id
+            break
+    assert cur_pot_node_id is not None
+    cur_terminal_nets: dict[str, str] = {}
+    for edge in p.cur_hcg.edges:
+        rp = p.cur_hcg.ports[edge.src_port_id]
+        if rp.parent_component_id != cur_pot_node_id:
+            continue
+        if rp.port_key in ("terminal_a", "terminal_b"):
+            cur_terminal_nets[rp.port_key] = (
+                p.cur_hcg.nets[edge.dst_net_id].source_id
+            )
+    assert ref_terminal_nets == cur_terminal_nets, (
+        f"terminal pins shouldn't change: ref={ref_terminal_nets}, cur={cur_terminal_nets}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase D · SwapDiffPairBasesPerturbation
+# ---------------------------------------------------------------------------
+
+
+def test_swap_diff_pair_bases_swaps_on_diff_amp() -> None:
+    """diff amp 有 VT1 / VT2 两个 Transistor，base 接 UI1 / UI2 → 应交换。"""
+
+    ref = _load_ref(FIXTURE_DIFF_AMP)
+    p = apply_perturbation("swap_diff_pair_bases", ref, seed=0)
+    assert p.expected_outcome == "wrong_observed"
+    swapped_trs = set(p.notes["swapped_transistors"])
+    assert swapped_trs == {"VT1", "VT2"}
+
+
+def test_swap_diff_pair_bases_falls_back_on_single_transistor() -> None:
+    """npn_switch 只有 1 个 Transistor → 应 fallback identity。"""
+
+    ref = _load_ref(FIXTURE_NPN_SWITCH)
+    p = apply_perturbation("swap_diff_pair_bases", ref, seed=0)
+    assert p.perturbation_chain == ("identity",)
+
+
+def test_swap_diff_pair_bases_collector_emitter_unchanged() -> None:
+    """关键不变量：只 base 互换，collector / emitter 不动。"""
+
+    ref = _load_ref(FIXTURE_DIFF_AMP)
+    p = apply_perturbation("swap_diff_pair_bases", ref, seed=2)
+
+    def _comp_pin_nets(hcg, comp_sid: str) -> dict[str, str]:
+        node_id = next(
+            c.node_id for c in hcg.components.values() if c.source_id == comp_sid
+        )
+        return {
+            hcg.ports[e.src_port_id].port_key: hcg.nets[e.dst_net_id].source_id
+            for e in hcg.edges
+            if hcg.ports[e.src_port_id].parent_component_id == node_id
+        }
+
+    for sid in ("VT1", "VT2"):
+        ref_pins = _comp_pin_nets(ref, sid)
+        cur_pins = _comp_pin_nets(p.cur_hcg, sid)
+        assert ref_pins["collector"] == cur_pins["collector"]
+        assert ref_pins["emitter"] == cur_pins["emitter"]
+        # base must have CHANGED
+        assert ref_pins["base"] != cur_pins["base"]
+
+
+# ---------------------------------------------------------------------------
+# Phase D · ExtraFanInResistorPerturbation
+# ---------------------------------------------------------------------------
+
+
+def test_extra_fanin_resistor_adds_resistor_on_summing_node() -> None:
+    """summing amp 的 INV 节点有 ≥2 R 连入 → 应触发，加 X_R_0。"""
+
+    ref = _load_ref(FIXTURE_SUMMING)
+    p = apply_perturbation("extra_fanin_resistor", ref, seed=0)
+    assert p.expected_outcome == "wrong_observed"
+    r_sid = p.notes["extra_resistor_id"]
+    # extra R 应该出现在 cur HCG
+    assert any(
+        c.source_id == r_sid and c.ctype == "Resistor"
+        for c in p.cur_hcg.components.values()
+    )
+    # extra R 应该是 cur 多出来的（不在 ref 里）
+    ref_comp_sids = {c.source_id for c in ref.components.values()}
+    assert r_sid not in ref_comp_sids
+
+
+def test_extra_fanin_resistor_target_net_has_fan_in() -> None:
+    """落点 net (target_net) 在 ref 里应已有 ≥ 2 元件连接（fan-in 定义）。"""
+
+    ref = _load_ref(FIXTURE_SUMMING)
+    p = apply_perturbation("extra_fanin_resistor", ref, seed=0)
+    target = p.notes["fan_in_target_net"]
+    # 数一下 ref 里有多少组件接到 target_net
+    comp_count_on_target = 0
+    for edge in ref.edges:
+        if ref.nets[edge.dst_net_id].source_id == target:
+            comp_count_on_target += 1
+    assert comp_count_on_target >= 2, (
+        f"target net {target} should have fan-in ≥ 2, got {comp_count_on_target}"
+    )
+
+
+def test_extra_fanin_resistor_invariants_pass() -> None:
+    """加完 extra R 后 cur HCG 必须 assert_invariants 通过。"""
+
+    ref = _load_ref(FIXTURE_SUMMING)
+    p = apply_perturbation("extra_fanin_resistor", ref, seed=7)
+    p.cur_hcg.assert_invariants()
+    # 边数应该比 ref 多 2（X_R 的 pin1 + pin2 各一条边）
+    assert len(p.cur_hcg.edges) == len(ref.edges) + 2
 
 
 def test_insert_same_net_wire_deterministic() -> None:

@@ -1,0 +1,81 @@
+{
+  "format": "logical_reference_v1",
+  "reference_id": "test_opamp_summing_v1",
+  "name": "UA741 Inverting Summing Amplifier (two-input, V_o = -Rf·(V_i1/R1 + V_i2/R2), dual-supply ±12V)",
+  "description": "经典两输入反相求和电路：R1 / R2 分别把两路输入电压 Vi1 / Vi2 注入到 pin 2 (反相节点 INV)；Rf 从 pin 6 (输出 VOUT) 反馈回 INV；Rp 从 pin 3 (同相输入 V_P) 到 GND 进行偏置电流补偿。R11 / R12 在测试装置中从 VCC 分压生成稳定的 Vi1 直流参考 (Vi1 ≈ VCC·R12/(R11+R12))；Vi2 直接由外部信号源 XFG1 驱动。双电源由 V1 (+12V) 接 pin 7、V2 (-12V) 接 pin 4。输出电压 V_o = -Rf·(V_i1/R1 + V_i2/R2)，实现 Vi1 直流偏置 + Vi2 交流信号的反相加权求和。",
+  "components": [
+    {
+      "ref_id": "U1",
+      "type": "IC",
+      "subtype": "UA741",
+      "pins": [
+        { "pin": "1", "nc": true },
+        { "pin": "2", "net": "INV" },
+        { "pin": "3", "net": "V_P" },
+        { "pin": "4", "net": "VEE" },
+        { "pin": "5", "nc": true },
+        { "pin": "6", "net": "VOUT" },
+        { "pin": "7", "net": "VCC" },
+        { "pin": "8", "nc": true }
+      ]
+    },
+    {
+      "ref_id": "R1",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "VI1" },
+        { "pin": "pin2", "net": "INV" }
+      ]
+    },
+    {
+      "ref_id": "R2",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "VI2" },
+        { "pin": "pin2", "net": "INV" }
+      ]
+    },
+    {
+      "ref_id": "R_f",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "INV" },
+        { "pin": "pin2", "net": "VOUT" }
+      ]
+    },
+    {
+      "ref_id": "R_p",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "V_P" },
+        { "pin": "pin2", "net": "GND" }
+      ]
+    },
+    {
+      "ref_id": "R11",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "VCC" },
+        { "pin": "pin2", "net": "VI1" }
+      ]
+    },
+    {
+      "ref_id": "R12",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "VI1" },
+        { "pin": "pin2", "net": "GND" }
+      ]
+    }
+  ],
+  "nets": [
+    { "net": "VI1", "role": "input", "role_label": "UI1" },
+    { "net": "VI2", "role": "input", "role_label": "UI2" },
+    { "net": "INV", "role": "signal" },
+    { "net": "V_P", "role": "signal" },
+    { "net": "VOUT", "role": "output" },
+    { "net": "VCC", "role": "power", "role_label": "VCC" },
+    { "net": "VEE", "role": "power", "role_label": "VEE" },
+    { "net": "GND", "role": "ground" }
+  ]
+}

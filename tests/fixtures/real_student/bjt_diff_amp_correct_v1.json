@@ -1,0 +1,677 @@
+{
+  "scene_id": "runtime_scene_bjt_diff_amp",
+  "board_schema_id": "breadboard_legacy_v1",
+  "components": [
+    {
+      "pins": [
+        {
+          "hole_id": "I10",
+          "confidence": 0.85,
+          "electrical_net_id": "NET_000",
+          "pin_id": 1,
+          "pin_name": "base",
+          "electrical_node_id": "ROW_10_R"
+        },
+        {
+          "hole_id": "I9",
+          "confidence": 0.85,
+          "electrical_net_id": "NET_001",
+          "pin_id": 2,
+          "pin_name": "collector",
+          "electrical_node_id": "ROW_9_R"
+        },
+        {
+          "hole_id": "I11",
+          "confidence": 0.85,
+          "electrical_net_id": "NET_002",
+          "pin_id": 3,
+          "pin_name": "emitter",
+          "electrical_node_id": "ROW_11_R"
+        }
+      ],
+      "confidence": 0.85,
+      "component_id": "VT1",
+      "package_type": "to92_3pin",
+      "component_type": "Transistor",
+      "orientation": 0,
+      "part_subtype": "9013",
+      "polarity": "directional",
+      "symmetry_group": []
+    },
+    {
+      "pins": [
+        {
+          "hole_id": "I14",
+          "confidence": 0.85,
+          "electrical_net_id": "NET_003",
+          "pin_id": 1,
+          "pin_name": "base",
+          "electrical_node_id": "ROW_14_R"
+        },
+        {
+          "hole_id": "I13",
+          "confidence": 0.85,
+          "electrical_net_id": "NET_004",
+          "pin_id": 2,
+          "pin_name": "collector",
+          "electrical_node_id": "ROW_13_R"
+        },
+        {
+          "hole_id": "I15",
+          "confidence": 0.85,
+          "electrical_net_id": "NET_005",
+          "pin_id": 3,
+          "pin_name": "emitter",
+          "electrical_node_id": "ROW_15_R"
+        }
+      ],
+      "confidence": 0.85,
+      "component_id": "VT2",
+      "package_type": "to92_3pin",
+      "component_type": "Transistor",
+      "orientation": 0,
+      "part_subtype": "9013",
+      "polarity": "directional",
+      "symmetry_group": []
+    },
+    {
+      "pins": [
+        {
+          "hole_id": "I22",
+          "confidence": 0.85,
+          "electrical_net_id": "NET_006",
+          "pin_id": 1,
+          "pin_name": "base",
+          "electrical_node_id": "ROW_22_R"
+        },
+        {
+          "hole_id": "I23",
+          "confidence": 0.85,
+          "electrical_net_id": "NET_007",
+          "pin_id": 2,
+          "pin_name": "collector",
+          "electrical_node_id": "ROW_23_R"
+        },
+        {
+          "hole_id": "I24",
+          "confidence": 0.85,
+          "electrical_net_id": "NET_008",
+          "pin_id": 3,
+          "pin_name": "emitter",
+          "electrical_node_id": "ROW_24_R"
+        }
+      ],
+      "confidence": 0.85,
+      "component_id": "VT3",
+      "package_type": "to92_3pin",
+      "component_type": "Transistor",
+      "orientation": 0,
+      "part_subtype": "9013",
+      "polarity": "directional",
+      "symmetry_group": []
+    },
+    {
+      "pins": [
+        {
+          "hole_id": "LP9",
+          "confidence": 0.88,
+          "electrical_net_id": "NET_009",
+          "pin_id": 1,
+          "pin_name": "pin1",
+          "electrical_node_id": "TRACK_LP_SEG1"
+        },
+        {
+          "hole_id": "J9",
+          "confidence": 0.88,
+          "electrical_net_id": "NET_001",
+          "pin_id": 2,
+          "pin_name": "pin2",
+          "electrical_node_id": "ROW_9_R"
+        }
+      ],
+      "confidence": 0.88,
+      "component_id": "Rc1",
+      "package_type": "axial_2pin",
+      "component_type": "Resistor",
+      "orientation": 0,
+      "part_subtype": "",
+      "polarity": "none",
+      "symmetry_group": [
+        [
+          "pin1",
+          "pin2"
+        ]
+      ]
+    },
+    {
+      "pins": [
+        {
+          "hole_id": "LP13",
+          "confidence": 0.88,
+          "electrical_net_id": "NET_009",
+          "pin_id": 1,
+          "pin_name": "pin1",
+          "electrical_node_id": "TRACK_LP_SEG2"
+        },
+        {
+          "hole_id": "J13",
+          "confidence": 0.88,
+          "electrical_net_id": "NET_004",
+          "pin_id": 2,
+          "pin_name": "pin2",
+          "electrical_node_id": "ROW_13_R"
+        }
+      ],
+      "confidence": 0.88,
+      "component_id": "Rc2",
+      "package_type": "axial_2pin",
+      "component_type": "Resistor",
+      "orientation": 0,
+      "part_subtype": "",
+      "polarity": "none",
+      "symmetry_group": [
+        [
+          "pin1",
+          "pin2"
+        ]
+      ]
+    },
+    {
+      "pins": [
+        {
+          "hole_id": "J11",
+          "confidence": 0.83,
+          "electrical_net_id": "NET_002",
+          "pin_id": 1,
+          "pin_name": "terminal_a",
+          "electrical_node_id": "ROW_11_R"
+        },
+        {
+          "hole_id": "J15",
+          "confidence": 0.83,
+          "electrical_net_id": "NET_005",
+          "pin_id": 2,
+          "pin_name": "terminal_b",
+          "electrical_node_id": "ROW_15_R"
+        },
+        {
+          "hole_id": "J23",
+          "confidence": 0.83,
+          "electrical_net_id": "NET_007",
+          "pin_id": 3,
+          "pin_name": "wiper",
+          "electrical_node_id": "ROW_23_R"
+        }
+      ],
+      "confidence": 0.83,
+      "component_id": "Rp",
+      "package_type": "trim_pot_3pin",
+      "component_type": "Potentiometer",
+      "orientation": 0,
+      "part_subtype": "",
+      "polarity": "directional",
+      "symmetry_group": [
+        [
+          "terminal_a",
+          "terminal_b"
+        ]
+      ]
+    },
+    {
+      "pins": [
+        {
+          "hole_id": "RN22",
+          "confidence": 0.88,
+          "electrical_net_id": "NET_010",
+          "pin_id": 1,
+          "pin_name": "pin1",
+          "electrical_node_id": "TRACK_RN_SEG1"
+        },
+        {
+          "hole_id": "J22",
+          "confidence": 0.88,
+          "electrical_net_id": "NET_006",
+          "pin_id": 2,
+          "pin_name": "pin2",
+          "electrical_node_id": "ROW_22_R"
+        }
+      ],
+      "confidence": 0.88,
+      "component_id": "R1",
+      "package_type": "axial_2pin",
+      "component_type": "Resistor",
+      "orientation": 0,
+      "part_subtype": "",
+      "polarity": "none",
+      "symmetry_group": [
+        [
+          "pin1",
+          "pin2"
+        ]
+      ]
+    },
+    {
+      "pins": [
+        {
+          "hole_id": "H22",
+          "confidence": 0.88,
+          "electrical_net_id": "NET_006",
+          "pin_id": 1,
+          "pin_name": "pin1",
+          "electrical_node_id": "ROW_22_R"
+        },
+        {
+          "hole_id": "LN22",
+          "confidence": 0.88,
+          "electrical_net_id": "NET_011",
+          "pin_id": 2,
+          "pin_name": "pin2",
+          "electrical_node_id": "TRACK_LN_SEG1"
+        }
+      ],
+      "confidence": 0.88,
+      "component_id": "R2",
+      "package_type": "axial_2pin",
+      "component_type": "Resistor",
+      "orientation": 90,
+      "part_subtype": "",
+      "polarity": "none",
+      "symmetry_group": [
+        [
+          "pin1",
+          "pin2"
+        ]
+      ]
+    },
+    {
+      "pins": [
+        {
+          "hole_id": "J24",
+          "confidence": 0.88,
+          "electrical_net_id": "NET_008",
+          "pin_id": 1,
+          "pin_name": "pin1",
+          "electrical_node_id": "ROW_24_R"
+        },
+        {
+          "hole_id": "LN24",
+          "confidence": 0.88,
+          "electrical_net_id": "NET_011",
+          "pin_id": 2,
+          "pin_name": "pin2",
+          "electrical_node_id": "TRACK_LN_SEG2"
+        }
+      ],
+      "confidence": 0.88,
+      "component_id": "R_E",
+      "package_type": "axial_2pin",
+      "component_type": "Resistor",
+      "orientation": 90,
+      "part_subtype": "",
+      "polarity": "none",
+      "symmetry_group": [
+        [
+          "pin1",
+          "pin2"
+        ]
+      ]
+    },
+    {
+      "pins": [
+        {
+          "hole_id": "LP9",
+          "confidence": 0.9,
+          "electrical_net_id": "NET_009",
+          "pin_id": 1,
+          "pin_name": "pin1",
+          "electrical_node_id": "TRACK_LP_SEG1"
+        },
+        {
+          "hole_id": "LP13",
+          "confidence": 0.9,
+          "electrical_net_id": "NET_009",
+          "pin_id": 2,
+          "pin_name": "pin2",
+          "electrical_node_id": "TRACK_LP_SEG2"
+        }
+      ],
+      "confidence": 0.9,
+      "component_id": "W1",
+      "package_type": "jumper_wire_2pin",
+      "component_type": "Wire",
+      "orientation": 0,
+      "part_subtype": "",
+      "polarity": "none",
+      "symmetry_group": [
+        [
+          "pin1",
+          "pin2"
+        ]
+      ]
+    },
+    {
+      "pins": [
+        {
+          "hole_id": "A22",
+          "confidence": 0.9,
+          "electrical_net_id": "NET_010",
+          "pin_id": 1,
+          "pin_name": "pin1",
+          "electrical_node_id": "ROW_22_L"
+        },
+        {
+          "hole_id": "RN22",
+          "confidence": 0.9,
+          "electrical_net_id": "NET_010",
+          "pin_id": 2,
+          "pin_name": "pin2",
+          "electrical_node_id": "TRACK_RN_SEG1"
+        }
+      ],
+      "confidence": 0.9,
+      "component_id": "W2",
+      "package_type": "jumper_wire_2pin",
+      "component_type": "Wire",
+      "orientation": 0,
+      "part_subtype": "",
+      "polarity": "none",
+      "symmetry_group": [
+        [
+          "pin1",
+          "pin2"
+        ]
+      ]
+    }
+  ],
+  "nets": [
+    {
+      "labels": [],
+      "power_role": "",
+      "aliases": [
+        "UI1",
+        "NET_000"
+      ],
+      "electrical_net_id": "NET_000",
+      "canonical_name": "UI1",
+      "member_node_ids": [
+        "ROW_10_R"
+      ],
+      "member_hole_ids": [
+        "I10"
+      ],
+      "role_label": "UI1",
+      "role": "input",
+      "manual_role": "input",
+      "role_source": "port_annotation"
+    },
+    {
+      "labels": [],
+      "power_role": "",
+      "aliases": [
+        "UO1",
+        "NET_001"
+      ],
+      "electrical_net_id": "NET_001",
+      "canonical_name": "UO1",
+      "member_node_ids": [
+        "ROW_9_R"
+      ],
+      "member_hole_ids": [
+        "I9",
+        "J9"
+      ],
+      "role_label": "UO1",
+      "role": "output",
+      "manual_role": "output",
+      "role_source": "port_annotation"
+    },
+    {
+      "labels": [],
+      "power_role": "",
+      "aliases": [
+        "E1",
+        "NET_002"
+      ],
+      "electrical_net_id": "NET_002",
+      "canonical_name": "E1",
+      "member_node_ids": [
+        "ROW_11_R"
+      ],
+      "member_hole_ids": [
+        "I11",
+        "J11"
+      ]
+    },
+    {
+      "labels": [],
+      "power_role": "",
+      "aliases": [
+        "UI2",
+        "NET_003"
+      ],
+      "electrical_net_id": "NET_003",
+      "canonical_name": "UI2",
+      "member_node_ids": [
+        "ROW_14_R"
+      ],
+      "member_hole_ids": [
+        "I14"
+      ],
+      "role_label": "UI2",
+      "role": "input",
+      "manual_role": "input",
+      "role_source": "port_annotation"
+    },
+    {
+      "labels": [],
+      "power_role": "",
+      "aliases": [
+        "UO2",
+        "NET_004"
+      ],
+      "electrical_net_id": "NET_004",
+      "canonical_name": "UO2",
+      "member_node_ids": [
+        "ROW_13_R"
+      ],
+      "member_hole_ids": [
+        "I13",
+        "J13"
+      ],
+      "role_label": "UO2",
+      "role": "output",
+      "manual_role": "output",
+      "role_source": "port_annotation"
+    },
+    {
+      "labels": [],
+      "power_role": "",
+      "aliases": [
+        "E2",
+        "NET_005"
+      ],
+      "electrical_net_id": "NET_005",
+      "canonical_name": "E2",
+      "member_node_ids": [
+        "ROW_15_R"
+      ],
+      "member_hole_ids": [
+        "I15",
+        "J15"
+      ]
+    },
+    {
+      "labels": [],
+      "power_role": "",
+      "aliases": [
+        "VB3",
+        "NET_006"
+      ],
+      "electrical_net_id": "NET_006",
+      "canonical_name": "VB3",
+      "member_node_ids": [
+        "ROW_22_R"
+      ],
+      "member_hole_ids": [
+        "I22",
+        "J22",
+        "H22"
+      ]
+    },
+    {
+      "labels": [],
+      "power_role": "",
+      "aliases": [
+        "TAIL",
+        "NET_007"
+      ],
+      "electrical_net_id": "NET_007",
+      "canonical_name": "TAIL",
+      "member_node_ids": [
+        "ROW_23_R"
+      ],
+      "member_hole_ids": [
+        "I23",
+        "J23"
+      ]
+    },
+    {
+      "labels": [],
+      "power_role": "",
+      "aliases": [
+        "VE3",
+        "NET_008"
+      ],
+      "electrical_net_id": "NET_008",
+      "canonical_name": "VE3",
+      "member_node_ids": [
+        "ROW_24_R"
+      ],
+      "member_hole_ids": [
+        "I24",
+        "J24"
+      ]
+    },
+    {
+      "labels": [],
+      "power_role": "VCC",
+      "aliases": [
+        "VCC",
+        "NET_009"
+      ],
+      "electrical_net_id": "NET_009",
+      "canonical_name": "VCC",
+      "member_node_ids": [
+        "TRACK_LP_SEG1",
+        "TRACK_LP_SEG2"
+      ],
+      "member_hole_ids": [
+        "LP9",
+        "LP13"
+      ],
+      "role_label": "VCC",
+      "role": "power",
+      "manual_role": "power",
+      "role_source": "port_annotation"
+    },
+    {
+      "labels": [],
+      "power_role": "GND",
+      "aliases": [
+        "GND",
+        "NET_010"
+      ],
+      "electrical_net_id": "NET_010",
+      "canonical_name": "GND",
+      "member_node_ids": [
+        "TRACK_RN_SEG1",
+        "ROW_22_L"
+      ],
+      "member_hole_ids": [
+        "RN22",
+        "A22"
+      ],
+      "role_label": "GND",
+      "role": "ground",
+      "manual_role": "ground",
+      "role_source": "port_annotation"
+    },
+    {
+      "labels": [],
+      "power_role": "VEE",
+      "aliases": [
+        "VEE",
+        "NET_011"
+      ],
+      "electrical_net_id": "NET_011",
+      "canonical_name": "VEE",
+      "member_node_ids": [
+        "TRACK_LN_SEG1",
+        "TRACK_LN_SEG2"
+      ],
+      "member_hole_ids": [
+        "LN22",
+        "LN24"
+      ],
+      "role_label": "VEE",
+      "role": "power",
+      "manual_role": "power",
+      "role_source": "port_annotation"
+    }
+  ],
+  "node_index": {
+    "ROW_10_R": [
+      "I10"
+    ],
+    "ROW_9_R": [
+      "I9",
+      "J9"
+    ],
+    "ROW_11_R": [
+      "I11",
+      "J11"
+    ],
+    "ROW_14_R": [
+      "I14"
+    ],
+    "ROW_13_R": [
+      "I13",
+      "J13"
+    ],
+    "ROW_15_R": [
+      "I15",
+      "J15"
+    ],
+    "ROW_22_R": [
+      "H22",
+      "I22",
+      "J22"
+    ],
+    "ROW_23_R": [
+      "I23",
+      "J23"
+    ],
+    "ROW_24_R": [
+      "I24",
+      "J24"
+    ],
+    "TRACK_LP_SEG1": [
+      "LP9"
+    ],
+    "TRACK_LP_SEG2": [
+      "LP13"
+    ],
+    "TRACK_RN_SEG1": [
+      "RN22"
+    ],
+    "TRACK_LN_SEG1": [
+      "LN22"
+    ],
+    "TRACK_LN_SEG2": [
+      "LN24"
+    ],
+    "ROW_22_L": [
+      "A22"
+    ]
+  }
+}

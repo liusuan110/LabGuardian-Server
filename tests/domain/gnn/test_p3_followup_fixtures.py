@@ -162,23 +162,34 @@ def test_default_config_includes_insert_same_net_wire_perturbation() -> None:
     )
 
 
-def test_default_config_grew_to_seven_refs() -> None:
+def test_default_config_grew_to_ten_refs() -> None:
     """Locks down the dataset size against accidental fixture drops.
 
     History: started at 4 (P1 acceptance) → 6 (P3 follow-up #1: added
     opamp_inverting + npn_switch) → 7 (P3 follow-up #2: added
-    lm358_dual_buffer for IC subtype diversity)."""
+    lm358_dual_buffer for IC subtype diversity) → 10 (Phase D · v5:
+    added bjt_diff_amp + opamp_inverting_lpf + opamp_summing to close
+    4 OOD blind spots measured on real student boards)."""
 
     from scripts.gnn_generate_dataset import DEFAULT_CONFIG
 
-    assert len(DEFAULT_CONFIG["refs"]) == 7, (
-        f"expected 7 refs after P3 follow-up #2, got {len(DEFAULT_CONFIG['refs'])}"
+    assert len(DEFAULT_CONFIG["refs"]) == 10, (
+        f"expected 10 refs after Phase D · v5, got {len(DEFAULT_CONFIG['refs'])}"
     )
     ref_ids = {r["ref_id"] for r in DEFAULT_CONFIG["refs"]}
+    # P3 follow-ups still present
     assert "lm358_dual_buffer" in ref_ids
-    # LM358 subtype override required to hit the new IC_PIN_MAPS entry
+    assert "opamp_inverting" in ref_ids
+    assert "npn_switch" in ref_ids
+    # Phase D · v5 additions
+    assert "bjt_diff_amp" in ref_ids
+    assert "opamp_inverting_lpf" in ref_ids
+    assert "opamp_summing" in ref_ids
+    # Subtype overrides for IC refs
     subtypes = DEFAULT_CONFIG.get("subtypes_by_ref_id", {})
     assert subtypes.get("lm358_dual_buffer") == {"U1": "LM358"}
+    assert subtypes.get("opamp_inverting_lpf") == {"U1": "UA741"}
+    assert subtypes.get("opamp_summing") == {"U1": "UA741"}
 
 
 def test_lm358_fixture_loads_with_correct_port_types() -> None:

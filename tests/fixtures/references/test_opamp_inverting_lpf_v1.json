@@ -1,0 +1,64 @@
+{
+  "format": "logical_reference_v1",
+  "reference_id": "test_opamp_inverting_lpf_v1",
+  "name": "UA741 Inverting Active Low-Pass Filter (Rf ∥ C1 feedback, dual-supply ±12V)",
+  "description": "在标准反相放大器基础上将 Cf (C1) 与 Rf 并联，构成有源一阶低通滤波器：直流增益 = -Rf/R1，截止频率 fc = 1/(2π·Rf·C1)。其余拓扑同 test_opamp_inverting_v1：R1 从输入 VIN 到 pin 2 (反相输入 INV)；Rp 从 pin 3 (同相输入 V_P) 到 GND 用于补偿输入偏置电流。**注意：本图采用真正的双电源（V1=+12V 接 pin 7，V2=-12V 接 pin 4），与 test_opamp_inverting_v1 的单电源约定（pin 4 接 GND）不同**。",
+  "components": [
+    {
+      "ref_id": "U1",
+      "type": "IC",
+      "subtype": "UA741",
+      "pins": [
+        { "pin": "1", "nc": true },
+        { "pin": "2", "net": "INV" },
+        { "pin": "3", "net": "V_P" },
+        { "pin": "4", "net": "VEE" },
+        { "pin": "5", "nc": true },
+        { "pin": "6", "net": "VOUT" },
+        { "pin": "7", "net": "VCC" },
+        { "pin": "8", "nc": true }
+      ]
+    },
+    {
+      "ref_id": "R1",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "VIN" },
+        { "pin": "pin2", "net": "INV" }
+      ]
+    },
+    {
+      "ref_id": "R_f",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "INV" },
+        { "pin": "pin2", "net": "VOUT" }
+      ]
+    },
+    {
+      "ref_id": "C1",
+      "type": "Capacitor",
+      "pins": [
+        { "pin": "pin1", "net": "INV" },
+        { "pin": "pin2", "net": "VOUT" }
+      ]
+    },
+    {
+      "ref_id": "R_p",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "V_P" },
+        { "pin": "pin2", "net": "GND" }
+      ]
+    }
+  ],
+  "nets": [
+    { "net": "VIN", "role": "input" },
+    { "net": "VOUT", "role": "output" },
+    { "net": "INV", "role": "signal" },
+    { "net": "V_P", "role": "signal" },
+    { "net": "VCC", "role": "power", "role_label": "VCC" },
+    { "net": "VEE", "role": "power", "role_label": "VEE" },
+    { "net": "GND", "role": "ground" }
+  ]
+}

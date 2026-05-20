@@ -733,3 +733,91 @@ def test_seal_sample_group_is_frozen() -> None:
         pytest.skip("no groups")
     with pytest.raises((AttributeError, TypeError)):
         result.groups[0].correct_index = 99  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Phase D · v5 — label_builder must auto-handle 4 new perturbations
+# ---------------------------------------------------------------------------
+# These tests lock the contract: any new perturbation that produces
+# expected_outcome="wrong_observed" via the standard raw_pin_edges helper
+# pipeline automatically gets WRONG_OBSERVED labels via Step 2.5 (no
+# label_builder changes needed).
+
+
+@pytest.mark.parametrize(
+    "perturbation_name,fixture_id",
+    [
+        ("swap_dual_supply_rail", "test_bjt_diff_amp_v1"),
+        ("misplace_pot_wiper", "test_bjt_diff_amp_v1"),
+        ("swap_diff_pair_bases", "test_bjt_diff_amp_v1"),
+        ("extra_fanin_resistor", "test_opamp_summing_v1"),
+    ],
+)
+def test_phase_d_perturbations_yield_wrong_observed_labels(
+    perturbation_name: str, fixture_id: str
+) -> None:
+    """每个 Phase D perturbation 在匹配 fixture 上至少产 1 个 WRONG_OBSERVED 样本。"""
+
+    from app.domain.gnn.perturbation import apply_perturbation
+
+    ref_path = (
+        Path(__file__).resolve().parents[2]
+        / "fixtures"
+        / "references"
+        / f"{fixture_id}.json"
+    )
+    ref = _build_ref(ref_path)
+    p = apply_perturbation(perturbation_name, ref, seed=0)
+    assert p.expected_outcome == "wrong_observed", (
+        f"{perturbation_name} should produce wrong_observed on {fixture_id} "
+        f"(got {p.expected_outcome})"
+    )
+    result = build_seal_samples(
+        ref, p.cur_hcg, p.alignment, negatives_per_positive=1.0, seed=0
+    )
+    n_wrong = result.stats.by_source.get("wrong_observed", 0)
+    assert n_wrong > 0, (
+        f"{perturbation_name} should produce ≥1 WRONG_OBSERVED label "
+        f"(got 0 in {result.stats.by_source})"
+    )
+    # Class balance sanity: total samples should include both pos and neg.
+    assert result.stats.n_positives > 0
+    assert result.stats.n_negatives > 0
+
+
+def test_swap_dual_supply_rail_marks_swapped_pins_as_wrong() -> None:
+    """关键断言：VCC/VEE swap 后的 cur 边在 WRONG_OBSERVED 样本里**至少包含一条
+    原本在 swapped power net 上的边**（即模型应学到"power 接错"是负样本）。"""
+
+    from app.domain.gnn.perturbation import apply_perturbation
+
+    ref_path = (
+        Path(__file__).resolve().parents[2]
+        / "fixtures"
+        / "references"
+        / "test_bjt_diff_amp_v1.json"
+    )
+    ref = _build_ref(ref_path)
+    p = apply_perturbation("swap_dual_supply_rail", ref, seed=0)
+    swapped = set(p.notes["swapped_power_nets"])
+
+    result = build_seal_samples(
+        ref, p.cur_hcg, p.alignment, negatives_per_positive=1.0, seed=0
+    )
+    wrong_samples = [
+        s for s in result.samples
+        if s.label_source == "wrong_observed"
+    ]
+    # 至少有一条 WRONG_OBSERVED 样本的 candidate_edge 目标 net 是被 swap 的
+    # 两条 power net 之一
+    swapped_net_seen = False
+    for s in wrong_samples:
+        _port_id, net_id = s.candidate_edge
+        net_sid = p.cur_hcg.nets[net_id].source_id
+        if net_sid in swapped:
+            swapped_net_seen = True
+            break
+    assert swapped_net_seen, (
+        f"WRONG_OBSERVED 样本未覆盖被 swap 的 power net {swapped} "
+        f"(找到 {len(wrong_samples)} 条 wrong_observed 但无一落在 swapped net 上)"
+    )

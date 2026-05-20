@@ -1,0 +1,98 @@
+{
+  "format": "logical_reference_v1",
+  "reference_id": "test_bjt_diff_amp_v1",
+  "name": "BJT Differential Amplifier with Current-Source Biasing (textbook canon, dual-supply ±Ucc/-Uee)",
+  "description": "三极管长尾差动放大器：VT1 / VT2 构成差分对，集电极电阻 Rc1 / Rc2 分别接 +Ucc，输出端 uo1 / uo2 从 VT1 / VT2 集电极引出；两路输入 ui1 / ui2 接 VT1 / VT2 基极。VT1 / VT2 的发射极通过调零电位器 Rp (terminal_a / terminal_b) 汇合，Rp 的 wiper 接 VT3 集电极（恒流源注入点 TAIL）。VT3 由 R1 (GND ↔ base) 与 R2 (base ↔ -Uee) 组成的分压偏置 + 发射极电阻 RE (emitter ↔ -Uee) 构成镜像恒流源，为差分对提供稳定的尾电流，提升共模抑制比。",
+  "components": [
+    {
+      "ref_id": "VT1",
+      "type": "Transistor",
+      "pins": [
+        { "pin": "base", "net": "UI1" },
+        { "pin": "collector", "net": "UO1" },
+        { "pin": "emitter", "net": "E1" }
+      ]
+    },
+    {
+      "ref_id": "VT2",
+      "type": "Transistor",
+      "pins": [
+        { "pin": "base", "net": "UI2" },
+        { "pin": "collector", "net": "UO2" },
+        { "pin": "emitter", "net": "E2" }
+      ]
+    },
+    {
+      "ref_id": "VT3",
+      "type": "Transistor",
+      "pins": [
+        { "pin": "base", "net": "VB3" },
+        { "pin": "collector", "net": "TAIL" },
+        { "pin": "emitter", "net": "VE3" }
+      ]
+    },
+    {
+      "ref_id": "Rc1",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "VCC" },
+        { "pin": "pin2", "net": "UO1" }
+      ]
+    },
+    {
+      "ref_id": "Rc2",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "VCC" },
+        { "pin": "pin2", "net": "UO2" }
+      ]
+    },
+    {
+      "ref_id": "Rp",
+      "type": "Potentiometer",
+      "pins": [
+        { "pin": "terminal_a", "net": "E1" },
+        { "pin": "terminal_b", "net": "E2" },
+        { "pin": "wiper", "net": "TAIL" }
+      ]
+    },
+    {
+      "ref_id": "R1",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "GND" },
+        { "pin": "pin2", "net": "VB3" }
+      ]
+    },
+    {
+      "ref_id": "R2",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "VB3" },
+        { "pin": "pin2", "net": "VEE" }
+      ]
+    },
+    {
+      "ref_id": "R_E",
+      "type": "Resistor",
+      "pins": [
+        { "pin": "pin1", "net": "VE3" },
+        { "pin": "pin2", "net": "VEE" }
+      ]
+    }
+  ],
+  "nets": [
+    { "net": "UI1", "role": "input", "role_label": "UI1" },
+    { "net": "UI2", "role": "input", "role_label": "UI2" },
+    { "net": "UO1", "role": "output", "role_label": "UO1" },
+    { "net": "UO2", "role": "output", "role_label": "UO2" },
+    { "net": "E1", "role": "signal", "role_label": "VT1_E" },
+    { "net": "E2", "role": "signal", "role_label": "VT2_E" },
+    { "net": "TAIL", "role": "signal", "role_label": "tail_current" },
+    { "net": "VB3", "role": "signal", "role_label": "VT3_B" },
+    { "net": "VE3", "role": "signal", "role_label": "VT3_E" },
+    { "net": "VCC", "role": "power", "role_label": "VCC" },
+    { "net": "VEE", "role": "power", "role_label": "VEE" },
+    { "net": "GND", "role": "ground" }
+  ]
+}

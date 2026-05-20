@@ -1175,6 +1175,317 @@ class InsertSameNetWirePerturbation(Perturbation):
         )
 
 
+# ---------------------------------------------------------------------------
+# Phase D operators (4 new — fix v4 blind spots discovered on
+# tests/fixtures/real_student/{bjt_diff_amp, opamp_inverting_lpf, opamp_summing}_*_v1
+# fixtures: VEE / Potentiometer / BJT diff-pair / multi-resistor fan-in OOD)
+# ---------------------------------------------------------------------------
+
+
+class SwapDualSupplyRailPerturbation(Perturbation):
+    """**Phase D · Stage 1 — dual-supply rail swap (VCC ↔ VEE)**
+
+    Pick two distinct power-role nets (e.g. VCC + VEE in dual-supply circuits)
+    and swap every pin currently on net_a to net_b and vice versa. Models the
+    common student error of reversing the +/- supply rails on the breadboard.
+
+    Distinct from :class:`PowerSwappedPerturbation` which swaps power ↔ ground;
+    this op swaps **two power nets between themselves**, which only makes sense
+    when the circuit uses ≥ 2 power-role nets (typical of dual-supply op-amp
+    and differential amplifier circuits).
+
+    Falls back to identity if the circuit has < 2 power-role nets.
+    """
+
+    name = "swap_dual_supply_rail"
+    expected_outcome = "wrong_observed"
+
+    def apply(self, ref_hcg, rng, *, subtype_by_source_id=None):
+        power_nets = [
+            n for n in ref_hcg.nets.values() if n.role == "power"
+        ]
+        if len(power_nets) < 2:
+            return IdentityPerturbation().apply(
+                ref_hcg, rng, subtype_by_source_id=subtype_by_source_id
+            )
+        net_a, net_b = rng.sample(power_nets, 2)
+        raw = _swap_nets_in_raw(
+            hcg_to_raw_pin_edges(ref_hcg), net_a.source_id, net_b.source_id
+        )
+        cur = _rebuild_cur_from_raw(
+            ref_hcg, raw,
+            subtype_by_source_id or _collect_subtypes(ref_hcg),
+        )
+        alignment = identity_alignment(ref_hcg, cur)
+        return PerturbedCur(
+            cur_hcg=cur,
+            alignment=alignment,
+            perturbation_chain=(
+                f"{self.name}:{net_a.source_id}↔{net_b.source_id}",
+            ),
+            expected_outcome=self.expected_outcome,
+            notes={
+                "perturbation": self.name,
+                "swapped_power_nets": [net_a.source_id, net_b.source_id],
+                "role_labels": [
+                    net_a.role_label or "", net_b.role_label or "",
+                ],
+            },
+        )
+
+
+class MisplacePotentiometerWiperPerturbation(Perturbation):
+    """**Phase D · Stage 1 — potentiometer wiper mis-routing**
+
+    Pick a Potentiometer in ref_hcg, re-route its ``wiper`` pin to a wrong
+    (random) net. Models students who confuse the wiper terminal with the
+    two end terminals (terminal_a / terminal_b) — very common error in
+    differential-amplifier "调零电位器" wiring.
+
+    Falls back to identity if the circuit has no Potentiometer.
+    """
+
+    name = "misplace_pot_wiper"
+    expected_outcome = "wrong_observed"
+
+    def apply(self, ref_hcg, rng, *, subtype_by_source_id=None):
+        pot_comps = [
+            c for c in ref_hcg.components.values() if c.ctype == "Potentiometer"
+        ]
+        if not pot_comps:
+            return IdentityPerturbation().apply(
+                ref_hcg, rng, subtype_by_source_id=subtype_by_source_id
+            )
+        pot = rng.choice(pot_comps)
+        # Locate the wiper's current net
+        wiper_net_sid: str | None = None
+        for edge in ref_hcg.edges:
+            rp = ref_hcg.ports[edge.src_port_id]
+            if rp.parent_component_id != pot.node_id or rp.port_key != "wiper":
+                continue
+            wiper_net_sid = ref_hcg.nets[edge.dst_net_id].source_id
+            break
+        if wiper_net_sid is None:
+            return IdentityPerturbation().apply(
+                ref_hcg, rng, subtype_by_source_id=subtype_by_source_id
+            )
+        wrong_candidates = [
+            n.source_id
+            for n in ref_hcg.nets.values()
+            if n.source_id != wiper_net_sid
+        ]
+        if not wrong_candidates:
+            return IdentityPerturbation().apply(
+                ref_hcg, rng, subtype_by_source_id=subtype_by_source_id
+            )
+        wrong_net_sid = rng.choice(wrong_candidates)
+        raw = hcg_to_raw_pin_edges(ref_hcg)
+        _remove_pin_edges(
+            raw, comp_source_id=pot.source_id, port_key="wiper",
+            net_source_id=wiper_net_sid,
+        )
+        _add_pin_edge(
+            raw, comp_source_id=pot.source_id, ctype="Potentiometer",
+            port_key="wiper", pin_role="wiper", net_source_id=wrong_net_sid,
+        )
+        cur = _rebuild_cur_from_raw(
+            ref_hcg, raw,
+            subtype_by_source_id or _collect_subtypes(ref_hcg),
+        )
+        alignment = identity_alignment(ref_hcg, cur)
+        return PerturbedCur(
+            cur_hcg=cur,
+            alignment=alignment,
+            perturbation_chain=(
+                f"{self.name}:{pot.source_id}.wiper:"
+                f"{wiper_net_sid}→{wrong_net_sid}",
+            ),
+            expected_outcome=self.expected_outcome,
+            notes={
+                "perturbation": self.name,
+                "potentiometer": pot.source_id,
+                "original_net": wiper_net_sid,
+                "wrong_net": wrong_net_sid,
+            },
+        )
+
+
+class SwapDiffPairBasesPerturbation(Perturbation):
+    """**Phase D · Stage 1 — differential pair base swap**
+
+    If the circuit contains ≥ 2 Transistor components whose ``base`` pins
+    connect to **distinct input-role nets** (the classical diff-pair pattern:
+    VT1.base→UI1, VT2.base→UI2), pick two such bases and swap their nets.
+    Models students who connect the two diff-pair bases to the wrong inputs.
+
+    Falls back to identity if the diff-pair pattern is absent.
+    """
+
+    name = "swap_diff_pair_bases"
+    expected_outcome = "wrong_observed"
+
+    def apply(self, ref_hcg, rng, *, subtype_by_source_id=None):
+        input_net_sids = {
+            n.source_id for n in ref_hcg.nets.values() if n.role == "input"
+        }
+        # (comp_source_id, base_net_sid)
+        candidates: list[tuple[str, str]] = []
+        for comp in ref_hcg.components.values():
+            if comp.ctype != "Transistor":
+                continue
+            for edge in ref_hcg.edges:
+                rp = ref_hcg.ports[edge.src_port_id]
+                if (
+                    rp.parent_component_id != comp.node_id
+                    or rp.port_key != "base"
+                ):
+                    continue
+                net_sid = ref_hcg.nets[edge.dst_net_id].source_id
+                if net_sid in input_net_sids:
+                    candidates.append((comp.source_id, net_sid))
+                break
+        # Need ≥ 2 candidates with DISTINCT base nets
+        distinct_net_candidates = {nsid for _c, nsid in candidates}
+        if len(candidates) < 2 or len(distinct_net_candidates) < 2:
+            return IdentityPerturbation().apply(
+                ref_hcg, rng, subtype_by_source_id=subtype_by_source_id
+            )
+        # Pick two candidates whose base nets differ
+        for _ in range(8):  # bounded retries
+            a, b = rng.sample(candidates, 2)
+            if a[1] != b[1]:
+                break
+        else:
+            return IdentityPerturbation().apply(
+                ref_hcg, rng, subtype_by_source_id=subtype_by_source_id
+            )
+        comp_a, net_a = a
+        comp_b, net_b = b
+        raw = hcg_to_raw_pin_edges(ref_hcg)
+        _remove_pin_edges(
+            raw, comp_source_id=comp_a, port_key="base", net_source_id=net_a,
+        )
+        _remove_pin_edges(
+            raw, comp_source_id=comp_b, port_key="base", net_source_id=net_b,
+        )
+        _add_pin_edge(
+            raw, comp_source_id=comp_a, ctype="Transistor",
+            port_key="base", pin_role="base", net_source_id=net_b,
+        )
+        _add_pin_edge(
+            raw, comp_source_id=comp_b, ctype="Transistor",
+            port_key="base", pin_role="base", net_source_id=net_a,
+        )
+        cur = _rebuild_cur_from_raw(
+            ref_hcg, raw,
+            subtype_by_source_id or _collect_subtypes(ref_hcg),
+        )
+        alignment = identity_alignment(ref_hcg, cur)
+        return PerturbedCur(
+            cur_hcg=cur,
+            alignment=alignment,
+            perturbation_chain=(
+                f"{self.name}:{comp_a}.base↔{comp_b}.base",
+            ),
+            expected_outcome=self.expected_outcome,
+            notes={
+                "perturbation": self.name,
+                "swapped_transistors": [comp_a, comp_b],
+                "swapped_input_nets": [net_a, net_b],
+            },
+        )
+
+
+class ExtraFanInResistorPerturbation(Perturbation):
+    """**Phase D · Stage 1 — extra resistor on a fan-in net**
+
+    Pick a net that already has ≥ 2 Resistor connections (a summing junction
+    or voltage divider midpoint), then add an EXTRA Resistor with its pin2
+    on that fan-in net and pin1 on some other random net. Models the
+    student error of inserting a parasitic resistor onto a fan-in node — a
+    pattern v4 is blind to because its training set saw mostly single-R
+    junctions.
+
+    Both pins of the extra Resistor yield WRONG_OBSERVED labels. Falls back
+    to picking any net with ≥ 2 component connections if no resistor-only
+    fan-in exists; only goes Identity if the circuit has < 2 components
+    sharing any net.
+    """
+
+    name = "extra_fanin_resistor"
+    expected_outcome = "wrong_observed"
+
+    def apply(self, ref_hcg, rng, *, subtype_by_source_id=None):
+        # First pass: nets with ≥ 2 Resistor pins
+        net_resistor_count: dict[str, int] = {}
+        net_comp_count: dict[str, int] = {}
+        for edge in ref_hcg.edges:
+            rp = ref_hcg.ports[edge.src_port_id]
+            comp = ref_hcg.components[rp.parent_component_id]
+            net_sid = ref_hcg.nets[edge.dst_net_id].source_id
+            net_comp_count[net_sid] = net_comp_count.get(net_sid, 0) + 1
+            if comp.ctype == "Resistor":
+                net_resistor_count[net_sid] = (
+                    net_resistor_count.get(net_sid, 0) + 1
+                )
+        fan_in_nets = [
+            nsid for nsid, c in net_resistor_count.items() if c >= 2
+        ]
+        if not fan_in_nets:
+            fan_in_nets = [
+                nsid for nsid, c in net_comp_count.items() if c >= 2
+            ]
+        if not fan_in_nets:
+            return IdentityPerturbation().apply(
+                ref_hcg, rng, subtype_by_source_id=subtype_by_source_id
+            )
+        target_net = rng.choice(fan_in_nets)
+        other_candidates = [
+            n.source_id
+            for n in ref_hcg.nets.values()
+            if n.source_id != target_net
+        ]
+        if not other_candidates:
+            return IdentityPerturbation().apply(
+                ref_hcg, rng, subtype_by_source_id=subtype_by_source_id
+            )
+        other_net = rng.choice(other_candidates)
+        existing = {c.source_id for c in ref_hcg.components.values()}
+        idx = 0
+        while f"X_R_{idx}" in existing:
+            idx += 1
+        r_sid = f"X_R_{idx}"
+        raw = hcg_to_raw_pin_edges(ref_hcg)
+        _add_pin_edge(
+            raw, comp_source_id=r_sid, ctype="Resistor",
+            port_key="pin1", pin_role="pin1", net_source_id=other_net,
+        )
+        _add_pin_edge(
+            raw, comp_source_id=r_sid, ctype="Resistor",
+            port_key="pin2", pin_role="pin2", net_source_id=target_net,
+        )
+        cur = _rebuild_cur_from_raw(
+            ref_hcg, raw,
+            subtype_by_source_id or _collect_subtypes(ref_hcg),
+            extra_components=[(r_sid, "Resistor")],
+        )
+        alignment = identity_alignment(ref_hcg, cur)
+        return PerturbedCur(
+            cur_hcg=cur,
+            alignment=alignment,
+            perturbation_chain=(
+                f"{self.name}:{r_sid}:{other_net}→{target_net}",
+            ),
+            expected_outcome=self.expected_outcome,
+            notes={
+                "perturbation": self.name,
+                "extra_resistor_id": r_sid,
+                "fan_in_target_net": target_net,
+                "other_pin_net": other_net,
+            },
+        )
+
+
 # Hard-sample composer ----------------------------------------------------
 
 # Default chain pool: a mix of negatives that compose well (no double-drop).
@@ -1184,6 +1495,10 @@ _DEFAULT_CHAIN_POOL: tuple[str, ...] = (
     "floating_net",
     "extra_component",
     "power_swapped",
+    # Phase D additions (only fire when circuit has the right topology;
+    # else falls back to identity, so chain length stays bounded).
+    "swap_dual_supply_rail",
+    "swap_diff_pair_bases",
 )
 
 
@@ -1261,6 +1576,11 @@ def _make_registry() -> dict[str, Perturbation]:
             InputOutputSwappedPerturbation(),
             ExtraWireBridgePerturbation(),
             InsertSameNetWirePerturbation(),
+            # Phase D — v5 OOD-fix
+            SwapDualSupplyRailPerturbation(),
+            MisplacePotentiometerWiperPerturbation(),
+            SwapDiffPairBasesPerturbation(),
+            ExtraFanInResistorPerturbation(),
             ChainedPerturbation(),
         )
     }
@@ -1312,6 +1632,11 @@ __all__ = [
     "ExtraWireBridgePerturbation",
     # Phase C
     "InsertSameNetWirePerturbation",
+    # Phase D — v5 OOD-fix
+    "SwapDualSupplyRailPerturbation",
+    "MisplacePotentiometerWiperPerturbation",
+    "SwapDiffPairBasesPerturbation",
+    "ExtraFanInResistorPerturbation",
     "ChainedPerturbation",
     # Registry / helpers
     "PERTURBATION_REGISTRY",

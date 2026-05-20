@@ -114,39 +114,79 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "ref_id": "lm358_dual_buffer",
             "payload_path": str(FIXTURES_DIR / "test_lm358_dual_buffer_v1.json"),
         },
+        # Phase D · v5 — close 4 blind spots measured on real student
+        # boards (see tests/fixtures/real_student/{bjt_diff_amp,
+        # opamp_inverting_lpf, opamp_summing}_correct_v1.expected.json):
+        # VEE / Potentiometer / BJT diff-pair / multi-resistor fan-in.
+        {
+            "ref_id": "bjt_diff_amp",
+            "payload_path": str(FIXTURES_DIR / "test_bjt_diff_amp_v1.json"),
+        },
+        {
+            "ref_id": "opamp_inverting_lpf",
+            "payload_path": str(FIXTURES_DIR / "test_opamp_inverting_lpf_v1.json"),
+        },
+        {
+            "ref_id": "opamp_summing",
+            "payload_path": str(FIXTURES_DIR / "test_opamp_summing_v1.json"),
+        },
     ],
-    # Plan: 600 samples / ref × 7 refs = 4200 total. Tuned so pos_neg_ratio
+    # Plan: 600 samples / ref × 10 refs = 6000 total. Tuned so pos_neg_ratio
     # stays in the [0.3, 3.0] gate and every required source fires on ≥ 1
     # ref. Sums to 600 exactly.
     #
     # **Stage 3 (Phase C)**: `insert_same_net_wire` is added at 100/ref
     # (~17% of mix) to close the Wire-OOD gap measured on real student
-    # netlist samples (see tests/fixtures/real_student/
-    # inverting_amp_correct_v1.expected.json). Other operators are reduced
-    # proportionally so total stays at 600; the cut intentionally spares
-    # `identity` / `pin_swap_symmetric` (positive-only baselines) and only
-    # mildly trims `extra_wire_bridge` (keep cross-net wire negatives so
-    # the model still rejects wrong wire bridges).
+    # netlist samples.
+    #
+    # **Phase D · v5 (this revision)**: 4 new operators added to fix v4 OOD
+    # measured on bjt_diff_amp / opamp_inverting_lpf / opamp_summing
+    # _correct_v1 fixtures (v4 fails 13 edges; see commit message). Budgets
+    # tuned so the new ops total 140/ref (~23% of mix), other ops scaled
+    # back proportionally so total stays at 600. New-op budgets bias toward
+    # ops that depend on specific topology (only fire on certain refs);
+    # operators that always-fire (identity / wrong_connection) take the cuts.
     "plan": {
         "counts": {
-            "identity": 80,
-            "pin_swap_symmetric": 40,
-            "wrong_connection": 70,
-            "pin_reversed": 30,
-            "missing_component": 30,
-            "extra_component": 40,
-            "floating_net": 40,
-            "short_circuit": 40,
-            "power_swapped": 20,
+            # Phase D · v5 — budget rebalance based on dry-run trigger-rate
+            # analysis (see scripts/gnn_generate_dataset.py dry-run report).
+            # `misplace_pot_wiper` and `swap_diff_pair_bases` each only fire
+            # on 1/10 refs (diff_amp), so their effective WRONG_OBS sample
+            # count is much smaller than `extra_fanin_resistor` which fires
+            # on 10/10. Bumped their budgets to 60/ref so each gets ~60
+            # actual samples (~120 WRONG_OBS rows) — still less than v4's
+            # 2800 wire-positive rows, but enough signal to break the OOD.
+            "identity": 40,                  # was 80→60; positives are
+                                             #   already over-represented
+                                             #   via identity-fallbacks of
+                                             #   Phase D ops on the 7-9 refs
+                                             #   that lack the prerequisite.
+            "pin_swap_symmetric": 30,        # was 40
+            "wrong_connection": 50,          # was 70
+            "pin_reversed": 25,              # was 30
+            "missing_component": 25,         # was 30
+            "extra_component": 30,           # was 40
+            "floating_net": 30,              # was 40
+            "short_circuit": 30,             # was 40
+            "power_swapped": 20,             # unchanged (V↔GND ≠ VCC↔VEE)
             "input_output_swapped": 20,
-            "extra_wire_bridge": 40,
-            "chained": 50,
-            # Stage 3 — real-student wire formality (Phase C, Stage 1).
-            # Each sample injects 1-3 same-net wires → ~4 WIRE_SAME_NET_POSITIVE
-            # rows per sample × 100 samples × 7 refs ≈ 2800 wire-positive
-            # training rows. Should be enough signal to overwrite the prior
-            # "Wire → negative" heuristic the v3 ckpt learned.
-            "insert_same_net_wire": 100,
+            "extra_wire_bridge": 30,         # was 40
+            "chained": 20,                   # was 50; cut hard — chains
+                                             #   compose existing ops, low
+                                             #   marginal value for v5.
+            "insert_same_net_wire": 60,      # was 100; v4 already learned
+                                             #   this — keep enough to
+                                             #   prevent regression.
+            # Phase D — v5 OOD-fix (190 total = 31.7% of 600/ref).
+            "swap_dual_supply_rail": 30,     # fires on 3/10 refs (diff_amp,
+                                             #   lpf, summing) → ~90 actual
+                                             #   samples, ~180 WRONG_OBS rows.
+            "misplace_pot_wiper": 60,        # fires only on diff_amp → 60
+                                             #   actual samples, ~60-120 rows.
+            "swap_diff_pair_bases": 60,      # fires only on diff_amp → 60
+                                             #   actual samples, ~120 rows.
+            "extra_fanin_resistor": 40,      # fires on 10/10 → 400 actual
+                                             #   samples, ~800 WRONG_OBS rows.
         },
     },
     # Plan §五: hold out one ref entirely so test ≡ new topology
@@ -164,6 +204,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "opamp_buffer": {"U1": "UA741"},
         "opamp_inverting": {"U1": "UA741"},
         "lm358_dual_buffer": {"U1": "LM358"},
+        # Phase D · v5
+        "opamp_inverting_lpf": {"U1": "UA741"},
+        "opamp_summing": {"U1": "UA741"},
     },
 }
 
