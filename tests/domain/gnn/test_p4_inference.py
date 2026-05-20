@@ -102,6 +102,7 @@ def test_gnn_advice_to_report_dict_has_plan_field_schema() -> None:
         "graph_similarity_confidence", "progress_score",
         "n_edges_scored", "inference_ms",
         "edge_predictions", "hotspots",
+        "suggested_targets", "n_suggestion_candidates_scored",
         "predicted_error_types", "component_mapping_topk",
         "net_mapping_topk", "disagreement_with_rule",
     }
@@ -352,7 +353,9 @@ def test_orchestrator_emits_no_gnn_field_when_advisor_unavailable(
     monkeypatch,
 ) -> None:
     """If no checkpoint is on disk, the orchestrator silently produces
-    a rule-only report — no ``gnn`` field added."""
+    a rule-only report — the advisory ``gnn`` block is absent, but a
+    ``gnn_disabled_reason`` field explains why so the JSON output is
+    self-diagnosable in production."""
 
     # Force the locator to return None
     import app.domain.gnn.inference as inf
@@ -374,6 +377,9 @@ def test_orchestrator_emits_no_gnn_field_when_advisor_unavailable(
     assert result["logic_correct"] is True
     summary = result["report"].get("summary", {})
     assert "gnn" not in summary
+    # New contract: an observable reason code lands in the JSON.
+    assert summary.get("gnn_disabled_reason") == "checkpoint_missing"
+    assert result["details"].get("gnn_disabled_reason") == "checkpoint_missing"
 
     # Restore for downstream tests
     GNNAdvisor.reset_singleton()
@@ -559,3 +565,567 @@ def test_orchestrator_disagreement_skipped_when_rule_fails(monkeypatch) -> None:
     )
 
     GNNAdvisor.reset_singleton()
+
+
+# ---------------------------------------------------------------------------
+# D + A · suggested_targets ("应该接哪里")
+# ---------------------------------------------------------------------------
+
+
+def test_advise_on_perfect_copy_has_no_suggested_targets() -> None:
+    """When every observed edge passes the threshold and no REQUIRED
+    pin is floating, the suggestion pool is empty by construction —
+    nothing to fix, nothing to suggest."""
+
+    ref_hcg = build_from_logical_reference(_ref_payload())
+    cur_hcg = build_from_logical_reference(_ref_payload())
+    cur_hcg.metadata["side"] = "cur"
+    advisor = GNNAdvisor.get()
+    advice = advisor.advise(ref_hcg, cur_hcg)
+    assert advice is not None
+    # Identity-copy cur should score every edge well above 0.5 →
+    # no port qualifies as suspicious; no floating REQUIRED pin →
+    # suggested_targets is empty.
+    suspicious_ports = {
+        ep["edge"][0] for ep in advice.edge_predictions
+        if ep["verdict"] == "likely_wrong"
+    }
+    if not suspicious_ports:
+        assert advice.suggested_targets == ()
+        assert advice.n_suggestion_candidates_scored == 0
+
+
+def test_advise_on_floating_required_pin_returns_topk_candidates() -> None:
+    """Drop one resistor pin from the cur netlist so the materializer
+    flags it ``is_floating=True`` + REQUIRED. The advisor must:
+
+    - include that port in ``suggested_targets``
+    - rank candidate cur nets by ``p_connect`` (top-K, default 3)
+    - the correct net (`n_gnd`, paired with R_b.pin1 on `n_mid` per the
+      voltage divider topology) should be among the top candidates
+      since the model was trained on the same topology
+    """
+
+    cur_with_floating_pin = {
+        "components": [
+            {
+                "component_id": "R_a",
+                "component_type": "Resistor",
+                "pins": [
+                    {"pin_name": "pin1", "electrical_net_id": "n_in"},
+                    {"pin_name": "pin2", "electrical_net_id": "n_mid"},
+                ],
+            },
+            {
+                "component_id": "R_b",
+                "component_type": "Resistor",
+                "pins": [
+                    {"pin_name": "pin1", "electrical_net_id": "n_mid"},
+                    # pin2 left out → materialize_floating_required
+                ],
+            },
+        ],
+        "nets": [
+            {"electrical_net_id": "n_in", "role": "input"},
+            {"electrical_net_id": "n_mid", "role": "output"},
+            {"electrical_net_id": "n_gnd", "role": "ground"},
+        ],
+    }
+    ref_hcg = build_from_logical_reference(_ref_payload())
+    cur_hcg = build_from_netlist_v2(cur_with_floating_pin)
+
+    # Sanity: the materializer indeed surfaced a floating REQUIRED port.
+    floating_required = [
+        p for p in cur_hcg.ports.values()
+        if p.is_floating and p.connection_policy == "required"
+    ]
+    assert floating_required, "expected one floating REQUIRED pin (R_b.pin2)"
+
+    advisor = GNNAdvisor.get()
+    advice = advisor.advise(ref_hcg, cur_hcg)
+    assert advice is not None
+    assert advice.suggested_targets, "expected non-empty suggested_targets"
+    # The floating REQUIRED port should appear with reason="floating_required"
+    floating_entries = [
+        t for t in advice.suggested_targets
+        if t["reason"] == "floating_required"
+    ]
+    assert floating_entries, (
+        f"no floating_required entries in {advice.suggested_targets}"
+    )
+
+    fe = floating_entries[0]
+    # Top-K shape contract
+    assert 1 <= len(fe["candidates"]) <= advisor.suggestion_top_k
+    for rank, cand in enumerate(fe["candidates"], start=1):
+        assert {"net", "p_connect", "rank"} <= cand.keys()
+        assert cand["rank"] == rank
+        assert 0.0 <= cand["p_connect"] <= 1.0
+    # Candidates must be sorted descending by p_connect
+    probs = [c["p_connect"] for c in fe["candidates"]]
+    assert probs == sorted(probs, reverse=True)
+    # current_nets exposed (empty for floating port since no observed edges)
+    assert fe["current_nets"] == []
+    # Counter aligns with the size of the candidate plan we ran
+    assert advice.n_suggestion_candidates_scored > 0
+
+
+def test_advise_suggestion_candidate_budget_caps_total_evals() -> None:
+    """``max_suggestion_candidates`` hard-caps per-call evaluations so
+    huge circuits never blow the timeout budget."""
+
+    cur_with_floating_pin = {
+        "components": [
+            {
+                "component_id": "R_a",
+                "component_type": "Resistor",
+                "pins": [
+                    {"pin_name": "pin1", "electrical_net_id": "n_in"},
+                    {"pin_name": "pin2", "electrical_net_id": "n_mid"},
+                ],
+            },
+            {
+                "component_id": "R_b",
+                "component_type": "Resistor",
+                "pins": [{"pin_name": "pin1", "electrical_net_id": "n_mid"}],
+            },
+        ],
+        "nets": [
+            {"electrical_net_id": "n_in", "role": "input"},
+            {"electrical_net_id": "n_mid", "role": "output"},
+            {"electrical_net_id": "n_gnd", "role": "ground"},
+        ],
+    }
+    ref_hcg = build_from_logical_reference(_ref_payload())
+    cur_hcg = build_from_netlist_v2(cur_with_floating_pin)
+
+    advisor = GNNAdvisor.get()
+    saved = advisor.max_suggestion_candidates
+    try:
+        advisor.max_suggestion_candidates = 1
+        advice = advisor.advise(ref_hcg, cur_hcg)
+    finally:
+        advisor.max_suggestion_candidates = saved
+    assert advice is not None
+    assert advice.n_suggestion_candidates_scored <= 1
+
+
+def test_orchestrator_r2_warning_carries_suggested_targets(
+    monkeypatch,
+) -> None:
+    """When R2 fires, the warning item's ``actual.gnn_suspicious_edges``
+    must carry a ``suggested_targets`` per suspicious edge — that's how
+    the UI shows "GNN 建议把 R_b.pin1 改接到 n_vout (P=0.92)" instead of
+    just "N 条可疑"."""
+
+    from app.domain.compare.orchestrator import compare_logical_graphs
+
+    GNNAdvisor.reset_singleton()
+    real_advisor = GNNAdvisor.get()
+
+    def _stub_advise(ref_hcg, cur_hcg, *, timeout_ms=300, num_hops=2):  # type: ignore[no-untyped-def]
+        return GNNAdvice(
+            model_version="circuit_match:stub",
+            inference_ms=15.0,
+            n_edges_scored=2,
+            edge_predictions=(
+                {"edge": ["cur_port:R_a.pin1", "cur_net:n_in"],
+                 "p_correct": 0.95, "verdict": "ok"},
+                {"edge": ["cur_port:R_b.pin1", "cur_net:n_mid"],
+                 "p_correct": 0.07, "verdict": "likely_wrong"},
+            ),
+            hotspots=(),
+            graph_similarity=0.51,
+            graph_similarity_confidence=0.4,
+            suggested_targets=(
+                {
+                    "port": "cur_port:R_b.pin1",
+                    "reason": "likely_wrong",
+                    "current_nets": ["cur_net:n_mid"],
+                    "top_p_connect": 0.92,
+                    "candidates": [
+                        {"net": "cur_net:n_gnd", "p_connect": 0.92, "rank": 1},
+                        {"net": "cur_net:n_in", "p_connect": 0.18, "rank": 2},
+                    ],
+                },
+            ),
+            n_suggestion_candidates_scored=2,
+        )
+
+    monkeypatch.setattr(real_advisor, "advise", _stub_advise)
+
+    ref_payload = _ref_payload()
+    cur_netlist = _matching_cur_netlist_v2()
+    ref = logical_reference_to_graph(ref_payload)
+    cur = current_netlist_v2_to_graph(cur_netlist)
+    result = compare_logical_graphs(
+        ref, cur, ref_payload=ref_payload, cur_netlist_v2=cur_netlist,
+    )
+
+    # logic_correct stays True — advisory only
+    assert result["logic_correct"] is True
+
+    # report.summary.gnn carries suggested_targets verbatim
+    gnn_block = result["report"]["summary"]["gnn"]
+    assert gnn_block["suggested_targets"], "suggested_targets missing from summary"
+    assert gnn_block["n_suggestion_candidates_scored"] == 2
+
+    # warning item carries the matched candidates inside its actual.
+    warnings = [
+        item for item in result["items"]
+        if item.get("error_code") == "WARN_GNN_DISAGREES_WITH_RULE"
+    ]
+    assert len(warnings) == 1
+    suspicious = warnings[0]["actual"]["gnn_suspicious_edges"]
+    assert len(suspicious) == 1
+    matched = suspicious[0]
+    assert matched["edge"] == ["cur_port:R_b.pin1", "cur_net:n_mid"]
+    assert matched["suggested_targets"], (
+        "warning item missing the top-K candidates we wired in"
+    )
+    top = matched["suggested_targets"][0]
+    assert top["net"] == "cur_net:n_gnd"
+    assert top["rank"] == 1
+
+    # Message text mentions the top-1 suggestion so a UI without the
+    # structured data can still surface "改接到 GND (地)". Display
+    # enrichment replaces raw IDs with human-readable role labels.
+    assert "GND (地)" in warnings[0]["message"], warnings[0]["message"]
+    assert "cur_net:" not in warnings[0]["message"]
+    assert "P(connect)" in warnings[0]["message"]
+
+    # details.gnn mirror gained the counters
+    details_gnn = result["details"]["gnn"]
+    assert details_gnn["n_suggested_targets"] == 1
+    assert details_gnn["n_suggestion_candidates_scored"] == 2
+
+    GNNAdvisor.reset_singleton()
+
+
+# ---------------------------------------------------------------------------
+# gnn_disabled_reason · observability patch (silent-bail diagnosability)
+# ---------------------------------------------------------------------------
+
+
+def test_disabled_reason_runtime_unavailable_when_torch_missing(
+    monkeypatch,
+) -> None:
+    """When ``GNNAdvisor.runtime_available()`` is False (production box
+    without ``[gnn]`` extra installed), the orchestrator writes
+    ``gnn_disabled_reason = "runtime_unavailable"`` to the report."""
+
+    # Spoof runtime_available → False so we don't have to actually
+    # uninstall torch. This is the contract that should_use_gnn relies
+    # on under the hood.
+    monkeypatch.setattr(GNNAdvisor, "runtime_available", classmethod(lambda cls: False))
+    GNNAdvisor.reset_singleton()
+
+    from app.domain.compare.orchestrator import compare_logical_graphs
+
+    ref_payload = _ref_payload()
+    cur_netlist = _matching_cur_netlist_v2()
+    ref = logical_reference_to_graph(ref_payload)
+    cur = current_netlist_v2_to_graph(cur_netlist)
+    result = compare_logical_graphs(
+        ref, cur, ref_payload=ref_payload, cur_netlist_v2=cur_netlist,
+    )
+
+    assert result["logic_correct"] is True
+    summary = result["report"]["summary"]
+    assert "gnn" not in summary
+    assert summary["gnn_disabled_reason"] == "runtime_unavailable"
+    assert result["details"]["gnn_disabled_reason"] == "runtime_unavailable"
+
+    GNNAdvisor.reset_singleton()
+
+
+def test_disabled_reason_tiny_circuit() -> None:
+    """A tiny ref + cur (< 8 nodes total) shouldn't trigger the advisor
+    per plan §七; the JSON must say so explicitly via ``tiny_circuit``."""
+
+    # Build a 1-resistor ref + 1-resistor cur. Sum of nodes is well
+    # below the 8-node trigger threshold.
+    tiny_ref_payload = {
+        "format": "logical_reference_v1",
+        "components": [
+            {"ref_id": "R_only", "type": "Resistor",
+             "pins": [{"pin": "pin1", "net": "n_a"},
+                      {"pin": "pin2", "net": "n_b"}]},
+        ],
+        "nets": [
+            {"net": "n_a", "role": "input"},
+            {"net": "n_b", "role": "output"},
+        ],
+    }
+    tiny_cur = {
+        "components": [
+            {"component_id": "R1", "component_type": "Resistor", "pins": [
+                {"pin_name": "pin1", "electrical_net_id": "n_a"},
+                {"pin_name": "pin2", "electrical_net_id": "n_b"},
+            ]},
+        ],
+        "nets": [
+            {"electrical_net_id": "n_a", "role": "input"},
+            {"electrical_net_id": "n_b", "role": "output"},
+        ],
+    }
+    from app.domain.compare.orchestrator import compare_logical_graphs
+
+    ref = logical_reference_to_graph(tiny_ref_payload)
+    cur = current_netlist_v2_to_graph(tiny_cur)
+    assert ref.number_of_nodes() + cur.number_of_nodes() < 8, (
+        "fixture invariant: this case must trip the size early-exit"
+    )
+
+    result = compare_logical_graphs(
+        ref, cur,
+        ref_payload=tiny_ref_payload,
+        cur_netlist_v2=tiny_cur,
+    )
+    summary = result["report"]["summary"]
+    # GNN sat out — but reason is now visible
+    assert "gnn" not in summary
+    assert summary.get("gnn_disabled_reason") == "tiny_circuit"
+
+
+def test_disabled_reason_model_failed_when_advise_returns_none(
+    monkeypatch,
+) -> None:
+    """``advise()`` may legitimately return None (it swallows internal
+    exceptions per plan §一 silent-fallback). The orchestrator surfaces
+    that as ``gnn_disabled_reason = "model_failed"`` so production can
+    distinguish "model crashed silently" from "checkpoint not deployed"."""
+
+    from app.domain.compare.orchestrator import compare_logical_graphs
+
+    GNNAdvisor.reset_singleton()
+    real_advisor = GNNAdvisor.get()
+
+    def _none_advise(ref_hcg, cur_hcg, *, timeout_ms=300, num_hops=2):  # type: ignore[no-untyped-def]
+        return None
+
+    monkeypatch.setattr(real_advisor, "advise", _none_advise)
+
+    ref_payload = _ref_payload()
+    cur_netlist = _matching_cur_netlist_v2()
+    ref = logical_reference_to_graph(ref_payload)
+    cur = current_netlist_v2_to_graph(cur_netlist)
+    result = compare_logical_graphs(
+        ref, cur, ref_payload=ref_payload, cur_netlist_v2=cur_netlist,
+    )
+
+    summary = result["report"]["summary"]
+    assert "gnn" not in summary
+    assert summary.get("gnn_disabled_reason") == "model_failed"
+
+    GNNAdvisor.reset_singleton()
+
+
+def test_no_disabled_reason_when_payloads_intentionally_none() -> None:
+    """When the caller deliberately omits ``ref_payload`` /
+    ``cur_netlist_v2`` (debug script, fast path), the orchestrator must
+    NOT pollute the output with a ``gnn_disabled_reason`` — that's an
+    intentional bypass, not a runtime issue."""
+
+    from app.domain.compare.orchestrator import compare_logical_graphs
+
+    ref = logical_reference_to_graph(_ref_payload())
+    cur = current_netlist_v2_to_graph(_matching_cur_netlist_v2())
+    result = compare_logical_graphs(ref, cur)
+
+    summary = (result.get("report") or {}).get("summary", {})
+    assert "gnn" not in summary
+    assert "gnn_disabled_reason" not in summary
+    assert "gnn_disabled_reason" not in (result.get("details") or {})
+
+
+def test_display_helper_renders_inverting_amp_port_and_net_labels() -> None:
+    """Direct test of ``build_display_maps`` on the inverting-amplifier
+    fixture: verify ``cur_port:IC1.pin2 → "U1 · pin2 (反相输入)"`` and
+    ``cur_net:NET_GND → "GND (地)"``. Bypasses the rule path (which is
+    fussy about exact NC-pin encoding on UA741) so we test the
+    enricher in isolation."""
+
+    from app.domain.compare.gnn_display import build_display_maps
+
+    inv_amp_ref = json.loads(
+        (FIXTURES / "test_opamp_inverting_v1.json").read_text()
+    )
+    cur = {
+        "components": [
+            {"component_id": "IC1", "component_type": "IC", "subtype": "UA741",
+             "pins": [
+                 {"pin_name": "pin2", "electrical_net_id": "NET_INV"},
+                 {"pin_name": "pin3", "electrical_net_id": "NET_VP"},
+                 {"pin_name": "pin4", "electrical_net_id": "NET_GND"},
+                 {"pin_name": "pin6", "electrical_net_id": "NET_OUT"},
+                 {"pin_name": "pin7", "electrical_net_id": "NET_VCC"},
+             ]},
+        ],
+        "nets": [],
+    }
+    # Synthesised mapping (the rule path would have written this on a
+    # successful isomorphism)
+    summary = {
+        "ref_to_current_component_mapping": {"U1": "IC1"},
+        "ref_to_current_net_mapping": {
+            "INV": "NET_INV", "V_P": "NET_VP", "GND": "NET_GND",
+            "VOUT": "NET_OUT", "VCC": "NET_VCC", "VIN": "NET_IN",
+        },
+    }
+
+    net_display, port_display = build_display_maps(inv_amp_ref, cur, summary)
+
+    # Pin role labels via IC subtype lookup
+    assert port_display["cur_port:IC1.pin2"] == "U1 · pin2 (反相输入)"
+    assert port_display["cur_port:IC1.pin3"] == "U1 · pin3 (非反相输入)"
+    assert port_display["cur_port:IC1.pin4"] == "U1 · pin4 (V−电源)"
+    assert port_display["cur_port:IC1.pin6"] == "U1 · pin6 (输出)"
+    assert port_display["cur_port:IC1.pin7"] == "U1 · pin7 (V+电源)"
+
+    # Net role labels via ref payload
+    assert net_display["cur_net:NET_GND"] == "GND (地)"
+    assert net_display["cur_net:NET_OUT"] == "VOUT (输出)"
+    assert net_display["cur_net:NET_INV"] == "INV (信号)"
+    assert net_display["cur_net:NET_VCC"] == "VCC (电源)"
+
+
+def test_display_e2e_on_voltage_divider_with_r2_warning(monkeypatch) -> None:
+    """End-to-end smoke through the orchestrator + R2 warning path. Uses
+    voltage divider (whose rule path is exercised by other tests) so we
+    know iso-mapping fires and the warning emits with display labels."""
+
+    from app.domain.compare.orchestrator import compare_logical_graphs
+
+    GNNAdvisor.reset_singleton()
+    real_advisor = GNNAdvisor.get()
+
+    def _stub_advise(ref_hcg, cur_hcg, *, timeout_ms=300, num_hops=2):  # type: ignore[no-untyped-def]
+        return GNNAdvice(
+            model_version="circuit_match:stub",
+            inference_ms=10.0,
+            n_edges_scored=2,
+            edge_predictions=(
+                {"edge": ["cur_port:R_a.pin1", "cur_net:n_in"],
+                 "p_correct": 0.95, "verdict": "ok"},
+                {"edge": ["cur_port:R_b.pin1", "cur_net:n_mid"],
+                 "p_correct": 0.07, "verdict": "likely_wrong"},
+            ),
+            hotspots=(
+                {"node": "cur_port:R_b.pin1", "score": 0.93, "hint": "..."},
+            ),
+            suggested_targets=(
+                {
+                    "port": "cur_port:R_b.pin1",
+                    "reason": "likely_wrong",
+                    "current_nets": ["cur_net:n_mid"],
+                    "top_p_connect": 0.91,
+                    "candidates": [
+                        {"net": "cur_net:n_gnd", "p_connect": 0.91, "rank": 1},
+                        {"net": "cur_net:n_in", "p_connect": 0.05, "rank": 2},
+                    ],
+                },
+            ),
+            n_suggestion_candidates_scored=2,
+            graph_similarity=0.5,
+            graph_similarity_confidence=0.4,
+        )
+
+    monkeypatch.setattr(real_advisor, "advise", _stub_advise)
+
+    ref_payload = _ref_payload()
+    cur_netlist = _matching_cur_netlist_v2()
+    ref = logical_reference_to_graph(ref_payload)
+    cur = current_netlist_v2_to_graph(cur_netlist)
+    result = compare_logical_graphs(
+        ref, cur, ref_payload=ref_payload, cur_netlist_v2=cur_netlist,
+    )
+    assert result["logic_correct"] is True  # rule path matches
+
+    gnn_block = result["report"]["summary"]["gnn"]
+
+    # 1) edge_predictions carry edge_display tuples
+    eps = gnn_block["edge_predictions"]
+    flat = " | ".join(" → ".join(ep.get("edge_display") or []) for ep in eps)
+    # Divider has R1/R2 in ref; net VOUT carries role=output
+    assert "VOUT (输出)" in flat or "VIN (输入)" in flat, flat
+
+    # 2) suggested_targets get full enrichment
+    t0 = gnn_block["suggested_targets"][0]
+    assert t0["port_display"]  # something non-empty
+    assert isinstance(t0["current_nets_display"], list)
+    cand0 = t0["candidates"][0]
+    assert "net_display" in cand0
+
+    # 3) R2 warning's suspicious_edges + message use display labels
+    warnings = [
+        i for i in result["items"]
+        if i.get("error_code") == "WARN_GNN_DISAGREES_WITH_RULE"
+    ]
+    assert len(warnings) == 1
+    susp0 = warnings[0]["actual"]["gnn_suspicious_edges"][0]
+    assert susp0.get("edge_display")
+    assert susp0["suggested_targets"][0].get("net_display")
+    # Message body should not leak raw cur_port:/cur_net: prefixes
+    assert "cur_port:" not in warnings[0]["message"]
+    assert "cur_net:" not in warnings[0]["message"]
+
+    GNNAdvisor.reset_singleton()
+
+
+def test_display_falls_back_to_raw_when_mapping_absent() -> None:
+    """When ref↔cur alignment failed (no mapping), the enricher should
+    write raw IDs to ``*_display`` rather than crash or silently drop
+    fields. Demo principle: show *something* over showing nothing."""
+
+    from app.domain.compare.gnn_display import enrich_advice_with_display
+
+    advice_dict = {
+        "edge_predictions": [
+            {"edge": ["cur_port:Foo.pinX", "cur_net:Bar"], "p_correct": 0.9, "verdict": "ok"},
+        ],
+        "hotspots": [{"node": "cur_port:Foo.pinX", "score": 0.5, "hint": "..."}],
+        "suggested_targets": [
+            {
+                "port": "cur_port:Foo.pinX",
+                "reason": "likely_wrong",
+                "current_nets": ["cur_net:Bar"],
+                "candidates": [{"net": "cur_net:Baz", "p_connect": 0.7, "rank": 1}],
+            }
+        ],
+    }
+    enriched = enrich_advice_with_display(
+        advice_dict,
+        ref_payload={"components": [], "nets": []},
+        cur_netlist_v2={"components": [], "nets": []},
+        summary={},  # mapping absent → no aligned data
+    )
+    # Falls back to raw IDs verbatim — no display info, but no crash
+    assert enriched["edge_predictions"][0]["edge_display"] == [
+        "cur_port:Foo.pinX", "cur_net:Bar"
+    ]
+    assert enriched["hotspots"][0]["node_display"] == "cur_port:Foo.pinX"
+    assert enriched["suggested_targets"][0]["port_display"] == "cur_port:Foo.pinX"
+
+
+def test_no_disabled_reason_when_advisor_succeeds() -> None:
+    """Happy path: when the advisor runs successfully and writes the
+    full ``gnn`` block, no ``gnn_disabled_reason`` field should leak
+    in. Belt-and-braces against future regressions where someone might
+    set the reason unconditionally."""
+
+    from app.domain.compare.orchestrator import compare_logical_graphs
+
+    GNNAdvisor.reset_singleton()
+    ref_payload = _ref_payload()
+    cur_netlist = _matching_cur_netlist_v2()
+    ref = logical_reference_to_graph(ref_payload)
+    cur = current_netlist_v2_to_graph(cur_netlist)
+    result = compare_logical_graphs(
+        ref, cur, ref_payload=ref_payload, cur_netlist_v2=cur_netlist,
+    )
+
+    summary = result["report"]["summary"]
+    assert "gnn" in summary, "advisor should have run on a non-trivial circuit"
+    assert "gnn_disabled_reason" not in summary
+    assert "gnn_disabled_reason" not in result["details"]

@@ -37,6 +37,19 @@ from .role_inference import (
 _GNN_WRONG_EDGE_P_FLOOR = 0.3
 _GNN_DISAGREE_ERROR_CODE = "WARN_GNN_DISAGREES_WITH_RULE"
 
+# Diagnostic codes written to ``report.summary.gnn_disabled_reason`` (and the
+# ``details.gnn_disabled_reason`` mirror) when the GNN hook silently bails
+# out. Plan §一 keeps the advisor invisible to ``logic_correct``, but having
+# **why** the advisor sat out the call observable in the JSON output saves
+# hours of guesswork ("is torch missing?" / "is the checkpoint mounted?").
+_GNN_REASON_RUNTIME_UNAVAILABLE = "runtime_unavailable"   # torch / pyg ImportError
+_GNN_REASON_CHECKPOINT_MISSING = "checkpoint_missing"     # no .pt on disk
+_GNN_REASON_TINY_CIRCUIT = "tiny_circuit"                  # ≥ 8-node trigger
+_GNN_REASON_TRIGGER_SKIPPED = "trigger_predicate_skipped"  # safety / polarity etc.
+_GNN_REASON_MODEL_FAILED = "model_failed"                  # advisor.advise crashed
+# (`payload_missing` intentionally not emitted — the caller is signalling "I
+# don't want GNN this time" by withholding ref_payload / cur_netlist_v2.)
+
 log = logging.getLogger(__name__)
 
 
@@ -249,6 +262,22 @@ def _promote_critical_extras(
     return result
 
 
+def _set_gnn_disabled_reason(result: dict[str, Any], reason: str) -> None:
+    """Annotate ``report.summary.gnn_disabled_reason`` (+ ``details``
+    mirror) so the JSON output explains why the GNN hook sat out the
+    call. Plan §一 still applies — this is metadata only, ``logic_correct``
+    untouched. See module-level ``_GNN_REASON_*`` codes."""
+
+    report = dict(result.get("report", {}))
+    summary = dict(report.get("summary", {}))
+    summary["gnn_disabled_reason"] = reason
+    report["summary"] = summary
+    result["report"] = report
+    details = dict(result.get("details", {}))
+    details["gnn_disabled_reason"] = reason
+    result["details"] = details
+
+
 def _maybe_attach_gnn_advice(
     result: dict[str, Any],
     ref_payload: dict[str, Any] | None,
@@ -262,13 +291,17 @@ def _maybe_attach_gnn_advice(
     Hard rules (plan §一 "GNN 永远不直接决定 pass/fail"):
         - **Never** mutate ``logic_correct`` / ``is_correct`` / ``is_match``.
         - On any failure (import, missing checkpoint, model exception),
-          silently return ``result`` unchanged so the rule path stays the
-          authoritative comparator.
+          silently return ``result`` with a ``gnn_disabled_reason`` field
+          explaining why — rule path stays the authoritative comparator,
+          but the JSON now carries enough info to diagnose
+          "why is .gnn missing?" without reading server logs.
         - The added ``gnn`` field is purely additive — existing items /
           mappings / summary keys are untouched.
     """
 
     if ref_payload is None or cur_netlist_v2 is None:
+        # Caller is intentional (debug script, fast-path bypass). Do
+        # not pollute output with a reason code.
         return result
     try:
         from app.domain.gnn import GNNAdvisor, should_use_gnn
@@ -277,6 +310,7 @@ def _maybe_attach_gnn_advice(
             build_from_netlist_v2,
         )
     except ImportError:
+        _set_gnn_disabled_reason(result, _GNN_REASON_RUNTIME_UNAVAILABLE)
         return result
 
     # Build a minimal context for the §七 trigger logic.
@@ -288,6 +322,17 @@ def _maybe_attach_gnn_advice(
         "full_isomorphism_failed": match_type != "full_isomorphism",
     }
     if not should_use_gnn(ctx):
+        # Differentiate why so deploy-time / data-time issues are
+        # distinguishable from genuine "small circuit, skip GNN" cases.
+        if not GNNAdvisor.runtime_available():
+            reason = _GNN_REASON_RUNTIME_UNAVAILABLE
+        elif not GNNAdvisor.checkpoint_available():
+            reason = _GNN_REASON_CHECKPOINT_MISSING
+        elif n_total > 0 and n_total < 8:
+            reason = _GNN_REASON_TINY_CIRCUIT
+        else:
+            reason = _GNN_REASON_TRIGGER_SKIPPED
+        _set_gnn_disabled_reason(result, reason)
         return result
 
     try:
@@ -295,9 +340,14 @@ def _maybe_attach_gnn_advice(
         ref_hcg = build_from_logical_reference(ref_payload)
         cur_hcg = build_from_netlist_v2(cur_netlist_v2)
         advice = advisor.advise(ref_hcg, cur_hcg, timeout_ms=300)
-    except (RuntimeError, FileNotFoundError) as e:
-        # Expected: no checkpoint / no torch / no model on this box.
-        log.debug("gnn_advisor_unavailable: %s", e)
+    except FileNotFoundError as e:
+        log.debug("gnn_advisor_unavailable (no checkpoint): %s", e)
+        _set_gnn_disabled_reason(result, _GNN_REASON_CHECKPOINT_MISSING)
+        return result
+    except RuntimeError as e:
+        # _ensure_gnn_runtime / model load failure
+        log.debug("gnn_advisor_unavailable (runtime): %s", e)
+        _set_gnn_disabled_reason(result, _GNN_REASON_RUNTIME_UNAVAILABLE)
         return result
     except Exception as e:  # noqa: BLE001 — never let GNN crash rule path
         log.warning(
@@ -305,11 +355,28 @@ def _maybe_attach_gnn_advice(
             type(e).__name__,
             exc_info=e,
         )
+        _set_gnn_disabled_reason(result, _GNN_REASON_MODEL_FAILED)
         return result
     if advice is None:
+        _set_gnn_disabled_reason(result, _GNN_REASON_MODEL_FAILED)
         return result
 
     advice_dict = advice.to_report_dict()
+
+    # ----- 显示文案注入（demo / 人类可读） -----------------------------
+    # ``_enrich_result`` 在前面已经把 ref↔cur 映射写进了 summary。借这些
+    # 映射 + ref_payload 的 role/role_label 给每个 cur_port / cur_net
+    # 加 ``*_display`` 字段，让 JSON 在演示场景下不再充斥 NET_004 / IC1.pin4
+    # 这种内部 id。raw id 保留以便前端高亮联动。
+    summary_for_display = (result.get("report") or {}).get("summary") or {}
+    try:
+        from .gnn_display import enrich_advice_with_display
+        advice_dict = enrich_advice_with_display(
+            advice_dict, ref_payload, cur_netlist_v2, summary_for_display
+        )
+    except Exception as e:  # noqa: BLE001
+        # 显示层失败永远不能阻塞 advisory 主流程
+        log.debug("gnn_display_enrich_failed: %s", type(e).__name__)
 
     # P4.1 R2 (RISK_REGISTER §5) — only the rule_pass + GNN_flags_wrong_edge
     # direction is actionable for the false_pass red line. Compute it here
@@ -329,11 +396,81 @@ def _maybe_attach_gnn_advice(
     summary["gnn"] = advice_dict
     report["summary"] = summary
 
+    # Build {port_id: suggested_targets_entry} index so the warning item
+    # can show "you wired pin X to net A, but GNN thinks net B (p=0.92)".
+    # Same index also exposes floating REQUIRED suggestions to consumers.
+    suggestions_by_port: dict[str, dict[str, Any]] = {}
+    for entry in advice_dict.get("suggested_targets", []) or []:
+        port_id = entry.get("port")
+        if isinstance(port_id, str):
+            suggestions_by_port[port_id] = entry
+
     if disagreement:
         # Plan §一: NEVER flip logic_correct. severity="warning" keeps the
         # _dedupe / promotion logic in _enrich_result inert (it only promotes
         # to logic_correct=False on "error" severity).
         worst = min(suspicious_edges, key=lambda e: float(e["p_correct"]))
+
+        suspicious_actual: list[dict[str, Any]] = []
+        for e in suspicious_edges:
+            edge = e.get("edge") or []
+            port_id_for_edge = edge[0] if edge else None
+            suggestion = suggestions_by_port.get(port_id_for_edge) if isinstance(port_id_for_edge, str) else None
+            entry: dict[str, Any] = {
+                "edge": edge,
+                "p_correct": float(e["p_correct"]),
+            }
+            if suggestion is not None:
+                entry["suggested_targets"] = suggestion.get("candidates", [])
+            suspicious_actual.append(entry)
+
+        # Enrich the warning's actual with display labels (mirrors what
+        # got attached to advice_dict above). Best-effort; on failure we
+        # keep the raw IDs.
+        try:
+            from .gnn_display import enrich_suspicious_edges_for_warning
+            suspicious_actual = enrich_suspicious_edges_for_warning(
+                suspicious_actual,
+                advice_dict,
+                ref_payload,
+                cur_netlist_v2,
+                summary_for_display,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.debug("gnn_display_enrich_warning_failed: %s", type(e).__name__)
+
+        # Hint text: include the top-1 suggestion for the lowest-p edge
+        # when we have one, so the user sees a concrete "接到哪" instead
+        # of just "有 N 条可疑". Use display labels where available so
+        # the on-screen message reads "U1 · pin2 (反相输入) 改接到
+        # VOUT (输出)" instead of raw IDs.
+        worst_edge = worst.get("edge") or []
+        worst_port = worst_edge[0] if worst_edge else None
+        worst_suggestion = (
+            suggestions_by_port.get(worst_port)
+            if isinstance(worst_port, str) else None
+        )
+        if worst_suggestion and worst_suggestion.get("candidates"):
+            top1 = worst_suggestion["candidates"][0]
+            # advice_dict was already enriched; pull display for worst_port + top1.net
+            enriched_targets = {
+                t.get("port"): t for t in advice_dict.get("suggested_targets", []) or []
+            }
+            enriched_for_worst = enriched_targets.get(worst_port)
+            worst_port_display = (
+                (enriched_for_worst or {}).get("port_display") or worst_port
+            )
+            top1_net_display = (
+                ((enriched_for_worst or {}).get("candidates") or [{}])[0].get("net_display")
+                or top1.get("net")
+            )
+            hint_tail = (
+                f"。GNN 建议把 {worst_port_display} 改接到 "
+                f"{top1_net_display} (P(connect)={float(top1['p_connect']):.2f})"
+            )
+        else:
+            hint_tail = "。请人工复核高亮的引脚"
+
         warning_item = _item(
             _GNN_DISAGREE_ERROR_CODE,
             "gnn_advisory",
@@ -341,23 +478,18 @@ def _maybe_attach_gnn_advice(
             (
                 "规则比较器认为电路通过，但 GNN 怀疑有 "
                 f"{len(suspicious_edges)} 条引脚连接异常 "
-                f"(最低 P(edge_correct)={float(worst['p_correct']):.2f})。"
-                "请人工复核高亮的引脚。"
+                f"(最低 P(edge_correct)={float(worst['p_correct']):.2f})"
+                f"{hint_tail}。"
             ),
             expected={"rule_logic_correct": True},
             actual={
-                "gnn_suspicious_edges": [
-                    {
-                        "edge": e["edge"],
-                        "p_correct": float(e["p_correct"]),
-                    }
-                    for e in suspicious_edges
-                ],
+                "gnn_suspicious_edges": suspicious_actual,
                 "gnn_model_version": advice_dict["model_version"],
             },
             suggested_action=(
                 "GNN 给出的建议是 advisory，最终判定仍以规则为准。"
-                "若复核发现确为错接，请补充规则或重新训练模型。"
+                "若复核发现确为错接，请按 suggested_targets 调整接线或"
+                "补充规则。"
             ),
             evidence={
                 "p_floor": _GNN_WRONG_EDGE_P_FLOOR,
@@ -383,8 +515,12 @@ def _maybe_attach_gnn_advice(
         "model_version": advice_dict["model_version"],
         "inference_ms": advice_dict["inference_ms"],
         "n_edges_scored": advice_dict["n_edges_scored"],
+        "n_suggestion_candidates_scored": advice_dict.get(
+            "n_suggestion_candidates_scored", 0
+        ),
         "disagreement_with_rule": disagreement,
         "n_suspicious_edges": len(suspicious_edges),
+        "n_suggested_targets": len(suggestions_by_port),
     }
     result["details"] = details
     return result

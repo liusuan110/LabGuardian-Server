@@ -1,6 +1,6 @@
 # `app.domain.gnn` · GNN-assisted Graph Comparator
 
-**Status: P5 ✅ + R1..R10 ✅ + R11 Hole-move audit ✅ — Plan §八 red line MET on every split with 100% rule accuracy. R11 ships three independent fixes for the manual-correction UX bug ("moving a pin doesn't form a new connection"): **B0** netlist_v2 now exports `board_topology.node_to_holes` so frontend can highlight the full 5-hole conducting strip on drag; **B1** `hole_id` is now strictly the source of truth for `electrical_node_id` across 5 pipeline sites (stale upstream values no longer mask manual corrections); **B2** rail defaults moved onto `BoardSchema.default_rail_assignments()` and are echoed back in `board_topology.rail_assignments`. 7 new contract tests + fixed 1 test that was pinning the bug. 554 tests green.**
+**Status: P5 ✅ + R1..R10 ✅ + R11 Hole-move audit ✅ + P4.1 suggested_targets ✅ — Plan §八 red line MET on every split with 100% rule accuracy. R11 ships three independent fixes for the manual-correction UX bug ("moving a pin doesn't form a new connection"): **B0** netlist_v2 now exports `board_topology.node_to_holes` so frontend can highlight the full 5-hole conducting strip on drag; **B1** `hole_id` is now strictly the source of truth for `electrical_node_id` across 5 pipeline sites (stale upstream values no longer mask manual corrections); **B2** rail defaults moved onto `BoardSchema.default_rail_assignments()` and are echoed back in `board_topology.rail_assignments`. 7 new contract tests + fixed 1 test that was pinning the bug. 554 tests green.**
 Full plan: `~/.claude/plans/labguardian-server-glowing-galaxy.md`.
 
 ## What this module is
@@ -759,6 +759,38 @@ Evaluator integration: `EvaluationReport` now reports `n_r2_warnings`
 split: 79 / 600 R2 warnings, all on `extra_component` (50) +
 `input_output_swapped` (25) + 4 chained — perfect recall on
 false_pass cases.
+
+### ✅ P4.1 — `suggested_targets` head ("应该接哪里")
+
+The "where should this pin be wired instead?" answer (plan §六 / README
+top question 2) is now wired through the advisor and into the
+orchestrator's R2 warning item.
+
+- `GNNAdvice.suggested_targets: tuple[dict, ...]` — per port that the
+  advisor considers actionable, the top-K candidate cur nets ranked by
+  P(connect). Each entry carries `port` / `reason` (`"likely_wrong"` or
+  `"floating_required"`) / `current_nets` / `top_p_connect` /
+  `candidates[{net, p_connect, rank}]`.
+- `GNNAdvisor._compute_suggested_targets()` — reuses the same
+  `SealDGCNN` head with `edge_present=False` SEAL subgraphs (matches
+  the MISSING_EDGE training distribution). Port pool: ports with at
+  least one observed edge below `threshold_wrong` ∪ REQUIRED floating
+  ports surfaced by `port_graph.build_*` materialize phase. Floating
+  pins outrank likely-wrong ones; `max_suggestion_candidates=256` caps
+  total per-call evaluations so a pathological circuit can't blow the
+  100 ms budget.
+- Orchestrator `_maybe_attach_gnn_advice`: when R2 fires, the warning
+  item's `actual.gnn_suspicious_edges[*]` now carries
+  `suggested_targets` (top-K candidates joined by port), and the
+  human-readable `message` ends with "GNN 建议把 X 改接到 Y
+  (P(connect)=z)" using the lowest-p edge's top-1 suggestion.
+  `details.gnn` mirror gains `n_suggested_targets` +
+  `n_suggestion_candidates_scored`.
+- 4 new tests in `test_p4_inference.py` (24 total green):
+  identity-copy emits 0 suggestions; floating-pin cur emits a
+  `floating_required` entry with top-K shape contract; budget cap
+  respected; stubbed R2 warning carries the candidates and the message
+  text mentions the suggested net.
 
 ### 🟡 P4.1 R1 — Rule semantics tightening (in design)
 
