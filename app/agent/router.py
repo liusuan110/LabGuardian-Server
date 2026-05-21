@@ -77,6 +77,10 @@ class RouteDecision:
     threshold: float
     matched_via: str  # "auto_fire" | "embedding" | "keyword" | "none"
     keyword_hits: list[str] = field(default_factory=list)
+    confidence: float = 0.0
+    positive_score: float = 0.0
+    negative_score: float = 0.0
+    reasons: list[str] = field(default_factory=list)
 
 
 class SemanticRouter:
@@ -143,7 +147,12 @@ class SemanticRouter:
         route = self._routes.get(name)
         if route is None:
             return RouteDecision(
-                name=name, fired=False, score=0.0, threshold=0.0, matched_via="none"
+                name=name,
+                fired=False,
+                score=0.0,
+                threshold=0.0,
+                matched_via="none",
+                reasons=["route_not_found"],
             )
 
         q = (query or "").strip()
@@ -155,6 +164,7 @@ class SemanticRouter:
                 score=0.0,
                 threshold=route.threshold,
                 matched_via="none",
+                reasons=["empty_query"],
             )
 
         # 1. Auto-fire: explicit part-number mention bypasses both routes.
@@ -167,12 +177,16 @@ class SemanticRouter:
                     threshold=route.threshold,
                     matched_via="auto_fire",
                     keyword_hits=[part],
+                    confidence=0.99,
+                    reasons=[f"part_number:{part}"],
                 )
 
         # 2. Embedding side, when both encoded utterances and a query encoder
         # are available. We compute pos_max - neg_max; this is the standard
         # semantic-router scoring trick and gives negatives real veto power.
         pos = self._positive_vecs.get(name)
+        pos_score = 0.0
+        neg_score = 0.0
         if pos is not None and self._embedding.is_active:
             q_vec = self._embedding.encode([q])
             if q_vec.size:
@@ -188,6 +202,14 @@ class SemanticRouter:
                         score=score,
                         threshold=route.threshold,
                         matched_via="embedding",
+                        confidence=self._confidence_from_embedding(score, route.threshold),
+                        positive_score=pos_score,
+                        negative_score=neg_score,
+                        reasons=[
+                            f"embedding_margin={score:.3f}",
+                            f"positive={pos_score:.3f}",
+                            f"negative={neg_score:.3f}",
+                        ],
                     )
                 # Embedding said no; fall through to keyword check as a safety
                 # net for OOV phrasings. Keyword matches are conservative.
@@ -203,6 +225,10 @@ class SemanticRouter:
                 threshold=float(route.min_keyword_hits),
                 matched_via="keyword",
                 keyword_hits=hits,
+                confidence=self._confidence_from_keywords(len(hits), route.min_keyword_hits),
+                positive_score=pos_score,
+                negative_score=neg_score,
+                reasons=[f"keyword:{hit}" for hit in hits[:6]],
             )
 
         return RouteDecision(
@@ -211,7 +237,33 @@ class SemanticRouter:
             score=0.0,
             threshold=route.threshold,
             matched_via="none",
+            confidence=0.0,
+            positive_score=pos_score,
+            negative_score=neg_score,
+            reasons=(
+                [f"embedding_margin_below_threshold={pos_score - neg_score:.3f}"]
+                if pos is not None and self._embedding.is_active
+                else ["no_matching_signal"]
+            ),
         )
+
+    def decide_all(self, query: str) -> list[RouteDecision]:
+        decisions = [self.decide(name, query) for name in sorted(self._routes)]
+        return sorted(
+            decisions,
+            key=lambda item: (item.fired, item.confidence, item.score),
+            reverse=True,
+        )
+
+    @staticmethod
+    def _confidence_from_embedding(score: float, threshold: float) -> float:
+        margin = max(0.0, score - threshold)
+        return round(min(0.99, 0.55 + margin * 0.8), 4)
+
+    @staticmethod
+    def _confidence_from_keywords(hit_count: int, min_hits: int) -> float:
+        extra = max(0, hit_count - max(1, min_hits))
+        return round(min(0.92, 0.55 + extra * 0.08), 4)
 
 
 _ROUTER_SINGLETON: SemanticRouter | None = None

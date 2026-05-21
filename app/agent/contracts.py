@@ -23,6 +23,7 @@ ToolName = Literal[
     "heatmap_overlay_tool",
     "safety_rule_lookup_tool",
     "teaching_concept_lookup_tool",
+    "circuit_lookup_tool",
 ]
 
 # Intent labels for multi-intent routing (Agent helper modes).

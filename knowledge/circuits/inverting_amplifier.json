@@ -1,0 +1,79 @@
+{
+  "schema_version": "circuit_v1",
+  "circuit_id": "inverting_amplifier",
+  "name": "反相比例运算放大器",
+  "category": "运算放大器电路",
+  "subcategory": "反相放大",
+  "keywords": [
+    "反相放大器", "反相比例", "inverting amplifier", "反相放大",
+    "运算放大器", "运放", "op-amp", "opamp", "负反馈",
+    "比例运算", "反相输入", "电压放大", "LM741", "LM324", "NE5532"
+  ],
+  "summary": "基本反相比例放大电路。输入信号经 R1 接到运放反相输入端，同相输入端接地，反馈电阻 Rf 跨接在输出端与反相输入端之间构成电压并联负反馈。输出电压与输入电压反相，增益由 Rf/R1 比值决定。",
+  "components": [
+    {
+      "ref": "R1",
+      "type": "电阻",
+      "value": "10kΩ",
+      "role": "输入电阻",
+      "purpose": "限制输入电流，与 Rf 共同决定闭环电压增益 Av=-Rf/R1"
+    },
+    {
+      "ref": "Rf",
+      "type": "电阻",
+      "value": "100kΩ",
+      "role": "反馈电阻",
+      "purpose": "将输出电压的一部分以电流形式反馈到反相输入端，构成电压并联负反馈"
+    },
+    {
+      "ref": "Rp",
+      "type": "电阻",
+      "value": "R1‖Rf≈9.1kΩ",
+      "role": "平衡电阻",
+      "purpose": "接在同相输入端与地之间，减小输入偏置电流引起的失调，取值等于 R1‖Rf"
+    },
+    {
+      "ref": "A1",
+      "type": "运算放大器",
+      "value": "LM741 / LM324",
+      "role": "放大元件",
+      "purpose": "高开环增益放大器，通过负反馈构成闭环比例放大器，虚短虚断分析"
+    }
+  ],
+  "connections": [
+    {"from": "Input", "to": "R1"},
+    {"from": "R1", "to": "A1.IN-"},
+    {"from": "A1.IN+", "to": "Rp"},
+    {"from": "Rp", "to": "GND"},
+    {"from": "Rf", "to": "A1.IN-"},
+    {"from": "Rf", "to": "A1.OUT"},
+    {"from": "A1.OUT", "to": "Output"},
+    {"from": "A1.VCC+", "to": "+15V"},
+    {"from": "A1.VCC-", "to": "-15V"}
+  ],
+  "analysis": {
+    "closed_loop_gain": "Av=-Rf/R1=-10（V/V）",
+    "input_impedance": "Zin≈R1=10kΩ",
+    "output_impedance": "Zo≈0Ω（理想运放闭环输出阻抗极低）",
+    "phase": "反相（180° 相移）",
+    "bandwidth": "增益带宽积 GBP 限制，-10 倍增益下带宽≈GBP/10",
+    "feedback_type": "电压并联负反馈",
+    "virtual_ground": "反相输入端虚地，电位≈0V（因同相端接地+负反馈）"
+  },
+  "common_faults": [
+    {"fault": "Rf 开路", "consequence": "反馈断路，运放开环，输出饱和到正/负电源电压"},
+    {"fault": "Rf 短路", "consequence": "输出直连反相输入端，Av=0，成为电压跟随器但接法错误，输出恒为 0V"},
+    {"fault": "R1 开路", "consequence": "输入断路，无信号进入，输出恒为 0V"},
+    {"fault": "Rp 缺失", "consequence": "输入偏置电流在反相和同相端产生不等压降，引入直流失调电压"},
+    {"fault": "电源未接或不对称", "consequence": "输出削波、无法正常放大，输出摆幅受限"}
+  ],
+  "teaching_points": [
+    "虚短虚断概念的核心应用：同相端接地→虚短→反相端虚地",
+    "负反馈如何稳定增益：Rf 将输出引入反相端抵消输入",
+    "Av=-Rf/R1 公式推导：输入端虚地→Iin=Vin/R1→If=-Vo/Rf，Iin=If→Vo=-Vin×Rf/R1",
+    "输入阻抗低的代价：Zin=R1，信号源需有足够驱动能力",
+    "增益带宽积限制：高增益意味着窄带宽",
+    "平衡电阻 Rp 的作用和计算"
+  ],
+  "image": "knowledge/circuits/images/反相放大器.jpg"
+}

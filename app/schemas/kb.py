@@ -79,4 +79,8 @@ class RetrievedChunk(BaseModel):
     asset_path: str | None = None
     table_html: str | None = None
     source_ref: dict[str, Any] = Field(default_factory=dict)
+    query_intent: str = "general"
+    confidence: float = 0.0
+    matched_features: list[str] = Field(default_factory=list)
+    debug: dict[str, Any] = Field(default_factory=dict)
 

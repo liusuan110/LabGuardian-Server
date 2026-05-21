@@ -168,6 +168,7 @@ class Settings(BaseSettings):
     KB_OLLAMA_EMBED_MODEL: str = "nomic-embed-text"
     TEACHING_KB_DIR: str = str(PROJECT_ROOT / "knowledge" / "teaching_scenes")
     FAULT_CASE_KB_DIR: str = str(PROJECT_ROOT / "knowledge" / "fault_cases")
+    CIRCUIT_KB_DIR: str = str(PROJECT_ROOT / "knowledge" / "circuits")
 
     # ---- Datasheet KB v2 — Phase 3 hybrid retrieval ----
     # `null` (default) keeps the board zero-extra-resource: keyword-only.

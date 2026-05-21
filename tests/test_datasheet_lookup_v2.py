@@ -17,12 +17,15 @@ def test_datasheet_tool_prefers_local_v2_with_chunk_ids() -> None:
     )
 
     assert result.payload["provider"] == "local_datasheet_v2"
+    assert result.payload["query_intent"] == "pinout"
     hits = result.payload["hits"]
     assert hits, "expected v2 hits for NE555 pinout"
     for hit in hits:
         assert hit["chunk_id"]
         assert hit["modality"] in {"text", "table", "figure", "schematic", "waveform"}
         assert hit["document_id"]
+        assert "confidence" in hit
+        assert "matched_features" in hit
 
 
 def test_datasheet_tool_local_fallback_emits_rule_ids() -> None:
@@ -35,6 +38,7 @@ def test_datasheet_tool_local_fallback_emits_rule_ids() -> None:
     assert structured
     assert all(rule.get("rule_id", "").startswith("fallback.led.") for rule in structured)
     assert result.payload["component_type"] == "LED"
+    assert result.payload["miss_reason"] == "no_structured_datasheet_hit"
 
 
 def _evidence_and_pack():

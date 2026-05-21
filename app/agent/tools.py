@@ -8,6 +8,7 @@ from app.agent.concepts import CONCEPT_LIBRARY, lookup_concept
 from app.agent.contracts import RuntimeEvidence
 from app.core.config import settings
 from app.domain.board_schema import BoardSchema
+from app.services.circuit_kb_service import CircuitKbService, looks_like_circuit_query
 from app.services.datasheet_kb_service import DatasheetKbService
 from app.services.embedding_backend import create_embedding_backend
 from app.services.kb_service import KbService
@@ -58,6 +59,12 @@ class FaultCaseLookupInput(BaseModel):
     error_tags: list[str] = Field(default_factory=list)
     scene_id: str = "exp_first_order_rc"
     top_k: int = Field(default=3, ge=1, le=10)
+
+
+class CircuitLookupInput(BaseModel):
+    query: str = ""
+    circuit_id: str = ""
+    top_k: int = Field(default=3, ge=1, le=5)
 
 
 class SafetyRuleLookupInput(BaseModel):
@@ -238,6 +245,7 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
     ).strip()
     if not query:
         query = args.query or args.component_id or args.component_type
+    query_intent = "general"
 
     # Phase 1: try the offline, structured local datasheet KB first. It returns
     # uniform RetrievedChunk dicts with `chunk_id` + `modality` (the contract the
@@ -251,6 +259,7 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
             top_k=4,
         )
         for chunk in retrieved:
+            query_intent = chunk.query_intent or query_intent
             v2_hits.append(
                 {
                     "chunk_id": chunk.chunk_id,
@@ -258,6 +267,9 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
                     "title": chunk.title,
                     "snippet": chunk.snippet,
                     "score": chunk.score,
+                    "confidence": chunk.confidence,
+                    "matched_features": chunk.matched_features,
+                    "debug": chunk.debug,
                     "document_id": chunk.document_id,
                     "page": chunk.page,
                     "asset_path": chunk.asset_path,
@@ -265,6 +277,7 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
                     "source_ref": chunk.source_ref,
                     "source_id": chunk.chunk_id,
                     "filename": (chunk.source_ref or {}).get("source_path") or chunk.document_id,
+                    "query_intent": chunk.query_intent,
                 }
             )
     except Exception:
@@ -289,7 +302,9 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
                 "part_number": args.part_number,
                 "package_type": args.package_type,
                 "query": query,
+                "query_intent": query_intent,
                 "error_family": args.error_family,
+                "miss_reason": "",
                 "hits": v2_hits,
                 "rules": rules[:4],
             },
@@ -318,6 +333,10 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
                         "filename": meta.get("filename") or meta.get("source") or "",
                         "page": meta.get("page"),
                         "score": hit.get("score", 0.0),
+                        "confidence": 0.0,
+                        "matched_features": [],
+                        "debug": {},
+                        "query_intent": query_intent,
                         # `source_id` retained as alias for downstream citation
                         # builders that haven't migrated to `chunk_id` yet.
                         "source_id": chunk_id,
@@ -342,7 +361,9 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
                 "part_number": args.part_number,
                 "package_type": args.package_type,
                 "query": query,
+                "query_intent": query_intent,
                 "error_family": args.error_family,
+                "miss_reason": "",
                 "hits": hits,
                 "rules": rules[:4],
             },
@@ -386,7 +407,9 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
             "notes": fallback["notes"],
             "matched_key": matched_key,
             "query": query,
+            "query_intent": query_intent,
             "error_family": args.error_family,
+            "miss_reason": "no_structured_datasheet_hit",
             "rules": flat_rules[:6],
             "structured_rules": structured_rules[:6],
             "hits": [],
@@ -435,6 +458,88 @@ def teaching_concept_lookup_tool(args: TeachingConceptLookupInput) -> ToolResult
             "provider": "local_concept_library",
             "concept": pack.model_dump(),
             "query": args.query,
+        },
+    )
+
+
+def circuit_lookup_tool(
+    args: CircuitLookupInput,
+    *,
+    circuit_kb_service: CircuitKbService | None = None,
+) -> ToolResult:
+    """Search the local circuit knowledge base for schematic-level circuit info.
+
+    Gating:
+    * If the query doesn't look circuit-related at all, return empty immediately.
+    * If a specific circuit_id is requested, return that circuit directly.
+    * Otherwise keyword-search and return matches above the score threshold.
+    """
+    service = circuit_kb_service or CircuitKbService()
+
+    # Gate 1: explicit circuit_id lookup
+    if args.circuit_id:
+        circuit = service.get_circuit(args.circuit_id)
+        if circuit is None:
+            return ToolResult(
+                tool_name="circuit_lookup_tool",
+                status="not_found",
+                summary=f"未找到电路 {args.circuit_id}",
+                payload={"circuit_id": args.circuit_id, "circuits": [], "hits": 0},
+            )
+        return ToolResult(
+            tool_name="circuit_lookup_tool",
+            status="ok",
+            summary=f"命中电路：{circuit.get('name', args.circuit_id)}",
+            payload={"circuit_id": args.circuit_id, "circuits": [circuit], "hits": 1},
+        )
+
+    # Gate 2: relevance check — skip search for clearly off-topic queries
+    query = (args.query or "").strip()
+    if not looks_like_circuit_query(query):
+        return ToolResult(
+            tool_name="circuit_lookup_tool",
+            status="not_relevant",
+            summary="查询与电路知识库不相关，跳过检索",
+            payload={"query": query, "circuits": [], "hits": 0},
+        )
+
+    # Gate 3: keyword search with built-in score threshold
+    hits = service.search(query=query, top_k=args.top_k)
+
+    if not hits:
+        return ToolResult(
+            tool_name="circuit_lookup_tool",
+            status="not_found",
+            summary="电路知识库未命中相关条目",
+            payload={"query": query, "circuits": [], "hits": 0},
+        )
+
+    circuits_payload = [
+        {
+            "circuit_id": item["circuit"].get("circuit_id", ""),
+            "name": item["circuit"].get("name", ""),
+            "category": item["circuit"].get("category", ""),
+            "summary": item["circuit"].get("summary", ""),
+            "components": item["circuit"].get("components", []),
+            "connections": item["circuit"].get("connections", []),
+            "analysis": item["circuit"].get("analysis", {}),
+            "common_faults": item["circuit"].get("common_faults", []),
+            "teaching_points": item["circuit"].get("teaching_points", []),
+            "image": item["circuit"].get("image", ""),
+            "score": item["score"],
+        }
+        for item in hits
+    ]
+
+    top = circuits_payload[0]
+    return ToolResult(
+        tool_name="circuit_lookup_tool",
+        status="ok",
+        summary=f"电路知识库命中 {len(hits)} 个电路（top: {top['name']}, score={top['score']}）",
+        payload={
+            "query": query,
+            "circuits": circuits_payload,
+            "hits": len(hits),
         },
     )
 

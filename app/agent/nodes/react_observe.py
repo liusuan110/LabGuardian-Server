@@ -14,12 +14,14 @@ from app.agent.contracts import DiagnosticState, ReActStep
 from app.agent.nodes._metrics import append_metric, require_context_pack
 from app.agent.tools import (
     BoardSchemaLookupInput,
+    CircuitLookupInput,
     DatasheetLookupInput,
     FaultCaseLookupInput,
     NetlistTraceInput,
     SafetyRuleLookupInput,
     ToolResult,
     board_schema_lookup_tool,
+    circuit_lookup_tool,
     datasheet_lookup_tool,
     fault_case_lookup_tool,
     netlist_trace_tool,
@@ -128,6 +130,13 @@ def _dispatch_tool(tool_name: str, arguments: dict, state: DiagnosticState) -> T
                 "error_family": args.get("error_family", state.error_family),
             }
             return datasheet_lookup_tool(DatasheetLookupInput(**payload))
+        if tool_name == "circuit_lookup_tool":
+            payload = {
+                "query": args.get("query", state.query),
+                "circuit_id": args.get("circuit_id", ""),
+                "top_k": args.get("top_k", min(state.top_k, 3)),
+            }
+            return circuit_lookup_tool(CircuitLookupInput(**payload))
         if tool_name == "safety_rule_lookup_tool":
             payload = {
                 "risk_level": args.get("risk_level", evidence.risk_level),

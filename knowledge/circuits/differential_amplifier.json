@@ -1,0 +1,90 @@
+{
+  "schema_version": "circuit_v1",
+  "circuit_id": "differential_amplifier",
+  "name": "差分放大器（减法运算电路）",
+  "category": "运算放大器电路",
+  "subcategory": "信号运算",
+  "keywords": [
+    "差分放大器", "减法器", "差动放大", "differential amplifier",
+    "difference amplifier", "减法电路", "差分运放",
+    "共模抑制", "CMRR", "仪表放大器前端",
+    "运算放大器", "运放","差分电路", "op-amp"
+  ],
+  "summary": "运放差分放大器，由四个电阻（两对等值电阻）配合运放构成。输入信号 V1 经 R1 到反相端，V2 经 R3 分压到同相端，反馈电阻 R2 跨接输出与反相端，R4 接同相端到地。输出为两输入差值乘以增益。核心应用包括仪表放大器前端、传感器信号调理、噪声消除。",
+  "components": [
+    {
+      "ref": "R1",
+      "type": "电阻",
+      "value": "10kΩ",
+      "role": "反相输入电阻",
+      "purpose": "连接 V1 到反相输入端"
+    },
+    {
+      "ref": "R2",
+      "type": "电阻",
+      "value": "10kΩ",
+      "role": "反馈电阻",
+      "purpose": "连接输出到反相输入端，与 R1 决定反相通道增益"
+    },
+    {
+      "ref": "R3",
+      "type": "电阻",
+      "value": "10kΩ",
+      "role": "同相输入电阻",
+      "purpose": "连接 V2 到同相输入端"
+    },
+    {
+      "ref": "R4",
+      "type": "电阻",
+      "value": "10kΩ",
+      "role": "同相端接地电阻",
+      "purpose": "连接同相输入端到地，与 R3 对 V2 分压"
+    },
+    {
+      "ref": "A1",
+      "type": "运算放大器",
+      "value": "LM741 / LM324",
+      "role": "放大元件",
+      "purpose": "配合四电阻实现差分放大 Vo=(R2/R1)×(1+R1/R2)/(1+R3/R4)×V2-(R2/R1)×V1"
+    }
+  ],
+  "connections": [
+    {"from": "Input1(V1)", "to": "R1"},
+    {"from": "Input2(V2)", "to": "R3"},
+    {"from": "R1", "to": "A1.IN-"},
+    {"from": "R3", "to": "A1.IN+"},
+    {"from": "A1.IN+", "to": "R4"},
+    {"from": "R4", "to": "GND"},
+    {"from": "R2", "to": "A1.IN-"},
+    {"from": "R2", "to": "A1.OUT"},
+    {"from": "A1.OUT", "to": "Output"},
+    {"from": "A1.VCC+", "to": "+15V"},
+    {"from": "A1.VCC-", "to": "-15V"}
+  ],
+  "analysis": {
+    "output_voltage_general": "Vo=(1+R2/R1)×(R4/(R3+R4))×V2-(R2/R1)×V1",
+    "output_voltage_matched": "当 R1=R3 且 R2=R4 时，Vo=(R2/R1)×(V2-V1)=V2-V1（R2=R1 时）",
+    "differential_gain": "Ad=R2/R1",
+    "common_mode_gain_ideal": "Ac≈0（R1/R2=R3/R4 精确匹配时）",
+    "cmrr": "CMRR 理论上无穷大，实际受电阻匹配精度限制；0.1% 电阻匹配约 66dB",
+    "input_impedance_differential": "Zin_diff≈R1+R3=20kΩ",
+    "input_impedance_common_mode": "Zin_cm≈R1‖R2（反相端），R3+R4（同相端）",
+    "matching_condition": "R1=R3 且 R2=R4 是实现纯粹差分放大的关键",
+    "key_constraint": "输入阻抗低且不对称，不适合高阻抗信号源"
+  },
+  "common_faults": [
+    {"fault": "R1/R2/R3/R4 不匹配", "consequence": "共模抑制能力下降，共模信号泄露到输出"},
+    {"fault": "R4 开路", "consequence": "同相端浮空，输出不确定，易饱和"},
+    {"fault": "R2 开路", "consequence": "反馈断路，运放开环，输出饱和"},
+    {"fault": "信号源内阻不可忽略", "consequence": "等效 Rn 改变→匹配条件破坏→CMRR 下降"}
+  ],
+  "teaching_points": [
+    "叠加原理推导：分别令 V1=0 和 V2=0，求各自输出分量再叠加",
+    "匹配条件 R1=R3、R2=R4 的意义：共模信号在输出端被抵消",
+    "差分放大器=反相放大器+同相放大器的组合",
+    "CMRR 概念：差分放大器抑制共模噪声的核心指标",
+    "实际应用中电阻匹配精度远比运放开环增益重要",
+    "仪表放大器和差分放大器的区别：输入阻抗和 CMRR"
+  ],
+  "image": "knowledge/circuits/images/差分放大器.jpg"
+}

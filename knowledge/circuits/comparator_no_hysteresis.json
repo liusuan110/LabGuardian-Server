@@ -1,0 +1,69 @@
+{
+  "schema_version": "circuit_v1",
+  "circuit_id": "comparator_no_hysteresis",
+  "name": "无滞回电压比较器（过零比较器）",
+  "category": "运算放大器电路",
+  "subcategory": "比较器",
+  "keywords": [
+    "电压比较器", "比较器", "comparator", "无滞回", "无迟滞",
+    "过零比较器", "阈值比较", "开环运放", "饱和输出",
+    "电平检测", "波形变换", "正弦波变方波", "整形电路"
+  ],
+  "summary": "最基础的电压比较器，运放工作在开环状态（无反馈）。同相端接参考电压 Vref，反相端接输入信号 Vin。当 Vin>Vref 时输出负饱和（-VCC），当 Vin<Vref 时输出正饱和（+VCC）。过零比较器是 Vref=0 的特例，可将正弦波等模拟信号转换为方波。",
+  "components": [
+    {
+      "ref": "A1",
+      "type": "运算放大器",
+      "value": "LM741 / LM393",
+      "role": "比较元件",
+      "purpose": "开环工作，利用极高开环增益实现输入端微小差值的二值化输出"
+    },
+    {
+      "ref": "R1",
+      "type": "电阻",
+      "value": "10kΩ",
+      "role": "输入限流电阻",
+      "purpose": "保护运放输入端，限制输入电流"
+    },
+    {
+      "ref": "R2",
+      "type": "电阻",
+      "value": "10kΩ",
+      "role": "输出上拉/限流电阻",
+      "purpose": "限制运放输出电流，与后续数字电路电平匹配"
+    }
+  ],
+  "connections": [
+    {"from": "Input(Vin)", "to": "R1"},
+    {"from": "R1", "to": "A1.IN-"},
+    {"from": "Vref", "to": "A1.IN+"},
+    {"from": "A1.OUT", "to": "R2"},
+    {"from": "R2", "to": "Output(Vo)"},
+    {"from": "A1.VCC+", "to": "+15V"},
+    {"from": "A1.VCC-", "to": "-15V"}
+  ],
+  "analysis": {
+    "threshold": "Vth=Vref（单阈值）",
+    "output_high": "Vo≈+VCC（Vin<Vref 时）",
+    "output_low": "Vo≈-VCC（Vin>Vref 时）",
+    "transition_region": "极窄（运放开环增益 AVOL 极大→输入差≈0 即翻转）",
+    "hysteresis": "无（0V 滞回）",
+    "response_time": "受运放压摆率 SR 限制，通用运放 μs 级，专用比较器 ns 级",
+    "noise_immunity": "差：输入噪声在阈值附近可能导致输出多次翻转（抖动）"
+  },
+  "common_faults": [
+    {"fault": "输入信号噪声在阈值附近", "consequence": "输出多次跳变（chattering），产生毛刺脉冲"},
+    {"fault": "运放用普通运放代替比较器", "consequence": "输出从饱和恢复时间长（过驱动恢复），速度慢"},
+    {"fault": "Vref 不稳定或浮空", "consequence": "阈值漂移，比较结果不可靠"},
+    {"fault": "未接输出限流电阻", "consequence": "运放输出电流过大可能损坏器件"}
+  ],
+  "teaching_points": [
+    "运放开环特性：AVOL 极高，输入端微小差值导致输出饱和",
+    "传输特性曲线：输出只有两个稳态（+VCC 和 -VCC）",
+    "比较器与线性放大器的本质区别：无反馈/正反馈 vs 负反馈",
+    "过零比较器应用：正弦波→方波，脉冲整形，电平检测",
+    "无滞回的问题：噪声环境下输出抖动，引出滞回比较器的必要性",
+    "专用比较器（LM393/LM339）vs 通用运放做比较器的区别"
+  ],
+  "image": "knowledge/circuits/images/无滞回电压比较器.jpg"
+}

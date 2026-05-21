@@ -154,6 +154,7 @@ class DatasheetKbService:
             return []
 
         query_tokens = set(_tokenize(query))
+        query_profile = self._build_query_profile(query)
         explicit_part_terms: set[str] = set()
         for raw in part_numbers or []:
             explicit_part_terms.update(_tokenize(raw))
@@ -192,7 +193,7 @@ class DatasheetKbService:
             if encoded.size:
                 query_vec = encoded[0]
 
-        results: list[tuple[float, DatasheetDocument, DatasheetChunk]] = []
+        results: list[dict[str, object]] = []
         for document in self._documents.values():
             doc_matches_part = per_doc_part_match[document.document_id]
             part_boost = 1.5 if doc_matches_part else 0.0
@@ -203,19 +204,42 @@ class DatasheetKbService:
             for chunk in document.chunks:
                 if modality_filter and chunk.modality not in modality_filter:
                     continue
-                keyword_score = (
-                    self._score_chunk(chunk, query_tokens, part_boost) * doc_score_scale
+                lexical_score, matched_features = self._score_chunk(
+                    chunk,
+                    query_tokens,
+                    part_boost,
+                    query_profile=query_profile,
                 )
+                lexical_score *= doc_score_scale
                 cosine = self._cosine_against(chunk.chunk_id, query_vec)
-                score = self._fuse(keyword_score, cosine, doc_score_scale)
+                score = self._fuse(lexical_score, cosine, doc_score_scale)
                 if score <= 0:
                     continue
-                results.append((score, document, chunk))
+                results.append(
+                    {
+                        "score": score,
+                        "lexical_score": lexical_score,
+                        "cosine": cosine,
+                        "document": document,
+                        "chunk": chunk,
+                        "matched_features": matched_features,
+                    }
+                )
 
-        results.sort(key=lambda triple: triple[0], reverse=True)
+        results.sort(key=lambda item: float(item["score"]), reverse=True)
         return [
-            self._to_retrieved(doc, chunk, score)
-            for score, doc, chunk in results[: max(1, top_k)]
+            self._to_retrieved(
+                item["document"],  # type: ignore[arg-type]
+                item["chunk"],  # type: ignore[arg-type]
+                float(item["score"]),
+                query_intent=str(query_profile["intent"]),
+                matched_features=list(item["matched_features"]),  # type: ignore[arg-type]
+                lexical_score=float(item["lexical_score"]),
+                cosine=(
+                    float(item["cosine"]) if item["cosine"] is not None else None
+                ),
+            )
+            for item in results[: max(1, top_k)]
         ]
 
     def _score_chunk(
@@ -223,21 +247,34 @@ class DatasheetKbService:
         chunk: DatasheetChunk,
         query_tokens: set[str],
         part_boost: float,
-    ) -> float:
+        *,
+        query_profile: dict[str, object],
+    ) -> tuple[float, list[str]]:
         if not query_tokens and part_boost <= 0:
-            return 0.0
+            return 0.0, []
 
         keyword_tokens = {tok for kw in chunk.keywords for tok in _tokenize(kw)}
         title_tokens = set(_tokenize(chunk.title))
         text_tokens = set(_tokenize(chunk.text or ""))
         section_tokens = set(_tokenize(chunk.section or ""))
+        matched_features: list[str] = []
 
         score = 0.0
         if query_tokens:
-            score += 2.0 * len(query_tokens & keyword_tokens)
-            score += 1.2 * len(query_tokens & title_tokens)
-            score += 0.4 * len(query_tokens & text_tokens)
-            score += 0.6 * len(query_tokens & section_tokens)
+            keyword_hits = query_tokens & keyword_tokens
+            title_hits = query_tokens & title_tokens
+            text_hits = query_tokens & text_tokens
+            section_hits = query_tokens & section_tokens
+            score += 2.0 * len(keyword_hits)
+            score += 1.2 * len(title_hits)
+            score += 0.4 * len(text_hits)
+            score += 0.6 * len(section_hits)
+            if keyword_hits:
+                matched_features.append("keyword_match")
+            if title_hits:
+                matched_features.append("title_match")
+            if section_hits:
+                matched_features.append("section_token_match")
 
         if part_boost:
             # Part-number hits still need *some* topical signal; if the query
@@ -246,8 +283,26 @@ class DatasheetKbService:
             score += part_boost
             if score < part_boost:
                 score = part_boost
+            matched_features.append("part_number_match")
 
-        return score
+        intent_boost, intent_features = self._intent_boost(
+            chunk, query_profile=query_profile
+        )
+        score += intent_boost
+        matched_features.extend(intent_features)
+
+        noise_penalty, noise_features = self._noise_penalty(
+            chunk, query_profile=query_profile
+        )
+        score -= noise_penalty
+        matched_features.extend(noise_features)
+
+        deduped: list[str] = []
+        for feature in matched_features:
+            if feature not in deduped:
+                deduped.append(feature)
+
+        return score, deduped
 
     def _cosine_against(
         self,
@@ -290,10 +345,21 @@ class DatasheetKbService:
         document: DatasheetDocument,
         chunk: DatasheetChunk,
         score: float,
+        *,
+        query_intent: str,
+        matched_features: list[str],
+        lexical_score: float,
+        cosine: float | None,
     ) -> RetrievedChunk:
         snippet = (chunk.text or chunk.title or "").strip()
         if len(snippet) > 240:
             snippet = snippet[:237] + "..."
+        confidence = self._estimate_confidence(
+            score=score,
+            lexical_score=lexical_score,
+            cosine=cosine,
+            matched_features=matched_features,
+        )
         return RetrievedChunk(
             chunk_id=chunk.chunk_id,
             modality=chunk.modality,
@@ -309,4 +375,268 @@ class DatasheetKbService:
                 "document_id": document.document_id,
                 "source_path": document.source_path,
             },
+            query_intent=query_intent,
+            confidence=confidence,
+            matched_features=matched_features[:8],
+            debug={
+                "lexical_score": round(lexical_score, 4),
+                "cosine": round(cosine, 4) if cosine is not None else None,
+            },
         )
+
+    def _build_query_profile(self, query: str) -> dict[str, object]:
+        lowered = str(query or "").strip().lower()
+        intent = "general"
+        if any(
+            token in lowered
+            for token in ("pinout", "引脚", "脚位", "管脚", "pin configuration", "pin functions")
+        ):
+            intent = "pinout"
+        elif any(
+            token in lowered
+            for token in ("供电", "电源", "工作电压", "supply", "vcc", "vdd", "vee")
+        ):
+            intent = "supply"
+        elif any(
+            token in lowered
+            for token in ("真值表", "逻辑表", "功能表", "truth table", "function table")
+        ):
+            intent = "truth_table"
+        elif any(
+            token in lowered
+            for token in ("封装", "package", "outline", "pdip", "dip", "sop", "soic", "ssop")
+        ):
+            intent = "package"
+        elif any(
+            token in lowered
+            for token in ("极性", "polarity", "阴极", "阳极", "正极", "负极")
+        ):
+            intent = "polarity"
+        elif any(
+            token in lowered
+            for token in ("定时", "脉宽", "频率", "timing", "monostable", "astable", "duty")
+        ):
+            intent = "timing"
+        elif any(
+            token in lowered
+            for token in (
+                "绝对最大",
+                "最大额定",
+                "最大值",
+                "electrical",
+                "characteristics",
+                "额定",
+                "共模",
+                "绝对额定",
+            )
+        ):
+            intent = "electrical"
+
+        preferred_modalities: set[DatasheetChunkModality] = set()
+        if intent == "pinout":
+            preferred_modalities.update({"figure", "schematic", "table", "text"})
+        elif intent == "truth_table":
+            preferred_modalities.update({"table", "text"})
+        elif intent == "package":
+            preferred_modalities.update({"table", "figure", "schematic", "text"})
+        else:
+            preferred_modalities.update({"text", "table", "figure", "schematic"})
+
+        return {
+            "intent": intent,
+            "preferred_modalities": preferred_modalities,
+            "lowered": lowered,
+        }
+
+    def _intent_boost(
+        self,
+        chunk: DatasheetChunk,
+        *,
+        query_profile: dict[str, object],
+    ) -> tuple[float, list[str]]:
+        intent = str(query_profile.get("intent") or "general")
+        lowered = str(query_profile.get("lowered") or "")
+        haystack = " ".join(
+            filter(
+                None,
+                [
+                    chunk.title.lower(),
+                    (chunk.section or "").lower(),
+                    (chunk.text or "")[:1500].lower(),
+                    " ".join(str(k).lower() for k in chunk.keywords),
+                ],
+            )
+        )
+        features: list[str] = []
+        boost = 0.0
+
+        if intent == "pinout":
+            if chunk.modality in {"figure", "schematic", "table"}:
+                boost += 1.2
+                features.append("intent_modality_match")
+            if any(
+                token in haystack
+                for token in (
+                    "pin configuration",
+                    "pin functions",
+                    "pinning information",
+                    "引脚",
+                    "管脚",
+                    "pinout",
+                )
+            ):
+                boost += 2.4
+                features.append("intent_section_match")
+        elif intent == "supply":
+            if any(
+                token in haystack
+                for token in (
+                    "recommended operating conditions",
+                    "power supply recommendations",
+                    "supply voltage",
+                    "vcc",
+                    "vdd",
+                    "vee",
+                )
+            ):
+                boost += 2.1
+                features.append("intent_section_match")
+        elif intent == "truth_table":
+            if chunk.modality == "table":
+                boost += 1.4
+                features.append("intent_modality_match")
+            if any(
+                token in haystack
+                for token in ("truth table", "function table", "logic table", "真值表", "功能表")
+            ):
+                boost += 2.5
+                features.append("intent_section_match")
+        elif intent == "package":
+            if any(
+                token in haystack
+                for token in (
+                    "package outline",
+                    "package materials information",
+                    "package option addendum",
+                    "封装",
+                    "outline",
+                    "pdip",
+                    "soic",
+                    "sop",
+                    "ssop",
+                    "cdip",
+                )
+            ):
+                boost += 2.3
+                features.append("intent_section_match")
+            if any(token in lowered for token in ("尺寸", "size", "dimension", "封装")) and (
+                "mm" in haystack or "dimensions" in haystack
+            ):
+                boost += 1.1
+                features.append("intent_unit_match")
+        elif intent == "polarity":
+            if any(
+                token in haystack
+                for token in ("polarity", "极性", "正极", "负极", "anode", "cathode")
+            ):
+                boost += 2.5
+                features.append("intent_section_match")
+        elif intent == "timing":
+            if any(
+                token in haystack
+                for token in (
+                    "timing",
+                    "monostable",
+                    "astable",
+                    "pulse width",
+                    "frequency",
+                    "duty cycle",
+                    "时间常数",
+                )
+            ):
+                boost += 2.0
+                features.append("intent_section_match")
+        elif intent == "electrical":
+            if any(
+                token in haystack
+                for token in (
+                    "electrical characteristics",
+                    "absolute maximum ratings",
+                    "recommended operating conditions",
+                    "共模",
+                    "额定",
+                    "最大",
+                )
+            ):
+                boost += 2.0
+                features.append("intent_section_match")
+
+        if isinstance(chunk.page, int) and intent in {"pinout", "supply", "truth_table"} and chunk.page <= 4:
+            boost += 0.35
+            features.append("early_page_boost")
+
+        return boost, features
+
+    def _noise_penalty(
+        self,
+        chunk: DatasheetChunk,
+        *,
+        query_profile: dict[str, object],
+    ) -> tuple[float, list[str]]:
+        intent = str(query_profile.get("intent") or "general")
+        haystack = " ".join(
+            filter(
+                None,
+                [
+                    chunk.title.lower(),
+                    (chunk.section or "").lower(),
+                    (chunk.text or "")[:1200].lower(),
+                ],
+            )
+        )
+        features: list[str] = []
+        penalty = 0.0
+        if any(
+            token in haystack
+            for token in (
+                "important notice",
+                "disclaimer",
+                "buyers are responsible",
+                "copyright",
+            )
+        ):
+            penalty += 2.8
+            features.append("noise_disclaimer_penalty")
+        if intent != "package" and any(
+            token in haystack
+            for token in (
+                "package option addendum",
+                "package materials information",
+                "tape and reel",
+                "stencil design",
+                "board layout",
+                "solder mask",
+            )
+        ):
+            penalty += 2.1
+            features.append("noise_package_penalty")
+        return penalty, features
+
+    def _estimate_confidence(
+        self,
+        *,
+        score: float,
+        lexical_score: float,
+        cosine: float | None,
+        matched_features: list[str],
+    ) -> float:
+        if cosine is not None:
+            base = min(0.92, max(0.0, float(score)))
+        else:
+            base = min(0.9, lexical_score / (1.5 + max(0.0, lexical_score)))
+        base += min(0.06, 0.015 * len(matched_features))
+        if "intent_section_match" in matched_features:
+            base += 0.05
+        if "part_number_match" in matched_features:
+            base += 0.04
+        return round(min(0.99, max(0.0, base)), 4)

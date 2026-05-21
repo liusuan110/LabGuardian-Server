@@ -1,0 +1,79 @@
+{
+  "schema_version": "circuit_v1",
+  "circuit_id": "comparator_hysteresis",
+  "name": "滞回电压比较器（施密特触发器）",
+  "category": "运算放大器电路",
+  "subcategory": "比较器",
+  "keywords": [
+    "滞回比较器", "迟滞比较器", "施密特触发器", "Schmitt trigger",
+    "hysteresis comparator", "正反馈比较器", "双阈值",
+    "滞回特性", "抗噪比较器", "再生比较器",
+    "门限电压", "上下阈值"
+  ],
+  "summary": "滞回比较器在基本比较器基础上引入正反馈——反馈电阻 R2 从输出接回同相输入端。与 R1 分压产生与输出状态相关的可变阈值。输入上升时阈值为 Vth+，下降时阈值为 Vth-，两者之差为滞回宽度。这种双阈值特性有效消除了输入噪声导致的输出抖动，是施密特触发器的运放实现。",
+  "components": [
+    {
+      "ref": "R1",
+      "type": "电阻",
+      "value": "10kΩ",
+      "role": "同相端输入电阻",
+      "purpose": "与 R2 分压决定滞回阈值，连接 Vin 到同相端"
+    },
+    {
+      "ref": "R2",
+      "type": "电阻",
+      "value": "100kΩ",
+      "role": "正反馈电阻",
+      "purpose": "从输出反馈到同相端，引入正反馈产生滞回特性，调整 R2/R1 比值控制滞回宽度"
+    },
+    {
+      "ref": "R3",
+      "type": "电阻",
+      "value": "10kΩ",
+      "role": "输出限流电阻",
+      "purpose": "保护运放输出级"
+    },
+    {
+      "ref": "A1",
+      "type": "运算放大器",
+      "value": "LM741 / LM393",
+      "role": "比较元件",
+      "purpose": "正反馈产生再生开关效应，输出快速翻转并产生双阈值"
+    }
+  ],
+  "connections": [
+    {"from": "Input(Vin)", "to": "R1"},
+    {"from": "R1", "to": "A1.IN+"},
+    {"from": "A1.OUT", "to": "R2"},
+    {"from": "R2", "to": "A1.IN+"},
+    {"from": "A1.IN-", "to": "GND"},
+    {"from": "A1.OUT", "to": "R3"},
+    {"from": "R3", "to": "Output(Vo)"},
+    {"from": "A1.VCC+", "to": "+15V"},
+    {"from": "A1.VCC-", "to": "-15V"}
+  ],
+  "analysis": {
+    "upper_threshold": "Vth+ = +VCC×R1/(R1+R2)，上升沿切换阈值",
+    "lower_threshold": "Vth- = -VCC×R1/(R1+R2)，下降沿切换阈值",
+    "hysteresis_width": "ΔV = Vth+-Vth- = 2×VCC×R1/(R1+R2)",
+    "center_voltage": "Vcenter = (Vth++Vth-)/2 = 0V（对称电源时）",
+    "noise_margin": "≈ΔV/2，噪声 < 滞回宽度则不会误触发",
+    "typical_values": "VCC=±15V, R1=10kΩ, R2=100kΩ → Vth+≈+1.36V, Vth-≈-1.36V, ΔV≈2.72V",
+    "transfer_characteristic": "输出状态翻转后阈值自动切换，形成滞回环"
+  },
+  "common_faults": [
+    {"fault": "R2 开路", "consequence": "正反馈断路，退化为无滞回比较器，输出易抖动"},
+    {"fault": "滞回宽度太小", "consequence": "不足以克服输入噪声，仍可能抖动"},
+    {"fault": "滞回宽度太大", "consequence": "灵敏度降低，小信号无法触发翻转"},
+    {"fault": "R2 短路", "consequence": "同相端直连输出，Vth=±VCC，无实用意义"}
+  ],
+  "teaching_points": [
+    "正反馈 vs 负反馈：正反馈加速翻转、产生滞回；负反馈稳定、线性",
+    "滞回宽度由 R1/R2 比值和电源电压决定",
+    "传输特性曲线呈现滞回环（顺时针/逆时针）",
+    "抗噪原理：翻转后阈值自动改变，噪声幅度需大于滞回宽度才能误触发",
+    "与数字施密特触发器（74HC14）的对比：原理相同，实现不同",
+    "实际应用：波形整形、脉冲产生、阈值检测防抖"
+  ],
+  "image": "knowledge/circuits/images/滞回电压比较器.jpg"
+}

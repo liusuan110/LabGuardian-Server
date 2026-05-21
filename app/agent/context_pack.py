@@ -10,6 +10,7 @@ from app.agent.contracts import (
     ErrorFamily,
     RuntimeEvidence,
 )
+from app.services.circuit_kb_service import looks_like_circuit_query
 
 ERROR_CODE_TO_FAMILY: dict[str, ErrorFamily] = {
     "COMPONENT_SHORTED_SAME_NET": "short_circuit",
@@ -49,6 +50,20 @@ def build_context_pack(evidence: RuntimeEvidence, *, query: str = "", user_messa
                 AllowedTool(
                     name="datasheet_lookup_tool",
                     reason="用户在问数据手册/引脚/参数相关问题，允许检索本地 datasheet PDF。",
+                    required=False,
+                )
+            )
+
+    # Conditional gate: circuit knowledge base for schematic-level theory questions.
+    # Only added when the query contains circuit-domain keywords; the tool itself
+    # has a further relevance check, so false positives from the keyword gate are
+    # harmless (they just result in an empty hit).
+    if merged_query and looks_like_circuit_query(merged_query):
+        if not any(tool.name == "circuit_lookup_tool" for tool in allow_tools):
+            allow_tools.append(
+                AllowedTool(
+                    name="circuit_lookup_tool",
+                    reason="用户在问电路原理/拓扑/元件作用相关问题，允许检索本地电路知识库。",
                     required=False,
                 )
             )

@@ -63,6 +63,8 @@ def test_keyword_fallback_fires_on_pinout_query() -> None:
     assert decision.fired
     assert decision.matched_via == "keyword"
     assert "pinout" in decision.keyword_hits
+    assert decision.confidence > 0.0
+    assert decision.reasons
 
 
 def test_keyword_fallback_silent_on_wiring_query() -> None:
@@ -85,6 +87,7 @@ def test_auto_fire_part_number_bypasses_other_checks() -> None:
     assert decision.fired
     assert decision.matched_via == "auto_fire"
     assert decision.keyword_hits == ["ne555"]
+    assert decision.confidence >= 0.9
 
 
 def test_embedding_path_fires_on_paraphrased_datasheet_query(tmp_path) -> None:
@@ -114,6 +117,7 @@ min_keyword_hits: 1
     )
     assert decision.fired
     assert decision.matched_via == "embedding"
+    assert decision.positive_score > 0.0
 
 
 def test_embedding_negative_utterance_vetoes_wiring_query(tmp_path) -> None:
@@ -139,6 +143,7 @@ min_keyword_hits: 1
     router = SemanticRouter(routes_dir=routes_dir, embedding=_FakeEmbedding())
     decision = router.decide("datasheet", "wire connection node hole")
     assert not decision.fired
+    assert decision.negative_score >= decision.positive_score
 
 
 def test_decide_returns_unfired_for_unknown_route() -> None:
@@ -146,3 +151,11 @@ def test_decide_returns_unfired_for_unknown_route() -> None:
     decision = router.decide("nonexistent_route", "anything")
     assert not decision.fired
     assert decision.matched_via == "none"
+
+
+def test_decide_all_returns_ranked_route_list() -> None:
+    router = SemanticRouter(embedding=NullEmbeddingBackend())
+    decisions = router.decide_all("请把 NE555 的 pinout 给我看一下")
+    assert decisions
+    assert decisions[0].name == "datasheet"
+    assert decisions[0].fired
