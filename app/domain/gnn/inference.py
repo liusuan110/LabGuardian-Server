@@ -123,14 +123,31 @@ class GNNAdvice:
 # or when the deployed checkpoint lives outside the repo.
 _DEFAULT_CKPT_ENV = "LABGUARDIAN_GNN_CKPT"
 _DEFAULT_CKPT_CANDIDATES: tuple[str, ...] = (
-    # **Phase C Stage 5 (2026-05-20)** — retrained with
-    # `insert_same_net_wire` perturbation + WIRE_SAME_NET_POSITIVE
-    # label class to fix the wire OOD identified on real student data
-    # (tests/fixtures/real_student/inverting_amp_correct_v1.json).
-    # Metrics: val F1 0.967 / val top-3 1.000 / test F1 0.989 / test
-    # top-3 1.000 (held-out opamp_buffer). Golden sample: 16/17 edges
-    # p > 0.9 (vs v3's 7/17 fail). See RISK_REGISTER Phase C for the
-    # one remaining outlier (W3.pin1 SEAL subgraph asymmetry).
+    # **Phase D · v5 (2026-05-21)** — retrained on cloud RTX 5090 with:
+    #  - 4 new Phase D perturbations targeting v4's OOD blind spots
+    #    (swap_dual_supply_rail / misplace_pot_wiper /
+    #     swap_diff_pair_bases / extra_fanin_resistor)
+    #  - 6 demo-aligned ref set (rc_lowpass + opamp_buffer +
+    #    opamp_inverting + bjt_diff_amp + opamp_inverting_lpf +
+    #    opamp_summing); dropped 4 non-demo refs (divider / all_signal /
+    #    npn_switch / lm358_dual_buffer) for tractable training.
+    #  - 3600 samples × 41 avg labels = 148k training rows.
+    # Metrics: best val F1 0.965 / best val top-3 0.975.
+    # Three-gate validation (vs v4 baseline):
+    #   Gate A (regression / inverting_amp_correct_v1, 17 edges):
+    #     v4 → 16/17 pass; v5 → **17/17 pass** ✓
+    #   Gate B (no-false-positive on 3 new _correct_v1, 68 edges):
+    #     v4 → 55/68 pass (13 false positives); v5 → **68/68 pass** ✓
+    #   Gate C (positive-detection on 3 _wrong_v1, 4 injected errors):
+    #     v4 → 3/4 detected; v5 → 2/4 detected
+    #     (regression: BJT diff-pair base swap missed at p=0.71;
+    #      rule comparator catches it as topology mismatch, so net OK.)
+    # See gnn-eval-summary.json + commit message for full per-edge details.
+    "checkpoints/p4_followup_v5/best_f1.pt",
+    # Phase C Stage 5 (2026-05-20) — kept as fallback.
+    # Retrained with `insert_same_net_wire` perturbation +
+    # WIRE_SAME_NET_POSITIVE label class to fix the wire OOD identified
+    # on real student data. Metrics: val F1 0.967 / val top-3 1.000.
     "checkpoints/p3_followup_v4/best_f1.pt",
     # R10 (2026-05-18) — retrained against updated opamp_inverting
     # fixture that adds R_p (textbook bias compensation resistor).

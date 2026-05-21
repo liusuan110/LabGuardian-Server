@@ -110,18 +110,13 @@ def test_golden_fixture_rule_path_matches_expected() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "Stage 4 gate · 当前 v3 ckpt 在该样本上 7/17 wire-related 边 fail "
-        "(已知 wire OOD)。Stage 4 v4 重训后此测试必须 XPASS，届时移除该标记。"
-    ),
-)
 def test_golden_gnn_all_observed_edges_score_above_threshold() -> None:
     """**Stage 4 重训 gate** — 每条 observed edge 必须 p_correct > 0.5.
 
-    这是判断 v4 ckpt 是否解决 wire-OOD 问题的最终门槛。失败列表会打印出来
-    便于训练时定位还有哪些 case 没救活。"""
+    历史：
+    - v3 ckpt: 7/17 边 fail (wire OOD)
+    - v4 ckpt: 1/17 边 fail (IC1.pin4 V− regression)
+    - **v5 ckpt (Phase D · 2026-05-21): 17/17 全过, min=0.985** —— xfail 移除。"""
 
     ref, cur, expected = _load_golden()
     threshold = expected["stage4_gate"]["min_p_correct_all_edges"]
