@@ -28,7 +28,12 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, global_sort_pool  # type: ignore[import-untyped]
+from torch_geometric.nn import GCNConv, SortAggregation  # type: ignore[import-untyped]
+# Phase E follow-up (2026-05-21): migrated from deprecated `global_sort_pool`
+# to `SortAggregation(k=...)`. The two are output-shape-equivalent ([B, k*F])
+# and use the same DGCNN sort-by-last-feature semantics. Migration ensures
+# the model works on PyG ≥ 2.8 (where global_sort_pool is slated for removal)
+# and on PyTorch ≥ 2.7 / CUDA 12.8 cloud GPU images.
 
 
 class SealDGCNN(nn.Module):
@@ -91,6 +96,10 @@ class SealDGCNN(nn.Module):
             nn.Linear(dense_hidden, 1),
         )
 
+        # SortPooling aggregator (replaces deprecated global_sort_pool).
+        # Output shape [B, k*F] is identical to global_sort_pool(x, batch, k).
+        self.sort_pool = SortAggregation(k=sort_k)
+
     def forward(
         self,
         x: torch.Tensor,
@@ -109,8 +118,9 @@ class SealDGCNN(nn.Module):
         concat = torch.cat(layer_outs, dim=-1)  # [N, sum(widths)]
 
         # 2. SortPooling sorts nodes per-graph by the LAST column (DGCNN
-        #    convention) and keeps top sort_k.
-        pooled = global_sort_pool(concat, batch, k=self.sort_k)
+        #    convention) and keeps top sort_k. Uses SortAggregation (PyG ≥ 2.6)
+        #    which is the non-deprecated equivalent of global_sort_pool.
+        pooled = self.sort_pool(concat, batch)
         # pooled shape: [B, sort_k * total_channels]
         b = pooled.size(0)
         pooled = pooled.view(b, self.sort_k, -1)  # [B, sort_k, total_channels]

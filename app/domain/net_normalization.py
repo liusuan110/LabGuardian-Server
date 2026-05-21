@@ -222,6 +222,16 @@ def infer_net_aliases_from_reference(
     netlist_v2: dict[str, Any],
     reference_circuit: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    """**[DEPRECATED · superseded by Phase E `propagate_canonical_via_alignment`]**
+
+    Original isomorphism-based alias inference. Same failure mode as
+    ``role_inference._infer_current_net_roles_from_reference`` —
+    ``GraphMatcher.is_isomorphic()`` returns ``False`` whenever cur has
+    extra jumper wires (which is always on real student boards).
+    Kept for now because ``normalize_current_netlist`` still calls it as a
+    second pass after Phase E propagation; can be removed in the same
+    cleanup pass as the role_inference twin.
+    """
     current_for_match = copy.deepcopy(netlist_v2)
     _strip_auto_aliases(current_for_match)
     try:

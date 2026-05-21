@@ -14,6 +14,18 @@ STRICT_INFERRED_ROLES = {"ground", "power"}
 
 
 def _infer_current_net_roles_from_reference(reference_graph: nx.Graph, current_graph: nx.Graph, cur_netlist_v2: dict[str, Any]) -> tuple[nx.Graph, dict[str, Any], list[dict[str, Any]]] | None:
+    """**[DEPRECATED · superseded by Phase E `propagate_canonical_via_alignment`]**
+
+    Original isomorphism-based role inference. Empirically returns ``None`` on
+    100% of real student boards (any board with jumper wires has more nodes
+    than ref → ``is_isomorphic`` fails). Kept as defense-in-depth fallback
+    only; the primary path is now ``compare/role_propagation.py`` which uses
+    fuzzy component alignment + multi-vote net derivation.
+
+    Slated for removal once Phase E coverage is validated in production
+    (target: 2026-06 or after first 100 real-board runs without observed
+    cases where this fallback was the only successful path).
+    """
     matcher = GraphMatcher(reference_graph, current_graph, node_match=_node_match_for_role_inference, edge_match=_edge_match)
     if not matcher.is_isomorphic():
         return None

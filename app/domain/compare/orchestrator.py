@@ -29,6 +29,7 @@ from .role_inference import (
     _attach_role_inferences,
     _infer_current_net_roles_from_reference,
 )
+from .role_propagation import propagate_canonical_via_alignment
 
 # P4.1 R2 — disagreement warning thresholds (see RISK_REGISTER.md §5 R2).
 # A wrong-edge call needs `p_correct < _GNN_WRONG_EDGE_P_FLOOR` for the
@@ -561,6 +562,52 @@ def _maybe_attach_gnn_advice(
     return result
 
 
+def _apply_phase_e_propagation(
+    ref_payload: dict[str, Any],
+    cur_netlist_v2: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Phase E · S3 — fuzzy alignment + canonical name propagation.
+
+    Runs the new alignment-based role propagation pipeline. Mutates
+    ``cur_netlist_v2["nets"][...]`` in place with derived ``canonical_name`` /
+    ``role`` / ``role_label`` / ``role_source`` fields, respecting existing
+    user-provided labels (``manual_role`` / ``port_annotation`` /
+    ``power_role``) via the protection rules in ``role_propagation``.
+
+    Returns the list of applied propagation records (one per cur net updated).
+    Safe to call regardless of whether downstream isomorphism matching
+    succeeds — its job is to enrich net semantics for ALL downstream
+    consumers (GNN advisor, semantic analysis, diff report).
+
+    Returns ``[]`` on any failure (logged at WARN; caller continues with the
+    legacy isomorphism-based fallback path).
+    """
+    try:
+        from app.domain.gnn.alignment_fuzzy import align_components_by_signature
+        from app.domain.gnn.port_graph import (
+            build_from_logical_reference,
+            build_from_netlist_v2,
+        )
+    except ImportError as exc:
+        log.warning("phase_e_imports_failed: %s — skipping propagation", exc)
+        return []
+
+    try:
+        ref_hcg = build_from_logical_reference(ref_payload)
+        cur_hcg = build_from_netlist_v2(cur_netlist_v2)
+        alignment = align_components_by_signature(ref_hcg, cur_hcg)
+        return propagate_canonical_via_alignment(
+            ref_hcg, cur_hcg, alignment, cur_netlist_v2,
+        )
+    except Exception as exc:  # noqa: BLE001 — defensive: never crash compare
+        log.warning(
+            "phase_e_propagation_failed: %s — falling back to legacy path",
+            type(exc).__name__,
+            exc_info=exc,
+        )
+        return []
+
+
 def compare_logical_graphs(
     reference_graph: nx.Graph,
     current_graph: nx.Graph,
@@ -568,28 +615,56 @@ def compare_logical_graphs(
     ref_payload: dict[str, Any] | None = None,
     cur_netlist_v2: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """比较参考电路图与当前电路图，返回包含差异报告的比较结果。"""
+    """比较参考电路图与当前电路图，返回包含差异报告的比较结果。
+
+    **Phase E (2026-05-21)**: 在 isomorphism 检查前先跑 fuzzy 组件对齐 +
+    canonical name 传播，让 cur 的匿名 net 拿到 ref 的语义（INV/VOUT 等）。
+    这样 GNN advisor / 语义分析等下游消费者都能看到富语义。如果传播失败
+    或全 net 已被 ``manual_role`` / ``port_annotation`` 保护，回退到原本的
+    is_isomorphic 路径（实践中几乎永远 None，但留作 defense-in-depth）。
+    """
     raw_current_graph = current_graph
     current_graph = _collapse_wire_components(current_graph)
     role_inferences: list[dict[str, Any]] = []
     inference_applied = False
     auto_symmetry_groups: list[dict[str, Any]] = []
+
+    # ★ Phase E · 新 fuzzy alignment 路径 ★
+    # 在 isomorphism 之前先把 ref 语义传播到 cur 的匿名 net 上。
+    #
+    # **关键：不重建 current_graph**。Phase E 的职责是为下游消费者
+    # (GNN advisor / 语义分析 / diff report enrichment) 提供富 net 语义，
+    # **不应改变 iso path 的结构匹配行为**。把 propagated canonical_names
+    # 注入 iso 会引起 tie-break 漂移（例如 R2 vs R3 谁是 "extra component"
+    # 时挑反），所以 iso 仍在结构图上跑，只有 cur_netlist_v2 被 mutate。
+    if ref_payload is not None and cur_netlist_v2 is not None:
+        phase_e_records = _apply_phase_e_propagation(ref_payload, cur_netlist_v2)
+        if phase_e_records:
+            role_inferences.extend(phase_e_records)
+            inference_applied = True
+
     if not reference_graph.graph.get("symmetry_groups"):
         auto_symmetry_groups = auto_detect_symmetries(reference_graph)
     iso_mapping = _find_isomorphism(reference_graph, current_graph)
     if iso_mapping is None and ref_payload is not None and cur_netlist_v2 is not None:
+        # **Legacy fallback** (Phase E S3 kept this for defense-in-depth).
+        # _infer_current_net_roles_from_reference uses GraphMatcher.is_isomorphic
+        # which in practice returns None on any cur board with extra jumper
+        # wires — so it rarely fires after Phase E propagation has done its job.
+        # Plan: remove once production data confirms Phase E covers all cases.
         inferred = _infer_current_net_roles_from_reference(
             reference_graph,
             current_graph,
             cur_netlist_v2,
         )
         if inferred is not None:
-            inferred_graph, inferred_netlist, role_inferences = inferred
+            inferred_graph, inferred_netlist, legacy_inferences = inferred
             inferred_mapping = _find_isomorphism(reference_graph, inferred_graph)
             if inferred_mapping is not None:
                 current_graph = inferred_graph
                 cur_netlist_v2 = inferred_netlist
                 iso_mapping = inferred_mapping
+                role_inferences.extend(legacy_inferences)
                 inference_applied = True
 
     if iso_mapping is not None:
