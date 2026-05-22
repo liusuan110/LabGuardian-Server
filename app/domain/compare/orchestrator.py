@@ -58,6 +58,13 @@ _GNN_REASON_OOD_DISAGREEMENT = "ood_disagreement_too_broad"
 # (`payload_missing` intentionally not emitted — the caller is signalling "I
 # don't want GNN this time" by withholding ref_payload / cur_netlist_v2.)
 
+
+# CADx Phase 0 (2026-05-22) — version tag for ``details.template_match`` so
+# the frontend / report consumers can negotiate schema changes later.
+_TEMPLATE_MATCH_VERSION = "cadx_phase0_v1"
+# Number of top template hypotheses surfaced. Keep small for UI density.
+_TEMPLATE_MATCH_TOP_K = 3
+
 # Phase C Stage 5 — OOD self-suppression thresholds.
 _GNN_OOD_SUSPICIOUS_RATIO_FLOOR = 0.5   # > 50% of observed edges flagged
 _GNN_OOD_WORST_P_FLOOR = 0.05           # worst p_correct < this → noise, not signal
@@ -271,6 +278,55 @@ def _promote_critical_extras(
     ) + critical
     result["report"] = report
 
+    return result
+
+
+def _attach_template_match(
+    result: dict[str, Any],
+    current_graph: nx.Graph,
+) -> dict[str, Any]:
+    """CADx Phase 0 — run topology template matching as a read-only side
+    channel and attach top-K results to ``details.template_match``.
+
+    This function is **exception-safe**: any failure inside the template
+    layer is swallowed (logged + surfaced as ``template_match_error`` in
+    details). It must never change ``logic_correct`` / ``similarity`` /
+    ``items`` — Phase 0 keeps the legacy Phase E verdict authoritative
+    and only adds a parallel hypothesis for UI comparison.
+
+    Args:
+        result: The mutable result dict produced by ``compare_logical_graphs``.
+            ``details`` is created if missing.
+        current_graph: The bipartite student graph (post wire-collapse).
+
+    Returns:
+        The same ``result`` dict, mutated in place and returned for
+        fluent chaining.
+    """
+    try:
+        from app.domain.templates import (
+            get_template_registry,
+            match_all_templates,
+        )
+
+        registry = get_template_registry()
+        all_results = match_all_templates(current_graph, registry)
+        top_k = [r.to_dict() for r in all_results[:_TEMPLATE_MATCH_TOP_K]]
+        details = result.setdefault("details", {})
+        details["template_match"] = {
+            "version": _TEMPLATE_MATCH_VERSION,
+            "top_k": top_k,
+        }
+    except Exception as exc:  # noqa: BLE001 — must never break compare
+        log.warning(
+            "template_match_failed err=%s",
+            type(exc).__name__,
+            exc_info=exc,
+        )
+        details = result.setdefault("details", {})
+        details["template_match_error"] = (
+            f"{type(exc).__name__}: {exc}"
+        )
     return result
 
 
@@ -705,6 +761,7 @@ def compare_logical_graphs(
         result = _promote_critical_extras(
             result, reference_graph, raw_current_graph, wire_only=True
         )
+        result = _attach_template_match(result, current_graph)
         return result
 
     if _contains_subgraph(current_graph, reference_graph):
@@ -753,6 +810,7 @@ def compare_logical_graphs(
         result = _promote_critical_extras(
             result, reference_graph, raw_current_graph
         )
+        result = _attach_template_match(result, current_graph)
         return result
 
     if _contains_subgraph(reference_graph, current_graph):
@@ -795,6 +853,7 @@ def compare_logical_graphs(
         result = _promote_critical_extras(
             result, reference_graph, raw_current_graph, wire_only=True
         )
+        result = _attach_template_match(result, current_graph)
         return result
 
     result = _result(
@@ -824,4 +883,5 @@ def compare_logical_graphs(
     result = _promote_critical_extras(
         result, reference_graph, raw_current_graph, wire_only=True
     )
+    result = _attach_template_match(result, current_graph)
     return result

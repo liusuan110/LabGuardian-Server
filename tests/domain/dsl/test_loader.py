@@ -79,12 +79,14 @@ def test_production_references_are_dsl_only() -> None:
 
     assert {item["reference_id"] for item in refs} == {
         "basic_series_resistor_v1",
+        "ce_amp_fixed_bias_v1",  # CADx Phase 0 — 共射放大器 (user 图 1)
         "diff_pair_current_source_ref_split_potentiometer",
         "rc_first_order_v1",
         "rc_highpass_v1",
         "rc_lowpass_v1",
         "test_all_signal_v1",
         "test_rc_v1",
+        "ua741_integrator_v1",  # CADx Phase 0 — UA741 反相积分器 (user 图 3)
         "ua741_inverting_active_lowpass_v1",
         "ua741_inverting_amp_gain10_v1",
         "ua741_inverting_summing_amp_v1",
@@ -96,12 +98,18 @@ def test_production_references_are_dsl_only() -> None:
 def test_migrated_reference_dsl_topology_signatures() -> None:
     expected_counts = {
         "basic_series_resistor_v1": (2, 3),
+        # CADx Phase 0 (user 图 1): 8050 + R_P + R + R_C + R_L + C_B + C_C = 7 comps
+        # nets: VCC + GND + UI1 + UO1 + BASE + COLLECTOR + RB_MID = 7
+        "ce_amp_fixed_bias_v1": (7, 7),
         "diff_pair_current_source_ref_split_potentiometer": (10, 12),
         "rc_first_order_v1": (4, 4),
         "rc_highpass_v1": (2, 3),
         "rc_lowpass_v1": (2, 3),
         "test_all_signal_v1": (1, 2),
         "test_rc_v1": (1, 2),
+        # CADx Phase 0 (user 图 3): UA741 + R1 + R_f + C1 + R_p = 5 comps
+        # nets: VCC + VEE + GND + UI1 + UO1 + INV + VREF = 7
+        "ua741_integrator_v1": (5, 7),
         "ua741_inverting_active_lowpass_v1": (5, 7),
         "ua741_inverting_amp_gain10_v1": (4, 7),
         "ua741_inverting_summing_amp_v1": (7, 8),

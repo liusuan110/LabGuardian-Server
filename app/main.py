@@ -13,7 +13,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.deps import get_version_service
-from app.api.v1 import angnt, classroom, kb, pipeline, references, telemetry_ws, websocket
+from app.api.v1 import (
+    angnt,
+    classroom,
+    kb,
+    pipeline,
+    references,
+    telemetry_ws,
+    topology,
+    websocket,
+)
 from app.schemas.version import VersionInfoResponse
 from app.services.telemetry import get_telemetry_service
 from app.services.version_service import VersionService
@@ -56,6 +65,7 @@ app.include_router(pipeline.router, prefix=settings.API_V1_PREFIX)
 app.include_router(references.router, prefix=settings.API_V1_PREFIX)
 app.include_router(angnt.router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb.router, prefix=settings.API_V1_PREFIX)
+app.include_router(topology.router, prefix=settings.API_V1_PREFIX)
 app.include_router(websocket.router)
 app.include_router(telemetry_ws.router)
 
