@@ -7,11 +7,12 @@ Current providers:
 """
 
 from app.agent.llm.base import LLMProvider, PlanRequest, ReflectRequest
-from app.agent.llm.factory import get_llm_provider
+from app.agent.llm.factory import clear_llm_provider_cache, get_llm_provider
 
 __all__ = [
     "LLMProvider",
     "PlanRequest",
     "ReflectRequest",
+    "clear_llm_provider_cache",
     "get_llm_provider",
 ]

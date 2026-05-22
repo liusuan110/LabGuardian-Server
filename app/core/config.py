@@ -199,10 +199,10 @@ class Settings(BaseSettings):
     VLM_MAX_NEW_TOKENS: int = 256
 
     # ---- Diagnostic Agent ReAct loop (Phase 4+) ----
-    AGENT_LLM_PROVIDER: str = "template"  # template | ollama | openvino_genai_text (Phase 7+)
+    AGENT_LLM_PROVIDER: str = "ollama"  # template | ollama | openvino_genai_text (Phase 7+)
     REACT_MAX_ITERATIONS: int = 4
     AGENT_LLM_OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
-    AGENT_LLM_OLLAMA_MODEL: str = "qwen3:4b"
+    AGENT_LLM_OLLAMA_MODEL: str = "gemma3:4b"
     AGENT_LLM_OLLAMA_TIMEOUT_S: float = 120.0
     AGENT_LLM_OPENVINO_MODEL_DIR: str | None = None
     AGENT_LLM_OPENVINO_DEVICE: str = "GPU"

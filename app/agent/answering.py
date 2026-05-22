@@ -1387,6 +1387,181 @@ def build_diagnostic_template_answer(
     return ensure_circuit_opening(answer, evidence)
 
 
+def build_circuit_kb_llm_answer(
+    *,
+    user_message: str,
+    circuit: dict[str, Any],
+    evidence: RuntimeEvidence | None = None,
+) -> str | None:
+    """Generate a natural-language answer via Ollama from circuit JSON context.
+
+    Returns ``None`` when Ollama is unreachable or returns empty content,
+    so callers can fall back to the deterministic template answer.
+    """
+    import logging
+
+    import httpx
+
+    from app.core.config import settings
+
+    logger = logging.getLogger(__name__)
+
+    circuit_text = _format_circuit_for_llm(circuit, evidence)
+
+    system_prompt = (
+        "你是模电实验教学助手。你的任务是根据本地电路知识库中的信息回答学生问题。"
+        "回答要求："
+        "1. 紧扣提供的电路信息，元件编号、公式、参数必须与知识库一致，禁止编造。"
+        "2. 优先正面回答学生的问题，再补充相关知识点或注意事项。"
+        "3. 用简洁的中文，避免冗余铺垫。"
+        "4. 如果涉及故障排查，结合常见故障列表给出具体排查方向。"
+        "5. 如果电路信息不足以回答该问题，请诚实告知，不要猜测。"
+    )
+
+    prompt = (
+        f"【电路信息】\n{circuit_text}\n\n"
+        f"【学生问题】\n{user_message}\n\n"
+        f"请根据上面的电路信息回答学生的问题。"
+    )
+
+    try:
+        payload = {
+            "model": settings.AGENT_LLM_OLLAMA_MODEL,
+            "stream": False,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            "keep_alive": "30m",
+            "options": {
+                "temperature": 0.3,
+                "num_predict": 1024,
+            },
+        }
+        base_url = settings.AGENT_LLM_OLLAMA_BASE_URL.rstrip("/")
+        endpoint = f"{base_url}/api/chat"
+        timeout = max(10.0, float(settings.AGENT_LLM_OLLAMA_TIMEOUT_S))
+
+        with httpx.Client(timeout=timeout, trust_env=False) as client:
+            resp = client.post(endpoint, json=payload)
+            resp.raise_for_status()
+            body = resp.json()
+    except Exception as exc:
+        logger.warning("Ollama circuit KB answer generation failed: %s", exc)
+        return None
+
+    if not isinstance(body, dict):
+        return None
+    message = body.get("message")
+    if not isinstance(message, dict):
+        return None
+    content = str(message.get("content") or "").strip()
+    return content or None
+
+
+def _format_circuit_for_llm(
+    circuit: dict[str, Any],
+    evidence: RuntimeEvidence | None,
+) -> str:
+    """Render circuit JSON into a compact Chinese text block for the LLM."""
+    parts: list[str] = []
+
+    name = str(circuit.get("name") or "")
+    category = str(circuit.get("category") or "")
+    subcategory = str(circuit.get("subcategory") or "")
+    if name:
+        label = name
+        if category:
+            label += f"（{category}"
+            if subcategory:
+                label += f" / {subcategory}"
+            label += "）"
+        parts.append(f"电路名称：{label}")
+
+    summary = str(circuit.get("summary") or "").strip()
+    if summary:
+        parts.append(f"概述：{summary}")
+
+    components = circuit.get("components")
+    if isinstance(components, list) and components:
+        comp_lines: list[str] = []
+        for comp in components:
+            if not isinstance(comp, dict):
+                continue
+            ref = comp.get("ref", "")
+            ctype = comp.get("type", "")
+            role = comp.get("role", "")
+            purpose = comp.get("purpose", "")
+            line = f"  {ref}（{ctype}）：{role}"
+            if purpose:
+                line += f"，{purpose}"
+            comp_lines.append(line)
+        if comp_lines:
+            parts.append("关键元件：\n" + "\n".join(comp_lines))
+
+    connections = circuit.get("connections")
+    if isinstance(connections, list) and connections:
+        conn_lines: list[str] = []
+        for conn in connections[:12]:
+            if isinstance(conn, dict):
+                frm = conn.get("from", "")
+                to = conn.get("to", "")
+                conn_lines.append(f"  {frm} → {to}")
+        if conn_lines:
+            parts.append("连接关系：\n" + "\n".join(conn_lines))
+
+    analysis = circuit.get("analysis")
+    if isinstance(analysis, dict) and analysis:
+        analysis_lines: list[str] = []
+        for key, val in analysis.items():
+            if isinstance(val, str) and len(val) < 150:
+                analysis_lines.append(f"  {key}: {val}")
+        if analysis_lines:
+            parts.append("电路分析公式：\n" + "\n".join(analysis_lines[:8]))
+
+    faults = circuit.get("common_faults")
+    if isinstance(faults, list) and faults:
+        fault_lines: list[str] = []
+        for f in faults[:6]:
+            if isinstance(f, dict):
+                fault_name = f.get("fault", "")
+                consequence = f.get("consequence", "")
+                fault_lines.append(f"  · {fault_name}：{consequence}")
+        if fault_lines:
+            parts.append("常见故障：\n" + "\n".join(fault_lines))
+
+    teaching = circuit.get("teaching_points")
+    if isinstance(teaching, list) and teaching:
+        tp_lines: list[str] = []
+        for tp in teaching[:6]:
+            tp_lines.append(f"  · {tp}")
+        if tp_lines:
+            parts.append("教学要点：\n" + "\n".join(tp_lines))
+
+    annotations = circuit.get("image_annotations")
+    if isinstance(annotations, dict):
+        ann_parts: list[str] = []
+        visible = annotations.get("visible_components")
+        if isinstance(visible, list) and visible:
+            ann_parts.append(f"  图上可见元件：{'、'.join(str(v) for v in visible)}")
+        notes = annotations.get("notes")
+        if isinstance(notes, list) and notes:
+            for note in notes:
+                ann_parts.append(f"  备注：{note}")
+        if ann_parts:
+            parts.append("图片标注信息：\n" + "\n".join(ann_parts))
+
+    image = str(circuit.get("image") or "").strip()
+    if image:
+        parts.append(f"参考电路图路径：{image}")
+
+    current_hint = _current_diagnostic_hint_for_circuit(evidence, circuit)
+    if current_hint:
+        parts.append(f"当前诊断上下文：{current_hint}")
+
+    return "\n\n".join(parts)
+
+
 def build_circuit_kb_answer(
     *,
     user_message: str,

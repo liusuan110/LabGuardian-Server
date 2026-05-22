@@ -24,7 +24,7 @@ from app.agent.contracts import (
 )
 from app.agent.evidence import build_runtime_evidence_from_station
 from app.agent.graph import run_diagnostic_graph
-from app.agent.llm import PlanRequest, ReflectRequest, get_llm_provider
+from app.agent.llm import PlanRequest, ReflectRequest, clear_llm_provider_cache, get_llm_provider
 from app.agent.llm.template_provider import TemplateLLMProvider
 from app.agent.nodes.react_plan import react_plan_node
 from app.agent.nodes.react_reflect import should_continue_react
@@ -175,7 +175,7 @@ def test_planner_blocks_unknown_tool_from_provider() -> None:
 
     state = _make_state_with_pack(["netlist_trace_tool"])
     # monkey-patch the cached provider via the factory cache
-    get_llm_provider.cache_clear()
+    clear_llm_provider_cache()
     import app.agent.nodes.react_plan as react_plan_module
 
     original = react_plan_module.get_llm_provider
@@ -184,7 +184,7 @@ def test_planner_blocks_unknown_tool_from_provider() -> None:
         update = react_plan_node(state)
     finally:
         react_plan_module.get_llm_provider = original  # type: ignore[assignment]
-        get_llm_provider.cache_clear()
+        clear_llm_provider_cache()
 
     new_step = ReActStep.model_validate(update["react_trace"][-1])
     assert new_step.tool_call is None

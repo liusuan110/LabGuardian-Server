@@ -21,6 +21,7 @@ from app.agent.answering import (
     build_concept_citations,
     build_concept_evidence,
     build_circuit_kb_answer as build_circuit_kb_direct_answer,
+    build_circuit_kb_llm_answer,
     build_datasheet_answer,
     build_diagnostic_citations,
     build_diagnostic_evidence,
@@ -285,71 +286,35 @@ def _build_circuit_kb_answer(
     question: str,
     circuit_tool_result: ToolResult,
     evidence: Any,
-) -> str:
-    """Render a deterministic answer from circuit KB hits."""
+) -> tuple[str, str | None, str | None]:
+    """Render a circuit KB answer, preferring LLM with template fallback.
+
+    Returns ``(answer_text, llm_provider, llm_model)`` so the caller can
+    record which path was used in telemetry.
+    """
+    circuits = circuit_tool_result.payload.get("circuits", [])
+    if not circuits:
+        return ("电路知识库未命中相关条目，请补充电路名称或关键词。", None, None)
+
+    top = circuits[0]
+
+    # ① Try Ollama LLM answer generation first.
+    llm_answer = build_circuit_kb_llm_answer(
+        user_message=question,
+        circuit=top,
+        evidence=evidence,
+    )
+    if llm_answer:
+        from app.core.config import settings
+        return (llm_answer, "ollama", settings.AGENT_LLM_OLLAMA_MODEL)
+
+    # ② Fall back to deterministic template.
     direct = build_circuit_kb_direct_answer(
         user_message=question,
         tool_results=[circuit_tool_result],
         evidence=evidence,
     )
-    if direct:
-        return direct
-
-    circuits = circuit_tool_result.payload.get("circuits", [])
-    if not circuits:
-        return "电路知识库未命中相关条目，请补充电路名称或关键词。"
-
-    top = circuits[0]
-    lines: list[str] = []
-    lines.append(f"根据电路知识库，「{top['name']}」：")
-    if top.get("summary"):
-        lines.append(top["summary"])
-
-    # List components with roles
-    components = top.get("components", [])
-    if components:
-        comp_lines = []
-        for c in components[:8]:
-            ref = c.get("ref", "")
-            ctype = c.get("type", "")
-            role = c.get("role", "")
-            value = c.get("value", "")
-            value_str = f"（{value}）" if value else ""
-            comp_lines.append(f"  {ref}：{ctype}{value_str} — {role}")
-        if comp_lines:
-            lines.append("关键元件：\n" + "\n".join(comp_lines))
-
-    # Relevant formulas
-    analysis = top.get("analysis", {})
-    if analysis:
-        formula_lines = []
-        for key, val in analysis.items():
-            if isinstance(val, str) and len(val) < 120:
-                formula_lines.append(f"  {key}: {val}")
-        if formula_lines:
-            lines.append("电路分析：\n" + "\n".join(formula_lines[:6]))
-
-    # Common faults if the question seems fault-related
-    question_lower = (question or "").lower()
-    fault_keywords = ("坏", "故障", "问题", "短路", "开路", "烧", "错", "不正常", "fault", "fail", "wrong")
-    if any(kw in question_lower for kw in fault_keywords):
-        faults = top.get("common_faults", [])
-        if faults:
-            fault_lines = []
-            for f in faults[:5]:
-                fault_lines.append(f"  · {f.get('fault', '')}：{f.get('consequence', '')}")
-            if fault_lines:
-                lines.append("常见故障：\n" + "\n".join(fault_lines))
-
-    # Image reference
-    image = top.get("image", "")
-    if image:
-        lines.append(f"参考电路图：{image}")
-
-    lines.append(
-        "知识来源：本地电路知识库（circuit_kb）"
-    )
-    return "\n\n".join(lines)
+    return (direct or "电路知识库未命中相关条目，请补充电路名称或关键词。", None, None)
 
 
 def _fallback_follow_up_text(*, question: str, evidence: Any) -> str:
@@ -916,14 +881,15 @@ class AgentService:
             circuit_tool_result is not None
             and circuit_tool_result.status == "ok"
         ):
-            # Direct render from circuit KB. No LLM is invoked.
+            # Try LLM first for circuit KB answers, with template fallback.
             tool_results.append(circuit_tool_result)
-            draft = _build_circuit_kb_answer(
+            draft, actual_provider, actual_model = _build_circuit_kb_answer(
                 question=question,
                 circuit_tool_result=circuit_tool_result,
                 evidence=evidence_contract,
             )
-            actual_provider, actual_model = "local_circuit_kb", "no_llm"
+            if actual_provider is None:
+                actual_provider, actual_model = "local_circuit_kb", "no_llm"
         else:
             if concept is None:
                 draft, actual_provider, actual_model = self._llm_concept_not_found_answer(
