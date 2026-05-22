@@ -30,7 +30,7 @@ try:  # LangGraph is an optional orchestration shell for the deterministic flow.
 except ImportError:  # pragma: no cover - exercised in environments without langgraph
     END = START = StateGraph = None  # type: ignore[assignment]
 
-from app.agent.contracts import DiagnosticState, RuntimeEvidence
+from app.agent.contracts import AgentIntent, DiagnosticState, RuntimeEvidence
 from app.agent.nodes import (
     build_context_pack_node,
     classify_error_node,
@@ -54,8 +54,16 @@ def run_diagnostic_graph(
     chat_history: list[dict[str, str]] | None = None,
     top_k: int = 5,
     max_react_iterations: int | None = None,
+    intent: AgentIntent = "diagnostic",
 ) -> DiagnosticState:
-    """Run the deterministic PCM diagnostic state machine with ReAct loop."""
+    """Run the unified Agent state machine with ReAct loop.
+
+    ``intent`` controls which tool whitelist and answer template the
+    nodes select internally. Defaults to ``"diagnostic"`` so legacy
+    callers keep the original behaviour. Concept-tutor and lab-guidance
+    callers now share this graph instead of the parallel deterministic
+    path that used to live in ``AgentService._run_concept_or_guidance_job``.
+    """
     cap = (
         max_react_iterations
         if max_react_iterations is not None
@@ -69,6 +77,7 @@ def run_diagnostic_graph(
         top_k=top_k,
         runtime_evidence=evidence,
         max_react_iterations=max(1, int(cap)),
+        intent=intent,
     )
     if StateGraph is None:
         result = _run_sequential_graph(initial).model_dump()
@@ -149,6 +158,12 @@ def _apply_node_update(state: DiagnosticState, update: dict[str, Any]) -> Diagno
     payload = state.model_dump()
     payload.update(update)
     return DiagnosticState.model_validate(payload)
+
+
+# Alias — preferred name now that the graph serves all intents. Existing
+# callers (services, tests) continue to import `run_diagnostic_graph` and
+# pass `intent` as needed; new code should use this name.
+run_agent_graph = run_diagnostic_graph
 
 
 def _route_after_verification(state: DiagnosticState) -> str:

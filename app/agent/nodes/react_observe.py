@@ -19,6 +19,7 @@ from app.agent.tools import (
     FaultCaseLookupInput,
     NetlistTraceInput,
     SafetyRuleLookupInput,
+    TeachingConceptLookupInput,
     ToolResult,
     board_schema_lookup_tool,
     circuit_lookup_tool,
@@ -26,6 +27,7 @@ from app.agent.tools import (
     fault_case_lookup_tool,
     netlist_trace_tool,
     safety_rule_lookup_tool,
+    teaching_concept_lookup_tool,
 )
 
 logger = logging.getLogger(__name__)
@@ -143,6 +145,15 @@ def _dispatch_tool(tool_name: str, arguments: dict, state: DiagnosticState) -> T
                 "error_family": args.get("error_family", state.error_family),
             }
             return safety_rule_lookup_tool(SafetyRuleLookupInput(**payload))
+        if tool_name == "teaching_concept_lookup_tool":
+            payload = {
+                "query": args.get("query", state.user_message or state.query),
+                "concept_id": args.get("concept_id", ""),
+                "error_family": args.get("error_family", state.error_family),
+            }
+            return teaching_concept_lookup_tool(
+                TeachingConceptLookupInput(**payload)
+            )
     except Exception as exc:  # pragma: no cover - defensive guard
         logger.warning("ReAct tool %s failed: %s", tool_name, exc)
         return ToolResult(

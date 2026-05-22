@@ -15,6 +15,7 @@ def build_context_pack_node(state: DiagnosticState) -> dict:
         state.runtime_evidence,
         query=state.query,
         user_message=state.user_message,
+        intent=state.intent,
     )
     return {
         "context_pack": pack.model_dump(),

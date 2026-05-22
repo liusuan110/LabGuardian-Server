@@ -16,10 +16,16 @@ def verify_answer_node(state: DiagnosticState) -> dict:
         ToolResult.model_validate(item)
         for item in state.tool_results
     ]
+    # Intent-aware verification: concept_tutor / lab_guidance rules don't
+    # require error_codes, while diagnostic still enforces them. The
+    # verifier reads intent + concept from the state set up by
+    # react_reflect.
     report = verify_draft_answer(
         evidence=state.runtime_evidence,
         context_pack=require_context_pack(state),
         draft_answer=state.draft_answer,
+        intent=state.intent,
+        concept=state.concept,
         tool_results=tool_results,
     )
     return {
@@ -28,6 +34,10 @@ def verify_answer_node(state: DiagnosticState) -> dict:
             state,
             node_name="verify_answer",
             started_at=started_at,
-            payload={"passed": report.passed, "issue_count": len(report.issues)},
+            payload={
+                "intent": state.intent,
+                "passed": report.passed,
+                "issue_count": len(report.issues),
+            },
         ),
     }

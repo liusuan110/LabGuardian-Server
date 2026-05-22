@@ -31,6 +31,7 @@ from app.services.circuit_kb_service import looks_like_circuit_query
 _TOOL_PRIORITY: list[str] = [
     "netlist_trace_tool",
     "board_schema_lookup_tool",
+    "teaching_concept_lookup_tool",
     "circuit_lookup_tool",
     "fault_case_lookup_tool",
     "datasheet_lookup_tool",
@@ -65,7 +66,20 @@ class TemplateLLMProvider(LLMProvider):
             if step.tool_call is not None
         }
         candidate: str | None = None
+        # Concept-style intents (concept_tutor / lab_guidance) seed
+        # teaching_concept_lookup_tool as a `required=True` allowed tool.
+        # Pull it to the front of the queue so the planner grounds in the
+        # teaching knowledge base before reaching for adjacent tools.
+        required_concept = any(
+            tool.name == "teaching_concept_lookup_tool" and tool.required
+            for tool in request.context_pack.allowed_tools
+        )
         if (
+            required_concept
+            and "teaching_concept_lookup_tool" not in already_called
+        ):
+            candidate = "teaching_concept_lookup_tool"
+        if candidate is None and (
             "circuit_lookup_tool" in allowed
             and "circuit_lookup_tool" not in already_called
             and self._should_prioritize_circuit_lookup(request)
@@ -94,6 +108,11 @@ class TemplateLLMProvider(LLMProvider):
             arguments = {
                 "query": request.user_message or request.query,
                 "top_k": 3,
+            }
+        elif candidate == "teaching_concept_lookup_tool":
+            arguments = {
+                "query": request.user_message or request.query,
+                "error_family": request.context_pack.error_family,
             }
         rationale = self._rationale_for(candidate, request)
         return ToolCall(
@@ -134,6 +153,8 @@ class TemplateLLMProvider(LLMProvider):
             return "retrieve typical circuit knowledge"
         if tool_name == "safety_rule_lookup_tool":
             return "check safety rule for current risk level"
+        if tool_name == "teaching_concept_lookup_tool":
+            return "look up concept in local teaching library"
         return f"call {tool_name}"
 
     @staticmethod

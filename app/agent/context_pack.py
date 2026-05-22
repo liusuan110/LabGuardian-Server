@@ -4,6 +4,7 @@ import json
 import math
 
 from app.agent.contracts import (
+    AgentIntent,
     AllowedTool,
     ContextPack,
     ContextPackMetrics,
@@ -40,9 +41,39 @@ def classify_error_family(evidence: RuntimeEvidence) -> ErrorFamily:
     return "unknown"
 
 
-def build_context_pack(evidence: RuntimeEvidence, *, query: str = "", user_message: str = "") -> ContextPack:
+def build_context_pack(
+    evidence: RuntimeEvidence,
+    *,
+    query: str = "",
+    user_message: str = "",
+    intent: AgentIntent = "diagnostic",
+) -> ContextPack:
+    """Assemble the per-turn Context Pack.
+
+    ``intent`` selects which tool whitelist we start from:
+
+    - ``diagnostic`` / ``mixed`` → error-family-driven set
+      (netlist_trace / board_schema / safety_rule / fault_case + …).
+    - ``concept_tutor`` → teaching_concept + fault_case + opt-in
+      datasheet/circuit lookups gated by the query content.
+    - ``lab_guidance`` → board_schema + safety_rule + fault_case;
+      teaching_concept added on top when the model decides we need
+      conceptual support for the operational answer.
+
+    The error-family signal is still computed and surfaced (it informs
+    prompt rules and citation requirements), but for non-diagnostic
+    intents we override the *allowed_tools* list so the planner cannot
+    derail into "what's wrong with the wiring" detours.
+    """
     family = classify_error_family(evidence)
-    allow_tools = _allowed_tools_for_family(family)
+    if intent in ("diagnostic", "mixed"):
+        allow_tools = _allowed_tools_for_family(family)
+    elif intent == "concept_tutor":
+        allow_tools = _allowed_tools_for_concept()
+    elif intent == "lab_guidance":
+        allow_tools = _allowed_tools_for_lab_guidance()
+    else:  # defensive — unknown future intent → safest superset
+        allow_tools = _allowed_tools_for_family(family)
     merged_query = (user_message or query or "").strip().lower()
     if merged_query and _looks_like_datasheet_query(merged_query, evidence):
         if not any(tool.name == "datasheet_lookup_tool" for tool in allow_tools):
@@ -293,6 +324,60 @@ def _allowed_tools_for_family(family: ErrorFamily) -> list[AllowedTool]:
             *common,
         ]
     return common
+
+
+def _allowed_tools_for_concept() -> list[AllowedTool]:
+    """Tool whitelist for ``concept_tutor`` intent.
+
+    The teaching-concept tool is the primary source. fault_case_lookup is
+    kept because the local fault-case knowledge units double as worked
+    examples (symptom → reason → fix) and are useful for "为什么 LED 不亮"
+    style theory questions. datasheet/circuit lookups are not seeded here
+    — they're added by the query-aware gates below when relevant, so the
+    planner only sees them if the question actually warrants them.
+    """
+    return [
+        AllowedTool(
+            name="teaching_concept_lookup_tool",
+            reason="检索本地教学概念库，回答原理/定义/公式问题。",
+            required=True,
+        ),
+        AllowedTool(
+            name="fault_case_lookup_tool",
+            reason="作为概念解释的辅助 — 本地故障案例兼作工作示例。",
+        ),
+    ]
+
+
+def _allowed_tools_for_lab_guidance() -> list[AllowedTool]:
+    """Tool whitelist for ``lab_guidance`` intent.
+
+    Operational questions need to ground in (a) board topology so we can
+    say "把红表笔接在 row 17"，(b) safety rules so we always lead with
+    断电/限流, and (c) optional teaching concepts when the operation
+    requires explanation. fault_case is included as a fallback evidence
+    source for "为什么这里没读到电压" follow-ups.
+    """
+    return [
+        AllowedTool(
+            name="board_schema_lookup_tool",
+            reason="操作问题需要面包板/孔位/导通节点信息。",
+            required=True,
+        ),
+        AllowedTool(
+            name="safety_rule_lookup_tool",
+            reason="操作类问题必须给出断电/限流/接地等安全规则。",
+            required=True,
+        ),
+        AllowedTool(
+            name="teaching_concept_lookup_tool",
+            reason="如有需要，补充测量原理或量程选择的概念知识。",
+        ),
+        AllowedTool(
+            name="fault_case_lookup_tool",
+            reason="操作失败时的故障案例查询作为辅助证据。",
+        ),
+    ]
 
 
 def _prompt_rules_for_family(family: ErrorFamily) -> list[str]:

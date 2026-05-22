@@ -32,7 +32,8 @@ from app.agent.concepts import lookup_concept
 from app.agent.contracts import AgentIntent, ConceptPack
 from app.agent.evidence import build_runtime_evidence_from_classroom
 from app.agent.graph import run_diagnostic_graph
-from app.agent.intent import classify_intent
+from app.agent.intent import _CIRCUIT_TOPIC_PHRASES, classify_intent
+from app.agent.intent_llm import IntentDecision, classify_intent_smart
 from app.agent.llm import get_llm_provider
 from app.agent.tools import (
     CircuitLookupInput,
@@ -60,57 +61,28 @@ from app.services.rag_service import RagService
 
 AGENT_MEMORY_LIMIT = 5
 RISK_ORDER = {"unknown": 0, "safe": 0, "warning": 1, "danger": 2}
-_CIRCUIT_TOPIC_KEYWORDS = (
-    "电路",
-    "电压",
-    "电流",
-    "电阻",
-    "电容",
-    "电感",
-    "二极管",
-    "led",
-    "三极管",
-    "mos",
-    "运放",
-    "芯片",
-    "ic",
-    "面包板",
-    "跳线",
-    "引脚",
-    "孔位",
-    "电源",
-    "短路",
-    "断路",
-    "接地",
-    "gnd",
-    "vcc",
-    "传感器",
-    "单片机",
-    "arduino",
-    "stm32",
-    "万用表",
-    "示波器",
-    "测量",
-    "焊接",
-    "欧姆",
-    "分压",
-    "滤波",
-    "rc",
-    "rl",
-    "rlc",
-    "频率",
-    "信号",
-    "模拟",
-    "数字",
-    "原理图",
-    "breadboard",
-    "resistor",
-    "capacitor",
-    "inductor",
-    "diode",
-    "transistor",
-    "voltage",
-    "current",
+# Single source of truth lives in app.agent.intent._CIRCUIT_TOPIC_PHRASES.
+# We re-bind locally so the helper below keeps its original name without
+# duplicating the table. Add a few extras that the intent module's narrower
+# table does not cover (long-tail vocabulary used by the off-topic guard).
+_CIRCUIT_TOPIC_KEYWORDS: tuple[str, ...] = tuple(
+    {
+        *_CIRCUIT_TOPIC_PHRASES,
+        "ic",
+        "传感器",
+        "单片机",
+        "arduino",
+        "stm32",
+        "测量",
+        "焊接",
+        "rc",
+        "rl",
+        "rlc",
+        "频率",
+        "信号",
+        "模拟",
+        "数字",
+    }
 )
 
 
@@ -435,12 +407,16 @@ class AgentService:
             )
 
         if request.mode in ("concept_tutor", "lab_guidance"):
-            return self._run_concept_or_guidance_job(
+            # Unified Agent flow: concept_tutor / lab_guidance share the same
+            # LangGraph as diagnostic. The graph nodes branch internally on
+            # `state.intent`, so we just dispatch to the same job entry with
+            # the right intent label. (Architecture unification, May 2026.)
+            return self._run_diagnostic_agent_job(
                 job_id=job_id,
                 request=request,
                 classroom=classroom,
                 created_at=created_at,
-                forced_intent=request.mode,  # type: ignore[arg-type]
+                intent=request.mode,  # type: ignore[arg-type]
             )
 
         if request.mode == "agent_auto":
@@ -454,9 +430,21 @@ class AgentService:
             # like every other query — Phase 4 SemanticRouter decides whether
             # to enable datasheet_lookup_tool, and the answering node renders
             # the chunk hits deterministically (no LLM call).
-            intent = classify_intent(
+            #
+            # `classify_intent_smart` first tries a lightweight Ollama JSON
+            # call (5s budget, format=json), and falls back deterministically
+            # to the keyword classifier when the model is unavailable or the
+            # response is malformed. The fallback path is byte-identical to
+            # the legacy `classify_intent` behaviour, so this is strictly a
+            # quality-up change.
+            decision: IntentDecision = classify_intent_smart(
                 question,
                 evidence=evidence_contract,
+            )
+            intent = decision.intent
+            self._record_intent_decision(
+                evidence=evidence_contract,
+                decision=decision,
             )
             if intent == "diagnostic":
                 return self._run_diagnostic_agent_job(
@@ -476,13 +464,16 @@ class AgentService:
                     created_at=created_at,
                     intent=intent,
                 )
-            return self._run_concept_or_guidance_job(
+            # agent_auto with intent ∈ {concept_tutor, lab_guidance} now
+            # also flows through the unified LangGraph. We pass the
+            # already-built evidence so the build_runtime_evidence_from_classroom
+            # call doesn't happen twice.
+            return self._run_diagnostic_agent_job(
                 job_id=job_id,
                 request=request,
                 classroom=classroom,
                 created_at=created_at,
-                forced_intent=intent,
-                pre_evidence=evidence_contract,
+                intent=intent,
             )
 
         base_context = self._rag_service.build_context(
@@ -649,6 +640,7 @@ class AgentService:
             user_message=request.user_message or request.query,
             chat_history=[item.model_dump() for item in request.chat_history] if request.chat_history else None,
             top_k=request.top_k,
+            intent=intent,
         )
         context_pack = graph_state.context_pack
         if context_pack is None:
@@ -668,13 +660,53 @@ class AgentService:
         used_context_refs = [
             ref.ref_id for ref in evidence_contract.evidence_refs
         ] + [tool.tool_name for tool in tool_results]
-        rewritten_answer, actual_provider, actual_model = self._llm_rewrite_diagnostic_answer(
-            question=question,
-            draft_answer=graph_state.final_answer,
-            evidence=evidence_contract,
-            context_pack=context_pack,
-            tool_results=tool_results,
-        )
+        # Only rewrite diagnostic / mixed answers — the LLM rewrite prompt
+        # is hard-coded around error codes, evidence_refs and "建议/追问"
+        # sections that would mangle a concept_tutor or lab_guidance draft.
+        # For those intents we surface the graph's final_answer verbatim
+        # (it is already produced by the intent-aware draft template).
+        if intent in ("diagnostic", "mixed"):
+            rewritten_answer, actual_provider, actual_model = (
+                self._llm_rewrite_diagnostic_answer(
+                    question=question,
+                    draft_answer=graph_state.final_answer,
+                    evidence=evidence_contract,
+                    context_pack=context_pack,
+                    tool_results=tool_results,
+                )
+            )
+        else:
+            # Non-diagnostic intents: surface the graph's deterministic draft.
+            # Special case: if the planner already retrieved datasheet chunks
+            # (concept_tutor route via SemanticRouter), prefer the deterministic
+            # datasheet renderer over the generic concept template and tag
+            # the provider as ``local_datasheet_kb`` so the UI / telemetry
+            # can attribute the answer to the local KB instead of the LLM.
+            datasheet_tool = next(
+                (
+                    tr for tr in tool_results
+                    if tr.tool_name == "datasheet_lookup_tool" and tr.status == "ok"
+                ),
+                None,
+            )
+            if intent == "concept_tutor" and datasheet_tool is not None:
+                from app.agent.answering import build_datasheet_answer
+
+                rendered = build_datasheet_answer(
+                    evidence=evidence_contract,
+                    context_pack=context_pack,
+                    tool_results=[datasheet_tool],
+                    user_message=question,
+                )
+                if rendered:
+                    rewritten_answer = rendered
+                    actual_provider, actual_model = "local_datasheet_kb", "no_llm"
+                else:
+                    rewritten_answer = graph_state.final_answer
+                    actual_provider, actual_model = self._actual_llm_usage()
+            else:
+                rewritten_answer = graph_state.final_answer
+                actual_provider, actual_model = self._actual_llm_usage()
 
         result = AngntJobResult(
             job_id=job_id,
@@ -687,27 +719,49 @@ class AgentService:
                 evidence=evidence_contract,
                 context_pack=context_pack,
             ),
-            citations=build_diagnostic_citations(
-                evidence=evidence_contract,
-                context_pack=context_pack,
-                tool_results=tool_results,
-            ),
-            evidence=self._augment_diagnostic_evidence_with_intent(
-                evidence_items=build_diagnostic_evidence(
+            citations=(
+                build_diagnostic_citations(
                     evidence=evidence_contract,
                     context_pack=context_pack,
                     tool_results=tool_results,
+                )
+                if intent in ("diagnostic", "mixed")
+                else build_concept_citations(
+                    station_id=request.station_id,
+                    concept=graph_state.concept,
+                    tool_results=tool_results,
+                )
+            ),
+            evidence=(
+                self._augment_diagnostic_evidence_with_intent(
+                    evidence_items=build_diagnostic_evidence(
+                        evidence=evidence_contract,
+                        context_pack=context_pack,
+                        tool_results=tool_results,
+                        verification_passed=verification_passed,
+                        verification_issues=verification_issues,
+                        graph_metrics=[
+                            metric.model_dump() for metric in graph_state.graph_metrics
+                        ],
+                        react_trace=[
+                            step.model_dump() for step in graph_state.react_trace
+                        ],
+                        react_iterations=graph_state.react_iterations,
+                        react_terminate_reason=graph_state.react_terminate_reason,
+                    ),
+                    intent=intent,
+                    question=request.user_message or request.query,
+                )
+                if intent in ("diagnostic", "mixed")
+                else build_concept_evidence(
+                    station_id=request.station_id,
+                    intent=intent,
+                    concept=graph_state.concept,
+                    tool_results=tool_results,
                     verification_passed=verification_passed,
                     verification_issues=verification_issues,
-                    graph_metrics=[
-                        metric.model_dump() for metric in graph_state.graph_metrics
-                    ],
-                    react_trace=[step.model_dump() for step in graph_state.react_trace],
-                    react_iterations=graph_state.react_iterations,
-                    react_terminate_reason=graph_state.react_terminate_reason,
-                ),
-                intent=intent,
-                question=request.user_message or request.query,
+                    evidence=evidence_contract,
+                )
             ),
             actions=actions,
             used_retrieval=bool(tool_results),
@@ -735,6 +789,30 @@ class AgentService:
             ),
         )
         return result
+
+    def _record_intent_decision(
+        self,
+        *,
+        evidence: Any,
+        decision: IntentDecision,
+    ) -> None:
+        """Stamp the intent classification into runtime evidence.
+
+        The decision is recorded as a structured ``history_facts`` entry so
+        downstream nodes (and the AngntEvidence dump returned to the UI)
+        carry enough provenance to evaluate routing quality offline. We
+        keep the field a plain ``f"intent:..."`` string so existing
+        consumers, which simply iterate ``history_facts``, continue to
+        work without schema changes.
+        """
+        fact = (
+            f"intent:label={decision.intent}"
+            f";source={decision.source}"
+            f";conf={decision.confidence:.2f}"
+        )
+        if decision.reason:
+            fact += f";reason={decision.reason}"
+        evidence.history_facts = [*list(evidence.history_facts or []), fact]
 
     def _station_payload(
         self,

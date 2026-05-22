@@ -210,7 +210,14 @@ class ReflectionResult(BaseModel):
 
 
 class DiagnosticState(BaseModel):
-    """LangGraph state object for deterministic PCM diagnostic flow."""
+    """LangGraph state object for the unified Agent flow.
+
+    Historically this state was diagnostic-only. As of the architecture
+    unification (May 2026) the same graph also serves ``concept_tutor``
+    and ``lab_guidance`` intents — the new ``intent`` and ``concept``
+    fields let intent-aware nodes (build_context_pack / react_reflect /
+    verify_answer) branch internally without forking the graph topology.
+    """
 
     query: str = ""
     user_message: str = ""
@@ -218,6 +225,11 @@ class DiagnosticState(BaseModel):
     top_k: int = 5
     runtime_evidence: RuntimeEvidence
     error_family: ErrorFamily = "unknown"
+    # Multi-intent routing (added with Agent-A unification). Defaults to
+    # "diagnostic" so any caller written against the old API keeps the
+    # exact previous behaviour.
+    intent: AgentIntent = "diagnostic"
+    concept: ConceptPack | None = None
     context_pack: ContextPack | None = None
     tool_results: list[dict[str, Any]] = Field(default_factory=list)
     draft_answer: str = ""
