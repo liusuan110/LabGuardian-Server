@@ -1,0 +1,70 @@
+# Circuit route — fires when the user is asking about a typical circuit's
+# schematic, principle, waveform behavior, component roles, or common faults.
+#
+# With an active embedding backend this route catches paraphrases such as
+# "why does the output keep jumping near the threshold" even when the query
+# does not use the exact knowledge-base keywords.  Without embeddings the
+# keyword list is still broad enough for common lab questions.
+route: circuit
+description: schematic-level circuit principles, topology, waveform behavior, and circuit faults
+threshold: 0.24
+utterances:
+  - 方波输入为什么会变成三角波
+  - 这个电路靠哪个电容做积分
+  - 两路信号怎么用运放相加
+  - 为什么反相放大器输出相位相反
+  - 比较器在阈值附近来回跳怎么办
+  - 加滞回以后上下门限怎么算
+  - 三极管共射放大电路每个电阻的作用
+  - 8050 小信号放大怎么偏置
+  - 差分对为什么能抑制共模噪声
+  - 两个输入信号相减的电路是什么
+  - what circuit turns a square wave into a ramp
+  - why does a comparator chatter near the threshold
+  - explain a common emitter amplifier schematic
+negative_utterances:
+  - 这个芯片的 datasheet 是什么
+  - LM324 的引脚怎么排
+  - 这根导线应该插哪个孔
+  - 当前面包板识别到了哪些元件
+  - 帮我重新跑视觉检测
+  - 摄像头画面不清楚
+keywords:
+  - 电路
+  - 原理图
+  - 拓扑
+  - 放大器
+  - 放大电路
+  - 反相
+  - 加法器
+  - 求和
+  - 差分
+  - 差动
+  - 共模
+  - 共射
+  - 三极管放大
+  - 比较器
+  - 滞回
+  - 迟滞
+  - 施密特
+  - 阈值
+  - 门限
+  - 积分
+  - 三角波
+  - 斜坡
+  - 虚地
+  - 负反馈
+  - 正反馈
+  - common emitter
+  - inverting amplifier
+  - summing amplifier
+  - differential amplifier
+  - comparator
+  - hysteresis
+  - integrator
+min_keyword_hits: 1
+auto_fire_part_numbers:
+  - ua741
+  - lm741
+  - lm311
+  - 8050

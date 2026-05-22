@@ -493,20 +493,19 @@ def circuit_lookup_tool(
             payload={"circuit_id": args.circuit_id, "circuits": [circuit], "hits": 1},
         )
 
-    # Gate 2: relevance check — skip search for clearly off-topic queries
+    # Search first.  The service expands common circuit paraphrases before
+    # scoring, so we should not block it with a brittle keyword gate.
     query = (args.query or "").strip()
-    if not looks_like_circuit_query(query):
-        return ToolResult(
-            tool_name="circuit_lookup_tool",
-            status="not_relevant",
-            summary="查询与电路知识库不相关，跳过检索",
-            payload={"query": query, "circuits": [], "hits": 0},
-        )
-
-    # Gate 3: keyword search with built-in score threshold
     hits = service.search(query=query, top_k=args.top_k)
 
     if not hits:
+        if not looks_like_circuit_query(query):
+            return ToolResult(
+                tool_name="circuit_lookup_tool",
+                status="not_relevant",
+                summary="查询与电路知识库不相关，跳过检索",
+                payload={"query": query, "circuits": [], "hits": 0},
+            )
         return ToolResult(
             tool_name="circuit_lookup_tool",
             status="not_found",
@@ -525,8 +524,12 @@ def circuit_lookup_tool(
             "analysis": item["circuit"].get("analysis", {}),
             "common_faults": item["circuit"].get("common_faults", []),
             "teaching_points": item["circuit"].get("teaching_points", []),
+            "aliases": item["circuit"].get("aliases", []),
+            "retrieval_queries": item["circuit"].get("retrieval_queries", []),
             "image": item["circuit"].get("image", ""),
+            "image_annotations": item["circuit"].get("image_annotations", {}),
             "score": item["score"],
+            "matched_features": item.get("matched_features", []),
         }
         for item in hits
     ]

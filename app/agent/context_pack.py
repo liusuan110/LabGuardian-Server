@@ -58,7 +58,7 @@ def build_context_pack(evidence: RuntimeEvidence, *, query: str = "", user_messa
     # Only added when the query contains circuit-domain keywords; the tool itself
     # has a further relevance check, so false positives from the keyword gate are
     # harmless (they just result in an empty hit).
-    if merged_query and looks_like_circuit_query(merged_query):
+    if merged_query and _looks_like_circuit_kb_query(merged_query):
         if not any(tool.name == "circuit_lookup_tool" for tool in allow_tools):
             allow_tools.append(
                 AllowedTool(
@@ -127,6 +127,24 @@ def _looks_like_datasheet_query(msg: str, evidence: RuntimeEvidence) -> bool:
             if value and len(value) >= 3 and value in msg:
                 return True
     return False
+
+
+def _looks_like_circuit_kb_query(msg: str) -> bool:
+    """Route schematic/theory questions to the local circuit KB.
+
+    Prefer the YAML semantic route when it exists so an on-device embedding
+    model can catch paraphrases.  The deterministic expansion in
+    ``looks_like_circuit_query`` remains the no-model fallback.
+    """
+
+    from app.agent.router import get_router  # local import: avoid cycles
+
+    router = get_router()
+    if router.has_route("circuit"):
+        decision = router.decide("circuit", msg)
+        if decision.fired:
+            return True
+    return looks_like_circuit_query(msg)
 
 
 def estimate_context_pack_metrics(pack: ContextPack) -> ContextPackMetrics:

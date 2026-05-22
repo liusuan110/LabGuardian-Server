@@ -1344,6 +1344,14 @@ def build_diagnostic_template_answer(
     if datasheet_answer:
         return _with_diagnostic_anchors(datasheet_answer, evidence)
 
+    circuit_answer = build_circuit_kb_answer(
+        user_message=user_message or query,
+        tool_results=tool_results,
+        evidence=evidence,
+    )
+    if circuit_answer:
+        return _with_diagnostic_anchors(circuit_answer, evidence)
+
     message = user_message or query
     target_component = _extract_target_component(message, evidence)
     if target_component and _looks_like_fix_or_wiring_question(message):
@@ -1377,6 +1385,149 @@ def build_diagnostic_template_answer(
         evidence,
     )
     return ensure_circuit_opening(answer, evidence)
+
+
+def build_circuit_kb_answer(
+    *,
+    user_message: str,
+    tool_results: list[ToolResult],
+    evidence: RuntimeEvidence | None = None,
+) -> str | None:
+    """Render a direct answer from ``circuit_lookup_tool`` hits.
+
+    This handles schematic/theory questions inside the diagnostic graph.  It
+    keeps the current validator context from drowning out questions such as
+    "差分电路一共需要几个电阻".
+    """
+
+    result = next(
+        (
+            item
+            for item in tool_results
+            if item.tool_name == "circuit_lookup_tool"
+            and item.status == "ok"
+            and isinstance(item.payload.get("circuits"), list)
+            and item.payload.get("circuits")
+        ),
+        None,
+    )
+    if result is None:
+        return None
+
+    circuit = result.payload["circuits"][0]
+    question = (user_message or "").strip()
+    question_lower = question.lower()
+    components = circuit.get("components", []) if isinstance(circuit, dict) else []
+    resistors = _resistive_components(components)
+
+    lines: list[str] = []
+    if _asks_component_count(question_lower) and resistors:
+        labels = [str(item.get("ref") or "").strip() for item in resistors if item.get("ref")]
+        lines.append(
+            f"按本地典型电路知识库里的「{circuit.get('name', '')}」这张图，"
+            f"电阻类元件一共是 {len(resistors)} 个：{_join_cn(labels)}。"
+        )
+        if circuit.get("circuit_id") == "differential_amplifier":
+            lines.append(
+                "其中 RP 是发射极平衡电位器/可调电阻；如果按当前逻辑参考把 RP 拆成 "
+                "RP_LEFT 和 RP_RIGHT 两段等效电阻，则网表里的电阻对象会变成 7 个："
+                "RC1、RC2、RP_LEFT、RP_RIGHT、R1、R2、RE。"
+            )
+    else:
+        lines.append(f"根据本地电路知识库，「{circuit.get('name', '')}」：")
+        summary = str(circuit.get("summary") or "").strip()
+        if summary:
+            lines.append(summary)
+        if components:
+            comp_lines = []
+            for comp in components[:8]:
+                ref = comp.get("ref", "")
+                ctype = comp.get("type", "")
+                role = comp.get("role", "")
+                value = comp.get("value", "")
+                value_text = f"（{value}）" if value else ""
+                comp_lines.append(f"{ref}：{ctype}{value_text}，{role}")
+            if comp_lines:
+                lines.append("关键元件：" + "；".join(comp_lines) + "。")
+
+    current_hint = _current_diagnostic_hint_for_circuit(evidence, circuit)
+    if current_hint:
+        lines.append(current_hint)
+
+    image = str(circuit.get("image") or "").strip()
+    if image:
+        lines.append(f"参考电路图：{image}")
+    matched = circuit.get("matched_features") or []
+    if matched:
+        lines.append(f"检索命中依据：{_join_cn([str(item) for item in matched[:3]])}。")
+    lines.append("知识来源：本地电路知识库（circuit_kb）。")
+    return "\n\n".join(line for line in lines if line).strip()
+
+
+def _asks_component_count(message: str) -> bool:
+    return any(
+        word in message
+        for word in (
+            "几个",
+            "多少",
+            "一共",
+            "需要",
+            "有哪些",
+            "哪几个",
+            "数量",
+        )
+    )
+
+
+def _resistive_components(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for comp in components:
+        if not isinstance(comp, dict):
+            continue
+        text = " ".join(
+            str(comp.get(key) or "")
+            for key in ("ref", "type", "role", "purpose")
+        ).lower()
+        if any(token in text for token in ("电阻", "resistor", "potentiometer", "可调")):
+            out.append(comp)
+    return out
+
+
+def _join_cn(items: list[str]) -> str:
+    clean = [item for item in items if item]
+    if not clean:
+        return ""
+    return "、".join(clean)
+
+
+def _current_diagnostic_hint_for_circuit(
+    evidence: RuntimeEvidence | None,
+    circuit: dict[str, Any],
+) -> str:
+    if evidence is None:
+        return ""
+    circuit_id = str(circuit.get("circuit_id") or "")
+    if circuit_id != "differential_amplifier":
+        return ""
+    refs: list[str] = []
+    for finding in evidence.findings:
+        payload = finding.payload if isinstance(finding.payload, dict) else {}
+        ref = ""
+        expected = finding.expected
+        if isinstance(expected, dict):
+            ref = str(expected.get("ref_id") or expected.get("component_id") or "")
+        if not ref and isinstance(payload.get("expected"), dict):
+            ref = str(payload["expected"].get("ref_id") or "")
+        if not ref:
+            ref = finding.component_id
+        if ref in {"RC1", "RC2", "RP", "RP_LEFT", "RP_RIGHT", "R1", "R2", "RE"}:
+            refs.append(ref)
+    refs = sorted(set(refs))
+    if refs:
+        return f"结合当前诊断，优先核对这些电阻相关项：{_join_cn(refs)}。"
+    if evidence.error_codes:
+        return f"结合当前诊断，当前仍有 {evidence.error_codes[0]} 等错误码，回答上面的数量后再回到缺件/接线项逐个核对。"
+    return ""
 
 
 def _with_diagnostic_anchors(answer: str, evidence: RuntimeEvidence) -> str:

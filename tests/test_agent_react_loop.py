@@ -153,6 +153,19 @@ def test_planner_respects_allowed_tool_whitelist() -> None:
     assert new_step.tool_call.tool_name == "fault_case_lookup_tool"
 
 
+def test_planner_prioritizes_circuit_lookup_for_inventory_question() -> None:
+    state = _make_state_with_pack(["fault_case_lookup_tool", "circuit_lookup_tool"]).model_copy(
+        update={
+            "query": "那差分电路一共需要几个电阻",
+            "user_message": "那差分电路一共需要几个电阻",
+        }
+    )
+    update = react_plan_node(state)
+    new_step = ReActStep.model_validate(update["react_trace"][-1])
+    assert new_step.tool_call is not None
+    assert new_step.tool_call.tool_name == "circuit_lookup_tool"
+
+
 def test_planner_blocks_unknown_tool_from_provider() -> None:
     """If a buggy provider returns a tool outside the whitelist, the node drops it."""
 

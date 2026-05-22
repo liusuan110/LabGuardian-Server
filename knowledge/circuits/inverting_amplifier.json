@@ -4,76 +4,100 @@
   "name": "反相比例运算放大器",
   "category": "运算放大器电路",
   "subcategory": "反相放大",
+  "aliases": [
+    "反相放大器",
+    "负增益放大器",
+    "运放反相比例电路",
+    "虚地放大电路"
+  ],
   "keywords": [
     "反相放大器", "反相比例", "inverting amplifier", "反相放大",
     "运算放大器", "运放", "op-amp", "opamp", "负反馈",
-    "比例运算", "反相输入", "电压放大", "LM741", "LM324", "NE5532"
+    "比例运算", "反相输入", "电压放大", "UA741", "LM741",
+    "虚地", "闭环增益", "Rf/R1"
   ],
-  "summary": "基本反相比例放大电路。输入信号经 R1 接到运放反相输入端，同相输入端接地，反馈电阻 Rf 跨接在输出端与反相输入端之间构成电压并联负反馈。输出电压与输入电压反相，增益由 Rf/R1 比值决定。",
+  "retrieval_queries": [
+    "输出和输入相位相反的运放电路",
+    "反相放大器增益为什么是 -Rf/R1",
+    "Rf 反馈到反相端的比例运算电路",
+    "同相端经 Rp 接地的 UA741 放大电路",
+    "反相端虚地怎么推导增益公式"
+  ],
+  "summary": "图中是 UA741 反相比例放大器。输入信号经 R1 接到反相输入端，反馈电阻 Rf 从输出回到反相端，同相输入端经 RP 接地。负反馈使反相端近似虚地，输入电流通过 R1 流入反馈电阻 Rf，输出电压与输入反相，闭环增益由 -Rf/R1 决定。",
   "components": [
     {
       "ref": "R1",
       "type": "电阻",
-      "value": "10kΩ",
+      "value": "",
       "role": "输入电阻",
       "purpose": "限制输入电流，与 Rf 共同决定闭环电压增益 Av=-Rf/R1"
     },
     {
       "ref": "Rf",
       "type": "电阻",
-      "value": "100kΩ",
+      "value": "",
       "role": "反馈电阻",
-      "purpose": "将输出电压的一部分以电流形式反馈到反相输入端，构成电压并联负反馈"
+      "purpose": "将输出电压反馈到反相端，构成电压并联负反馈并设定增益"
     },
     {
-      "ref": "Rp",
+      "ref": "RP",
       "type": "电阻",
-      "value": "R1‖Rf≈9.1kΩ",
-      "role": "平衡电阻",
-      "purpose": "接在同相输入端与地之间，减小输入偏置电流引起的失调，取值等于 R1‖Rf"
+      "value": "",
+      "role": "同相端平衡电阻",
+      "purpose": "接在同相输入端与地之间，减小输入偏置电流引起的失调，常取 R1‖Rf"
     },
     {
-      "ref": "A1",
+      "ref": "U1",
       "type": "运算放大器",
-      "value": "LM741 / LM324",
+      "value": "UA741CD",
       "role": "放大元件",
-      "purpose": "高开环增益放大器，通过负反馈构成闭环比例放大器，虚短虚断分析"
+      "purpose": "高开环增益放大器，通过负反馈构成稳定闭环反相放大器"
     }
   ],
   "connections": [
-    {"from": "Input", "to": "R1"},
-    {"from": "R1", "to": "A1.IN-"},
-    {"from": "A1.IN+", "to": "Rp"},
-    {"from": "Rp", "to": "GND"},
-    {"from": "Rf", "to": "A1.IN-"},
-    {"from": "Rf", "to": "A1.OUT"},
-    {"from": "A1.OUT", "to": "Output"},
-    {"from": "A1.VCC+", "to": "+15V"},
-    {"from": "A1.VCC-", "to": "-15V"}
+    {"from": "Input", "to": "R1.left"},
+    {"from": "R1.right", "to": "U1.IN-"},
+    {"from": "Rf.left", "to": "U1.IN-"},
+    {"from": "Rf.right", "to": "U1.OUT"},
+    {"from": "U1.IN+", "to": "RP.top"},
+    {"from": "RP.bottom", "to": "GND"},
+    {"from": "U1.OUT", "to": "Output"},
+    {"from": "U1.VCC+", "to": "+12V"},
+    {"from": "U1.VCC-", "to": "-12V"}
   ],
   "analysis": {
-    "closed_loop_gain": "Av=-Rf/R1=-10（V/V）",
-    "input_impedance": "Zin≈R1=10kΩ",
-    "output_impedance": "Zo≈0Ω（理想运放闭环输出阻抗极低）",
-    "phase": "反相（180° 相移）",
-    "bandwidth": "增益带宽积 GBP 限制，-10 倍增益下带宽≈GBP/10",
+    "closed_loop_gain": "Av=Vo/Vin=-Rf/R1",
+    "input_impedance": "Zin≈R1",
+    "output_impedance": "Zo 很低（理想运放闭环输出阻抗接近 0）",
+    "phase": "输出与输入反相，约 180° 相移",
     "feedback_type": "电压并联负反馈",
-    "virtual_ground": "反相输入端虚地，电位≈0V（因同相端接地+负反馈）"
+    "virtual_ground": "同相端接地且负反馈成立时，反相端电位≈0V",
+    "bandwidth": "闭环带宽受增益带宽积限制，增益越高带宽越窄"
   },
   "common_faults": [
-    {"fault": "Rf 开路", "consequence": "反馈断路，运放开环，输出饱和到正/负电源电压"},
-    {"fault": "Rf 短路", "consequence": "输出直连反相输入端，Av=0，成为电压跟随器但接法错误，输出恒为 0V"},
-    {"fault": "R1 开路", "consequence": "输入断路，无信号进入，输出恒为 0V"},
-    {"fault": "Rp 缺失", "consequence": "输入偏置电流在反相和同相端产生不等压降，引入直流失调电压"},
-    {"fault": "电源未接或不对称", "consequence": "输出削波、无法正常放大，输出摆幅受限"}
+    {"fault": "Rf 开路", "consequence": "反馈断开，运放开环，输出饱和到正或负电源轨"},
+    {"fault": "Rf 短路", "consequence": "闭环增益接近 0，输出异常接近 0V"},
+    {"fault": "R1 开路", "consequence": "输入信号无法进入求和节点，输出无有效交流响应"},
+    {"fault": "RP 缺失或同相端悬空", "consequence": "输入偏置电流造成直流失调，严重时输出漂移或饱和"},
+    {"fault": "电源极性或供电未接", "consequence": "UA741 无法正常线性放大，输出钳在异常电平"}
   ],
   "teaching_points": [
-    "虚短虚断概念的核心应用：同相端接地→虚短→反相端虚地",
-    "负反馈如何稳定增益：Rf 将输出引入反相端抵消输入",
-    "Av=-Rf/R1 公式推导：输入端虚地→Iin=Vin/R1→If=-Vo/Rf，Iin=If→Vo=-Vin×Rf/R1",
-    "输入阻抗低的代价：Zin=R1，信号源需有足够驱动能力",
-    "增益带宽积限制：高增益意味着窄带宽",
-    "平衡电阻 Rp 的作用和计算"
+    "虚短虚断的核心应用：同相端接地，负反馈使反相端近似虚地",
+    "Av=-Rf/R1 公式推导：Vin/R1≈-Vo/Rf",
+    "负号来自反相端输入，表示输出相位与输入相反",
+    "输入阻抗约等于 R1，这一点不同于同相放大器",
+    "RP 的作用是偏置电流补偿，不参与理想增益公式"
   ],
-  "image": "knowledge/circuits/images/反相放大器.jpg"
+  "image": "knowledge/circuits/images/反相放大器.jpg",
+  "image_annotations": {
+    "visible_components": ["R1", "Rf", "RP", "U1/UA741CD", "V1", "V2", "XFG1"],
+    "visible_nodes": ["U1 pin2(-)", "U1 pin3(+)", "U1 pin6(output)", "+12V", "-12V", "GND"],
+    "input_terminal": "XFG1 输出经 R1 接 U1 反相端 pin2",
+    "feedback_path": "U1 输出 pin6 经 Rf 回到反相端 pin2",
+    "output_terminal": "U1 pin6 右侧节点",
+    "notes": [
+      "组件编号按图片统一为 R1、Rf、RP、U1",
+      "图片中 V1/V2 组成 ±12V 供电"
+    ]
+  }
 }

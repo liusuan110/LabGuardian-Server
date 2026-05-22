@@ -23,6 +23,7 @@ from app.agent.contracts import (
 )
 from app.agent.llm.base import LLMProvider, PlanRequest, ReflectRequest
 from app.agent.verification import verify_draft_answer
+from app.services.circuit_kb_service import looks_like_circuit_query
 
 
 # Rough preference order: cheap deterministic lookups first, semantic
@@ -30,6 +31,7 @@ from app.agent.verification import verify_draft_answer
 _TOOL_PRIORITY: list[str] = [
     "netlist_trace_tool",
     "board_schema_lookup_tool",
+    "circuit_lookup_tool",
     "fault_case_lookup_tool",
     "datasheet_lookup_tool",
     "safety_rule_lookup_tool",
@@ -63,7 +65,15 @@ class TemplateLLMProvider(LLMProvider):
             if step.tool_call is not None
         }
         candidate: str | None = None
+        if (
+            "circuit_lookup_tool" in allowed
+            and "circuit_lookup_tool" not in already_called
+            and self._should_prioritize_circuit_lookup(request)
+        ):
+            candidate = "circuit_lookup_tool"
         for tool_name in _TOOL_PRIORITY:
+            if candidate is not None:
+                break
             if tool_name in allowed and tool_name not in already_called:
                 candidate = tool_name
                 break
@@ -79,6 +89,11 @@ class TemplateLLMProvider(LLMProvider):
             arguments = {
                 "component_id": first_finding.component_id,
                 "pin_name": first_finding.pin_name,
+            }
+        elif candidate == "circuit_lookup_tool":
+            arguments = {
+                "query": request.user_message or request.query,
+                "top_k": 3,
             }
         rationale = self._rationale_for(candidate, request)
         return ToolCall(
@@ -115,6 +130,48 @@ class TemplateLLMProvider(LLMProvider):
             return "recall similar teaching case"
         if tool_name == "datasheet_lookup_tool":
             return "consult component datasheet"
+        if tool_name == "circuit_lookup_tool":
+            return "retrieve typical circuit knowledge"
         if tool_name == "safety_rule_lookup_tool":
             return "check safety rule for current risk level"
         return f"call {tool_name}"
+
+    @staticmethod
+    def _should_prioritize_circuit_lookup(request: PlanRequest) -> bool:
+        message = (request.user_message or request.query or "").strip().lower()
+        if not message or not looks_like_circuit_query(message):
+            return False
+        inventory_words = (
+            "几个",
+            "多少",
+            "一共",
+            "需要",
+            "有哪些",
+            "哪几个",
+            "数量",
+            "元件",
+            "电阻",
+            "电容",
+            "三极管",
+        )
+        theory_words = (
+            "原理",
+            "公式",
+            "作用",
+            "为什么",
+            "怎么工作",
+            "如何工作",
+        )
+        current_context_words = (
+            "哪里错",
+            "哪里不对",
+            "怎么改",
+            "怎么修",
+            "怎么处理",
+            "怎么办",
+            "我这个",
+            "当前",
+        )
+        if any(word in message for word in current_context_words):
+            return False
+        return any(word in message for word in inventory_words + theory_words)

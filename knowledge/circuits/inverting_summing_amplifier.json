@@ -1,95 +1,127 @@
 {
   "schema_version": "circuit_v1",
   "circuit_id": "inverting_summing_amplifier",
-  "name": "反相加法运算电路",
+  "name": "双输入反相加法运算电路",
   "category": "运算放大器电路",
   "subcategory": "信号运算",
+  "aliases": [
+    "反相加法器",
+    "运放求和电路",
+    "加权求和放大器",
+    "双路输入加法器"
+  ],
   "keywords": [
     "反相加法器", "加法器", "求和电路", "summing amplifier", "adder",
-    "反相加法", "加法运算", "多路输入", "信号叠加", "加权求和",
-    "运算放大器", "运放", "op-amp", "反相输入"
+    "反相加法", "加法运算", "两路输入", "信号叠加", "加权求和",
+    "运算放大器", "运放", "op-amp", "反相输入", "虚地求和"
   ],
-  "summary": "反相加法器，多路输入信号分别经各自输入电阻接到运放反相输入端，同相端经平衡电阻接地，反馈电阻 Rf 跨接输出与反相端。利用反相端虚地特性，各输入电流独立叠加，输出为各输入信号加权和的负值。可独立调节每路增益。",
+  "retrieval_queries": [
+    "两路信号经 R1 R2 接反相端求和",
+    "反相加法器输出为什么是负的和",
+    "运放加法器 Rf R1 R2 增益怎么计算",
+    "多路输入在虚地点电流相加",
+    "混音电路或信号叠加用哪个运放电路"
+  ],
+  "summary": "图中是双输入反相加法器。Vi1 通过 R1、Vi2 通过 R2 同时接入 UA741 的反相端；Rf 从输出反馈到反相端，同相端经 Rp 接地。反相端近似虚地，两路输入电流在该节点相加，再由 Rf 转换成输出电压，所以输出等于各输入加权和的负值。图左侧 R11/R12 用于产生或调节其中一路输入 Vi1，不属于运放求和核心反馈网络。",
   "components": [
     {
       "ref": "R1",
       "type": "电阻",
-      "value": "10kΩ",
-      "role": "输入电阻（通道1）",
-      "purpose": "限制 V1 输入电流，决定通道1 增益系数 -Rf/R1"
+      "value": "",
+      "role": "输入电阻（Vi1 通道）",
+      "purpose": "限制 Vi1 输入电流，决定 Vi1 通道增益 -Rf/R1"
     },
     {
       "ref": "R2",
       "type": "电阻",
-      "value": "10kΩ",
-      "role": "输入电阻（通道2）",
-      "purpose": "限制 V2 输入电流，决定通道2 增益系数 -Rf/R2"
-    },
-    {
-      "ref": "R3",
-      "type": "电阻",
-      "value": "10kΩ",
-      "role": "输入电阻（通道3）",
-      "purpose": "限制 V3 输入电流，决定通道3 增益系数 -Rf/R3"
+      "value": "",
+      "role": "输入电阻（Vi2 通道）",
+      "purpose": "限制 Vi2 输入电流，决定 Vi2 通道增益 -Rf/R2"
     },
     {
       "ref": "Rf",
       "type": "电阻",
-      "value": "10kΩ",
+      "value": "",
       "role": "反馈电阻",
-      "purpose": "将所有输入电流之和转为输出电压，Vo=-Rf×(V1/R1+V2/R2+V3/R3)"
+      "purpose": "把 R1/R2 两路输入电流之和转换为输出电压，形成负反馈"
     },
     {
       "ref": "Rp",
       "type": "电阻",
-      "value": "R1‖R2‖R3‖Rf≈2.5kΩ",
-      "role": "平衡电阻",
-      "purpose": "接在同相端与地之间，减小输入偏置电流误差"
+      "value": "",
+      "role": "同相端平衡电阻",
+      "purpose": "同相输入端接地偏置，减小输入偏置电流引起的失调"
     },
     {
-      "ref": "A1",
+      "ref": "U1",
       "type": "运算放大器",
-      "value": "LM741 / LM324",
-      "role": "放大元件",
-      "purpose": "通过虚短虚断实现各输入电流在反相端求和，反馈电阻转换为电压输出"
+      "value": "UA741CD",
+      "role": "放大/求和元件",
+      "purpose": "通过负反馈维持反相端虚地，使两路输入电流可线性相加"
+    },
+    {
+      "ref": "R11",
+      "type": "电阻",
+      "value": "",
+      "role": "Vi1 产生支路上臂",
+      "purpose": "图中用于产生或调节 Vi1 节点电压，属于输入信号源支路"
+    },
+    {
+      "ref": "R12",
+      "type": "电阻",
+      "value": "",
+      "role": "Vi1 产生支路下臂",
+      "purpose": "与 R11 构成图中 Vi1 输入支路的分压/偏置网络"
     }
   ],
   "connections": [
-    {"from": "Input1", "to": "R1"},
-    {"from": "Input2", "to": "R2"},
-    {"from": "Input3", "to": "R3"},
-    {"from": "R1", "to": "A1.IN-"},
-    {"from": "R2", "to": "A1.IN-"},
-    {"from": "R3", "to": "A1.IN-"},
-    {"from": "A1.IN+", "to": "Rp"},
-    {"from": "Rp", "to": "GND"},
-    {"from": "Rf", "to": "A1.IN-"},
-    {"from": "Rf", "to": "A1.OUT"},
-    {"from": "A1.OUT", "to": "Output"},
-    {"from": "A1.VCC+", "to": "+15V"},
-    {"from": "A1.VCC-", "to": "-15V"}
+    {"from": "Vi1", "to": "R1.left"},
+    {"from": "R1.right", "to": "U1.IN-"},
+    {"from": "Vi2", "to": "R2.left"},
+    {"from": "R2.right", "to": "U1.IN-"},
+    {"from": "Rf.left", "to": "U1.IN-"},
+    {"from": "Rf.right", "to": "U1.OUT"},
+    {"from": "U1.IN+", "to": "Rp.top"},
+    {"from": "Rp.bottom", "to": "GND"},
+    {"from": "U1.OUT", "to": "Output"},
+    {"from": "U1.VCC+", "to": "+12V"},
+    {"from": "U1.VCC-", "to": "-12V"},
+    {"from": "R11.bottom", "to": "Vi1"},
+    {"from": "R12.top", "to": "Vi1"},
+    {"from": "R12.bottom", "to": "GND"}
   ],
   "analysis": {
-    "output_voltage": "Vo=-Rf×(V1/R1+V2/R2+V3/R3)",
-    "equal_weight_gain": "当 R1=R2=R3=Rf 时，Vo=-(V1+V2+V3)，等权相加",
-    "individual_gain": "每路增益独立可调：A1=-Rf/R1, A2=-Rf/R2, A3=-Rf/R3",
-    "input_impedance": "各通道 Zin=Rn（n=1,2,3），通道间互不影响",
-    "feedback_type": "电压并联负反馈",
-    "virtual_ground": "反相输入端虚地，各输入电流独立无串扰"
+    "output_voltage": "Vo=-Rf×(Vi1/R1+Vi2/R2)",
+    "equal_weight_gain": "当 R1=R2=Rf 时，Vo=-(Vi1+Vi2)",
+    "individual_gain": "Vi1 通道增益 A1=-Rf/R1；Vi2 通道增益 A2=-Rf/R2",
+    "virtual_ground": "负反馈使反相端电位近似 0V，两路输入电流在该节点按 KCL 相加",
+    "input_impedance": "每一路输入阻抗近似等于对应输入电阻 R1 或 R2",
+    "saturation_limit": "应保证 |Vo| 小于 UA741 在 ±12V 供电下的可输出摆幅，否则会削波"
   },
   "common_faults": [
-    {"fault": "任意 Rn 开路", "consequence": "对应通道无输入，该通道输出分量消失，其他通道正常"},
-    {"fault": "Rf 开路", "consequence": "反馈断路，运放开环饱和，输出钳位到电源电压"},
-    {"fault": "某输入信号源内阻过大", "consequence": "等效 Rn 增大，该通道增益下降"},
-    {"fault": "Rp 取值不正确", "consequence": "等效 Rn 增大，该通道增益下降"},
-    {"fault": "输出饱和", "consequence": "当 |Vo|>VCC 时输出削波，需检查各输入幅度之和是否过大"}
+    {"fault": "R1 或 R2 开路", "consequence": "对应输入通道不参与求和，另一通道仍可能正常"},
+    {"fault": "Rf 开路", "consequence": "负反馈断开，运放开环，输出饱和到电源轨附近"},
+    {"fault": "Rf 短路", "consequence": "闭环增益接近 0，输出幅度异常偏小"},
+    {"fault": "Rp 未接地", "consequence": "同相端悬空，输出可能出现直流漂移或饱和"},
+    {"fault": "输入幅度之和过大", "consequence": "输出超出供电摆幅，出现削波失真"}
   ],
   "teaching_points": [
-    "虚地概念是加法器的关键：反相端电位为 0，各输入电流独立",
-    "KCL 推导：I1+I2+I3=If → V1/R1+V2/R2+V3/R3=-Vo/Rf",
-    "与同相加法器对比：反相加法器无通道间串扰",
-    "每路增益独立可调的优势：改变某路 Rn 不影响其他通道",
-    "Rp 的选取：等于所有接反相端电阻的并联值"
+    "反相加法器的核心是虚地节点的 KCL：Vi1/R1+Vi2/R2=-Vo/Rf",
+    "各通道权重由 Rf/Rn 独立决定，改变某一路输入电阻即可调权",
+    "输出带负号，因此若需要正和，后级可再接一级反相器",
+    "图中 R11/R12 是输入源支路，不能误认为第三个求和输入电阻",
+    "Rp 通常取反相端等效电阻的并联值以减小偏置误差"
   ],
-  "image": "knowledge/circuits/images/反相加法器.jpg"
+  "image": "knowledge/circuits/images/反相加法器.jpg",
+  "image_annotations": {
+    "visible_components": ["R1", "R2", "Rf", "Rp", "U1/UA741CD", "R11", "R12", "V1", "V2", "XFG1"],
+    "visible_nodes": ["Vi1", "Vi2", "U1 pin2(-)", "U1 pin3(+)", "U1 pin6(output)", "+12V", "-12V", "GND"],
+    "input_terminal": "Vi1 经 R1、Vi2 经 R2 接到 U1 反相端",
+    "feedback_path": "U1 输出 pin6 经 Rf 回到反相端 pin2",
+    "output_terminal": "图中绿色反馈/输出节点为 U1 pin6",
+    "notes": [
+      "图片只显示两路求和输入 R1/R2；原 JSON 中的 R3/Input3 已移除",
+      "R11/R12 作为图中 Vi1 信号产生支路保留，但不计入核心求和公式"
+    ]
+  }
 }

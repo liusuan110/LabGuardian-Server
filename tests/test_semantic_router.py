@@ -55,6 +55,7 @@ class _FakeEmbedding(EmbeddingBackend):
 def test_router_loads_datasheet_route_from_yaml() -> None:
     router = SemanticRouter(embedding=NullEmbeddingBackend())
     assert router.has_route("datasheet")
+    assert router.has_route("circuit")
 
 
 def test_keyword_fallback_fires_on_pinout_query() -> None:
@@ -159,3 +160,10 @@ def test_decide_all_returns_ranked_route_list() -> None:
     assert decisions
     assert decisions[0].name == "datasheet"
     assert decisions[0].fired
+
+
+def test_circuit_route_keyword_fallback_fires_on_schematic_query() -> None:
+    router = SemanticRouter(embedding=NullEmbeddingBackend())
+    decision = router.decide("circuit", "方波变三角波的积分电路怎么接")
+    assert decision.fired
+    assert decision.matched_via == "keyword"

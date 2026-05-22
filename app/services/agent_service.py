@@ -20,6 +20,7 @@ from app.agent.answering import (
     build_concept_answer,
     build_concept_citations,
     build_concept_evidence,
+    build_circuit_kb_answer as build_circuit_kb_direct_answer,
     build_datasheet_answer,
     build_diagnostic_citations,
     build_diagnostic_evidence,
@@ -207,6 +208,24 @@ def _looks_like_current_context_follow_up(question: str) -> bool:
         "怎么改",
         "怎么修",
         "怎么处理",
+        "怎么做",
+        "怎么办",
+        "咋办",
+        "如何改",
+        "如何修",
+        "如何处理",
+        "如何做",
+        "我该怎么",
+        "那我怎么",
+        "诊断",
+        "当前诊断",
+        "下一步",
+        "后续",
+        "完善",
+        "优化",
+        "改进",
+        "继续",
+        "后面",
     )
     return any(phrase in msg for phrase in follow_up_phrases)
 
@@ -268,6 +287,14 @@ def _build_circuit_kb_answer(
     evidence: Any,
 ) -> str:
     """Render a deterministic answer from circuit KB hits."""
+    direct = build_circuit_kb_direct_answer(
+        user_message=question,
+        tool_results=[circuit_tool_result],
+        evidence=evidence,
+    )
+    if direct:
+        return direct
+
     circuits = circuit_tool_result.payload.get("circuits", [])
     if not circuits:
         return "电路知识库未命中相关条目，请补充电路名称或关键词。"

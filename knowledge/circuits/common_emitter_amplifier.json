@@ -1,108 +1,128 @@
 {
   "schema_version": "circuit_v1",
   "circuit_id": "common_emitter_amplifier",
-  "name": "NPN 共射极放大电路（分压偏置）",
+  "name": "8050 共射极放大电路（基极分压偏置）",
   "category": "三极管放大电路",
   "subcategory": "共射极",
+  "aliases": [
+    "共射放大",
+    "共射极放大",
+    "8050 小信号放大",
+    "射极接地放大器",
+    "单管电压放大"
+  ],
   "keywords": [
     "共射放大", "共射极", "common emitter", "CE amplifier",
-    "NPN", "三极管放大", "分压偏置", "电压放大",
-    "2N3904", "偏置电路", "A类放大", "class A"
+    "NPN", "8050", "三极管放大", "基极偏置", "电压放大",
+    "耦合电容", "集电极输出", "A类放大", "class A"
   ],
-  "summary": "经典 NPN 共射极放大电路，采用 R1/R2 电阻分压为基极提供直流偏置，Rc 为集电极负载电阻将电流变化转化为电压输出，Re 为发射极负反馈电阻稳定静态工作点，C1/C2 为输入输出耦合电容实现隔直通交。输入信号经 C1 耦合到基极，放大后信号从集电极经 C2 输出。",
+  "retrieval_queries": [
+    "8050 小信号放大电路各元件作用",
+    "射极接地集电极输出为什么反相",
+    "共射放大电路输入输出耦合电容怎么接",
+    "基极偏置电阻 Rp 和 R 怎么设定静态工作点",
+    "音频放大单管 NPN 共射电路"
+  ],
+  "summary": "图中是 8050 NPN 单管共射极放大电路。发射极直接接地，输入信号经 CB 耦合到基极；RP 与 R 从 +12V 到基极形成可调基极偏置；RC 是集电极负载电阻，输出从集电极经 CC 耦合到负载 RL。该拓扑用于小信号电压放大，输出相对输入反相 180°。",
   "components": [
     {
-      "ref": "R1",
-      "type": "电阻",
-      "value": "100kΩ",
-      "role": "上偏置电阻",
-      "purpose": "与 R2 分压为基极提供直流偏置电压，Vb≈VCC×R2/(R1+R2)"
+      "ref": "RP",
+      "type": "可调电阻",
+      "value": "1MΩ",
+      "role": "上偏置可调电阻",
+      "purpose": "与 R 串联为基极提供可调直流偏置，图中滑端接到 +12V 侧，用于调节静态工作点"
     },
     {
-      "ref": "R2",
+      "ref": "R",
       "type": "电阻",
-      "value": "20kΩ",
+      "value": "510kΩ",
       "role": "下偏置电阻",
-      "purpose": "与 R1 分压，将基极电压稳定在约 VCC/6"
+      "purpose": "连接 RP 与基极节点，限制基极偏置电流，配合 RP 设定基极直流电位"
     },
     {
-      "ref": "Rc",
+      "ref": "RC",
       "type": "电阻",
-      "value": "5kΩ",
+      "value": "2kΩ",
       "role": "集电极负载电阻",
-      "purpose": "将集电极电流 Ic 的变化转换为集电极电压 Vc 的变化，决定电压增益"
+      "purpose": "把集电极电流变化转换为集电极电压变化，决定可用输出摆幅和电压增益"
     },
     {
-      "ref": "Re",
-      "type": "电阻",
-      "value": "1kΩ",
-      "role": "发射极负反馈电阻",
-      "purpose": "引入直流负反馈稳定静态工作点，抑制温度漂移；未旁路时降低交流增益提高线性度"
-    },
-    {
-      "ref": "C1",
-      "type": "电容",
-      "value": "10μF",
+      "ref": "CB",
+      "type": "电解电容",
+      "value": "33uF",
       "role": "输入耦合电容",
-      "purpose": "隔直通交，将交流输入信号耦合到基极，同时隔离信号源的直流分量避免影响偏置"
+      "purpose": "隔离信号源直流分量，只把交流输入送到基极，避免破坏基极偏置"
     },
     {
-      "ref": "C2",
-      "type": "电容",
-      "value": "10μF",
+      "ref": "CC",
+      "type": "电解电容",
+      "value": "33uF",
       "role": "输出耦合电容",
-      "purpose": "隔直通交，从集电极提取放大后的交流信号，隔离集电极直流电压"
+      "purpose": "隔离集电极直流电压，把放大后的交流分量送到输出端和负载"
     },
     {
-      "ref": "Q1",
+      "ref": "RL",
+      "type": "电阻",
+      "value": "2kΩ",
+      "role": "负载电阻",
+      "purpose": "图中输出端负载，与 CC 构成输出高通耦合网络"
+    },
+    {
+      "ref": "VT",
       "type": "NPN三极管",
-      "value": "2N3904",
+      "value": "8050",
       "role": "放大元件",
-      "purpose": "工作在放大区，利用基极小电流控制集电极大电流，实现电压/电流放大"
+      "purpose": "工作在放大区，基极小信号控制集电极电流，实现电压放大"
     }
   ],
   "connections": [
-    {"from": "VCC", "to": "R1"},
-    {"from": "VCC", "to": "Rc"},
-    {"from": "R1", "to": "Q1.B"},
-    {"from": "R2", "to": "Q1.B"},
-    {"from": "R2", "to": "GND"},
-    {"from": "Rc", "to": "Q1.C"},
-    {"from": "Q1.C", "to": "C2"},
-    {"from": "Q1.E", "to": "Re"},
-    {"from": "Re", "to": "GND"},
-    {"from": "Input", "to": "C1"},
-    {"from": "C1", "to": "Q1.B"},
-    {"from": "C2", "to": "Output"}
+    {"from": "+12V", "to": "RP.top"},
+    {"from": "+12V", "to": "RP.wiper"},
+    {"from": "RP.bottom", "to": "R.top"},
+    {"from": "R.bottom", "to": "VT.B"},
+    {"from": "Input", "to": "CB.left"},
+    {"from": "CB.right", "to": "VT.B"},
+    {"from": "+12V", "to": "RC.top"},
+    {"from": "RC.bottom", "to": "VT.C"},
+    {"from": "VT.C", "to": "CC.left"},
+    {"from": "CC.right", "to": "Output"},
+    {"from": "Output", "to": "RL.top"},
+    {"from": "RL.bottom", "to": "GND"},
+    {"from": "VT.E", "to": "GND"}
   ],
   "analysis": {
-    "voltage_gain": "Av≈-Rc/Re=-5（无旁路电容时）；加旁路电容 Ce 并联 Re 时 Av≈-Rc/re≈-200",
-    "input_impedance": "Zin≈R1‖R2‖(β×Re)≈15kΩ（β=100 时）",
-    "output_impedance": "Zo≈Rc=5kΩ",
-    "quiescent_base_voltage": "Vb≈VCC×R2/(R1+R2)",
-    "quiescent_emitter_voltage": "Ve≈Vb-0.7V",
-    "quiescent_collector_current": "Ic≈Ie=Ve/Re≈1mA",
-    "quiescent_collector_voltage": "Vce≈VCC-Ic×(Rc+Re)",
-    "phase": "输出与输入反相（180°相移）",
-    "bandwidth": "低频截止由 C1/C2 决定，高频截止由 Q1 寄生电容和米勒效应决定"
+    "bias": "RP 与 R 设定基极直流偏置，需让 VT 工作在放大区而非截止/饱和",
+    "collector_quiescent_voltage": "为获得最大不失真摆幅，通常调到 Vc≈VCC/2 附近",
+    "voltage_gain": "中频近似 Av≈-(RC‖RL)/re，其中 re≈26mV/Ie；负号表示反相",
+    "phase": "集电极取输出，因此输出相对输入反相 180°",
+    "input_coupling_corner": "CB 与输入等效电阻形成高通，电容越小低频衰减越明显",
+    "output_coupling_corner": "CC 与 RL 形成高通，fc≈1/(2π×CC×RL)"
   },
   "common_faults": [
-    {"fault": "R1 开路", "consequence": "基极电压降到 0V，Q1 截止，Vc=VCC，无输出信号"},
-    {"fault": "R2 开路", "consequence": "基极电压升至 VCC，Q1 饱和，Vc≈Ve，输出严重失真"},
-    {"fault": "Re 短路", "consequence": "增益变大但失去直流负反馈，静态工作点随温度漂移，易饱和失真"},
-    {"fault": "Rc 短路", "consequence": "Vc=VCC 不变，输出电压恒为 VCC，无放大作用"},
-    {"fault": "C1 开路", "consequence": "输入信号无法到达基极，无输出"},
-    {"fault": "C2 开路", "consequence": "放大信号无法传递到负载，输出端无信号"},
-    {"fault": "C1 短路", "consequence": "信号源直流分量影响基极偏置，工作点偏移，可能截止或饱和"}
+    {"fault": "基极偏置过低", "consequence": "VT 截止，集电极接近 +12V，输出只有很小耦合信号或无信号"},
+    {"fault": "基极偏置过高", "consequence": "VT 饱和，集电极电压过低，输出削波严重"},
+    {"fault": "CB 开路或极性接反", "consequence": "输入交流信号无法正常耦合到基极，输出无信号或失真"},
+    {"fault": "CC 开路或极性接反", "consequence": "负载端没有交流输出，或电解电容反向受压"},
+    {"fault": "RC 开路", "consequence": "集电极无供电通路，无法产生电压放大"},
+    {"fault": "VT 引脚接错", "consequence": "8050 不在正常放大区，表现为无输出、削波或发热"}
   ],
   "teaching_points": [
-    "分压偏置如何为三极管设定静态工作点 Q",
-    "直流负载线与交流负载线的区别",
-    "Re 直流负反馈稳定 Q 点的原理",
-    "耦合电容 C1/C2 的隔直通交作用",
-    "输入耦合电容与基极输入阻抗形成高通滤波器",
-    "为什么输出与输入反相（180°相移）",
-    "如何选择 R1/R2 使 Q 点位于负载线中点以获得最大不失真输出摆幅"
+    "共射极名称来自发射极为输入和输出的公共端，本图发射极直接接地",
+    "为什么集电极输出会反相：基极电压升高→集电极电流增大→RC 压降增大→集电极电压下降",
+    "CB/CC 的隔直通交作用和低频截止频率",
+    "用万用表先调静态集电极电压，再接入交流信号观察波形",
+    "没有发射极电阻时增益较高但静态点更依赖三极管 β 和偏置调节"
   ],
-  "image": "knowledge/circuits/images/共射放大电路.jpg"
+  "image": "knowledge/circuits/images/共射放大电路.jpg",
+  "image_annotations": {
+    "visible_components": ["RP", "R", "RC", "CB", "CC", "RL", "VT/8050"],
+    "visible_values": ["UCC +12V", "RP 1MΩ", "R 510kΩ", "RC 2kΩ", "CB 33uF", "CC 33uF", "RL 2kΩ"],
+    "input_terminal": "左侧输入端经 CB 接到 8050 基极",
+    "output_terminal": "右侧输出端取自集电极，经 CC 后接 RL",
+    "ground_reference": "底部公共线和发射极接地",
+    "notes": [
+      "本条 JSON 按图片中的 8050 单管共射电路建模，不再使用带 Re 的通用分压偏置模型",
+      "图中 RP 与 R 是基极偏置支路，RC 是集电极负载，RL 是输出端负载"
+    ]
+  }
 }

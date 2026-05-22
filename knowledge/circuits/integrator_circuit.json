@@ -4,90 +4,110 @@
   "name": "积分运算电路（Miller 积分器）",
   "category": "运算放大器电路",
   "subcategory": "信号运算",
+  "aliases": [
+    "有源积分器",
+    "Miller 积分器",
+    "方波转三角波电路",
+    "斜坡发生器"
+  ],
   "keywords": [
     "积分电路", "积分器", "integrator", "Miller 积分器",
     "积分运算", "斜坡发生器", "波形变换", "方波变三角波",
     "有源积分", "运算放大器", "运放", "op-amp",
-    "时间常数", "RC 积分", "低通滤波"
+    "时间常数", "RC 积分", "低通滤波", "反馈电容"
   ],
-  "summary": "有源积分运算电路。输入信号经电阻 R 接入运放反相端，反馈支路用电容 C 取代电阻，同相端接地。利用运放虚地和 Miller 效应，输出为输入电压对时间的积分乘以 -1/RC。可将方波转换为三角波、正弦波转换为余弦波等。相较于无源 RC 积分，有源积分线性度极高、积分时间常数准确。",
+  "retrieval_queries": [
+    "方波输入为什么变成三角波",
+    "运放反馈电容 C1 做积分的原理",
+    "积分电路 Rf 防止饱和有什么用",
+    "斜坡输出的斜率和 R1 C1 怎么算",
+    "有源积分器和 RC 无源积分有什么区别"
+  ],
+  "summary": "图中是 UA741 有源积分运算电路。输入信号经 R1 接入反相端，反馈支路由 C1 与大电阻 Rf 并联后跨接在输出与反相端之间，同相端通过 Rp 接地。C1 是积分电容，Rf 提供直流反馈通路以防止失调长期积分导致输出饱和。输出为输入电压对时间积分后的反相信号，可把方波转换为近似三角波。",
   "components": [
     {
-      "ref": "R",
+      "ref": "R1",
       "type": "电阻",
-      "value": "10kΩ",
+      "value": "",
       "role": "输入电阻",
-      "purpose": "限制输入电流并决定积分时间常数 RC"
+      "purpose": "限制输入电流并与 C1 共同决定积分时间常数 R1C1"
     },
     {
-      "ref": "C",
+      "ref": "C1",
       "type": "电容",
-      "value": "0.1μF",
+      "value": "",
       "role": "反馈电容/积分电容",
-      "purpose": "跨接输出与反相端，流过的电流被积分，Vo=-1/(RC)×∫Vin·dt"
-    },
-    {
-      "ref": "Rp",
-      "type": "电阻",
-      "value": "10kΩ",
-      "role": "平衡电阻",
-      "purpose": "同相端到地的平衡电阻，取值≈R，减小失调影响"
+      "purpose": "跨接输出与反相端，输入电流流入电容形成积分，Vo=-1/(R1C1)×∫Vin·dt"
     },
     {
       "ref": "Rf",
       "type": "电阻",
-      "value": "1MΩ",
-      "role": "直流偏置电阻（防饱和）",
-      "purpose": "并联在电容 C 上提供直流反馈通路，防止运放因积分漂移而饱和；取值很大以不显著影响积分精度"
+      "value": "",
+      "role": "直流反馈电阻（防饱和）",
+      "purpose": "并联在 C1 上提供直流反馈通路，限制低频/直流增益，防止输出因失调积分而饱和"
     },
     {
-      "ref": "A1",
+      "ref": "Rp",
+      "type": "电阻",
+      "value": "",
+      "role": "同相端平衡电阻",
+      "purpose": "同相端到地的平衡电阻，用于减小输入偏置电流引起的输出误差"
+    },
+    {
+      "ref": "U1",
       "type": "运算放大器",
-      "value": "LM741 / LM324 / TL081",
+      "value": "UA741CD",
       "role": "放大元件",
-      "purpose": "通过虚地和电容反馈实现高精度有源积分，Miller 效应使等效电容放大"
+      "purpose": "通过虚地和电容反馈实现高精度有源积分"
     }
   ],
   "connections": [
-    {"from": "Input(Vin)", "to": "R"},
-    {"from": "R", "to": "A1.IN-"},
-    {"from": "A1.IN+", "to": "Rp"},
-    {"from": "Rp", "to": "GND"},
-    {"from": "A1.IN-", "to": "C"},
-    {"from": "C", "to": "A1.OUT"},
-    {"from": "A1.IN-", "to": "Rf"},
-    {"from": "Rf", "to": "A1.OUT"},
-    {"from": "A1.OUT", "to": "Output(Vo)"},
-    {"from": "A1.VCC+", "to": "+15V"},
-    {"from": "A1.VCC-", "to": "-15V"}
+    {"from": "Input(Vin)", "to": "R1.left"},
+    {"from": "R1.right", "to": "U1.IN-"},
+    {"from": "U1.IN+", "to": "Rp.top"},
+    {"from": "Rp.bottom", "to": "GND"},
+    {"from": "U1.IN-", "to": "C1.left"},
+    {"from": "C1.right", "to": "U1.OUT"},
+    {"from": "U1.IN-", "to": "Rf.left"},
+    {"from": "Rf.right", "to": "U1.OUT"},
+    {"from": "U1.OUT", "to": "Output(Vo)"},
+    {"from": "U1.VCC+", "to": "+12V"},
+    {"from": "U1.VCC-", "to": "-12V"}
   ],
   "analysis": {
-    "transfer_function": "Vo(t) = -1/(RC) × ∫₀ᵗ Vin(τ)dτ + Vo(0)",
-    "time_constant": "τ = RC = 1ms（R=10kΩ, C=0.1μF）",
-    "frequency_domain": "Vo/Vin = -1/(jωRC)，幅频特性 |Av|=1/(ωRC)，相频特性 +90°",
-    "step_response": "输入直流电压 Vin → 输出线性斜坡 Vo=-Vin·t/RC",
-    "square_wave_response": "方波输入 → 三角波输出（充放电斜率 = ±Vin/RC）",
-    "sine_wave_response": "正弦波输入 → 余弦波输出（相位超前 90°）",
-    "dc_drift": "无 Rf 时，输入失调电压经积分后输出持续漂移终至饱和",
-    "saturation_prevention": "Rf 并联 C 形成直流负反馈通路→低频增益局限为 -Rf/R，防止直流漂移饱和",
-    "low_frequency_corner": "f₀ = 1/(2π×Rf×C)，低于此频率积分特性退化为反相放大"
+    "transfer_function": "Vo(t)=-1/(R1C1)×∫Vin(t)dt + Vo(0)",
+    "time_constant": "积分时间常数 τ=R1C1；τ 越大，输出斜率越小",
+    "frequency_domain": "Vo/Vin=-1/(jωR1C1)，幅值随频率按 -20dB/dec 变化",
+    "step_response": "输入直流阶跃 Vin 时，输出线性斜坡 Vo=-Vin×t/(R1C1)",
+    "square_wave_response": "方波输入时，输出为正负斜率交替的三角波",
+    "saturation_prevention": "Rf 并联 C1 后，低频增益被限制为 -Rf/R1，减小直流漂移饱和",
+    "low_frequency_corner": "f0≈1/(2πRfC1)，低于该频率时更像反相放大器"
   },
   "common_faults": [
-    {"fault": "无 Rf（或 Rf 开路）", "consequence": "输入失调电压被持续积分，输出终将饱和到正或负电源电压"},
-    {"fault": "C 开路", "consequence": "反馈断路，运放开环饱和"},
-    {"fault": "C 短路", "consequence": "输出直连反相端，无积分作用，输出恒为 0V"},
-    {"fault": "R 开路", "consequence": "无输入电流，输出为电容初始电压（不确定态）"},
-    {"fault": "积分时间过长", "consequence": "输出超出运放输出摆幅→削波失真"},
-    {"fault": "C 漏电", "consequence": "积分漂移增大，精度下降"}
+    {"fault": "Rf 开路或未接", "consequence": "输入失调电压被持续积分，输出容易慢慢饱和到电源轨"},
+    {"fault": "C1 开路", "consequence": "反馈支路主要剩 Rf，电路退化为反相放大器或开环异常"},
+    {"fault": "C1 短路", "consequence": "输出几乎直接反馈到反相端，积分作用消失，输出幅度很小"},
+    {"fault": "R1 开路", "consequence": "输入电流无法进入积分节点，输出只剩初始状态/漂移"},
+    {"fault": "输入频率太低或幅度太大", "consequence": "输出斜坡越过运放摆幅，出现饱和或削波"},
+    {"fault": "Rp 未接地", "consequence": "同相端悬空，输出漂移或饱和"}
   ],
   "teaching_points": [
-    "有源积分与无源 RC 积分的对比：线性度和精度差异",
-    "虚地如何保证恒流充电：运放反相端电位恒为 0V",
-    "Miller 积分器原理：电容反馈使等效输入电容为 C×(1+|Av|)",
-    "Vo = -1/(RC) × ∫Vin·dt 公式推导（时域+频域）",
-    "积分漂移的原因和 Rf 防饱和的作用机制",
-    "频域分析：积分器是低通滤波器（f₀≈0Hz），幅频 -20dB/dec",
-    "方波→三角波的参数计算：三角波峰峰值 = Vin_pp × T/(4RC)"
+    "反相端虚地使 R1 中电流近似 Vin/R1，并全部流入反馈电容 C1",
+    "电容电流 i=C dV/dt，因此输出斜率由 Vin/(R1C1) 决定",
+    "Rf 是实际积分器常见的防饱和改进，不能误认为普通输出负载",
+    "方波转三角波是积分器最直观的实验现象",
+    "有源积分比无源 RC 积分线性度更好，但受运放输出摆幅和失调限制"
   ],
-  "image": "knowledge/circuits/images/积分运算电路.jpg"
+  "image": "knowledge/circuits/images/积分运算电路.jpg",
+  "image_annotations": {
+    "visible_components": ["R1", "Rf", "C1", "Rp", "U1/UA741CD", "V1", "V2", "XFG1"],
+    "visible_nodes": ["U1 pin2(-)", "U1 pin3(+)", "U1 pin6(output)", "+12V", "-12V", "GND"],
+    "input_terminal": "XFG1 输出经 R1 接 U1 反相端 pin2",
+    "feedback_path": "C1 与 Rf 并联，从 U1 输出 pin6 回到反相端 pin2",
+    "output_terminal": "U1 pin6 右侧橙色节点",
+    "notes": [
+      "组件编号已按图片统一为 R1、C1、Rf、Rp、U1",
+      "图片中 V1/V2 组成 ±12V 供电"
+    ]
+  }
 }

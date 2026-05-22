@@ -1,79 +1,111 @@
 {
   "schema_version": "circuit_v1",
   "circuit_id": "comparator_hysteresis",
-  "name": "滞回电压比较器（施密特触发器）",
-  "category": "运算放大器电路",
-  "subcategory": "比较器",
+  "name": "滞回电压比较器（LM311 施密特触发器）",
+  "category": "比较器电路",
+  "subcategory": "滞回比较器",
+  "aliases": [
+    "迟滞比较器",
+    "施密特触发器",
+    "双门限比较器",
+    "抗噪比较器"
+  ],
   "keywords": [
     "滞回比较器", "迟滞比较器", "施密特触发器", "Schmitt trigger",
     "hysteresis comparator", "正反馈比较器", "双阈值",
-    "滞回特性", "抗噪比较器", "再生比较器",
-    "门限电压", "上下阈值"
+    "上下阈值", "双门限", "抗噪", "防抖", "输出抖动",
+    "LM311", "开集电极", "上拉电阻"
   ],
-  "summary": "滞回比较器在基本比较器基础上引入正反馈——反馈电阻 R2 从输出接回同相输入端。与 R1 分压产生与输出状态相关的可变阈值。输入上升时阈值为 Vth+，下降时阈值为 Vth-，两者之差为滞回宽度。这种双阈值特性有效消除了输入噪声导致的输出抖动，是施密特触发器的运放实现。",
+  "retrieval_queries": [
+    "比较器在阈值附近抖动怎么加滞回",
+    "LM311 滞回比较器 R2 R3 阈值怎么算",
+    "双门限比较器为什么能抗噪",
+    "输入接反相端的施密特触发器工作逻辑",
+    "比较器输出需要上拉电阻 R 的电路"
+  ],
+  "summary": "图中是 LM311 滞回比较器。输入 ui 经 R1 接反相端；参考电压 UR 经 R2 接同相端；输出 Uo 通过 R3 正反馈回同相端，并由上拉电阻 R 接到 +VCC。输出翻转后会改变同相端阈值，所以输入上升和下降时的翻转门限不同，形成滞回宽度，可抑制噪声导致的输出抖动。",
   "components": [
+    {
+      "ref": "U1",
+      "type": "比较器",
+      "value": "LM311",
+      "role": "比较元件",
+      "purpose": "开集电极比较器，配合上拉电阻和正反馈形成双阈值开关"
+    },
     {
       "ref": "R1",
       "type": "电阻",
-      "value": "10kΩ",
-      "role": "同相端输入电阻",
-      "purpose": "与 R2 分压决定滞回阈值，连接 Vin 到同相端"
+      "value": "",
+      "role": "输入限流电阻",
+      "purpose": "连接 ui 到反相输入端，限制输入电流"
     },
     {
       "ref": "R2",
       "type": "电阻",
-      "value": "100kΩ",
-      "role": "正反馈电阻",
-      "purpose": "从输出反馈到同相端，引入正反馈产生滞回特性，调整 R2/R1 比值控制滞回宽度"
+      "value": "",
+      "role": "参考输入电阻",
+      "purpose": "连接 UR 到同相输入端，与 R3 共同决定阈值"
     },
     {
       "ref": "R3",
       "type": "电阻",
-      "value": "10kΩ",
-      "role": "输出限流电阻",
-      "purpose": "保护运放输出级"
+      "value": "",
+      "role": "正反馈电阻",
+      "purpose": "从 Uo 反馈到同相输入端，使阈值随输出状态改变，产生滞回"
     },
     {
-      "ref": "A1",
-      "type": "运算放大器",
-      "value": "LM741 / LM393",
-      "role": "比较元件",
-      "purpose": "正反馈产生再生开关效应，输出快速翻转并产生双阈值"
+      "ref": "R",
+      "type": "电阻",
+      "value": "",
+      "role": "输出上拉电阻",
+      "purpose": "LM311 开集电极输出需要上拉到 +VCC 才能得到高电平"
     }
   ],
   "connections": [
-    {"from": "Input(Vin)", "to": "R1"},
-    {"from": "R1", "to": "A1.IN+"},
-    {"from": "A1.OUT", "to": "R2"},
-    {"from": "R2", "to": "A1.IN+"},
-    {"from": "A1.IN-", "to": "GND"},
-    {"from": "A1.OUT", "to": "R3"},
-    {"from": "R3", "to": "Output(Vo)"},
-    {"from": "A1.VCC+", "to": "+15V"},
-    {"from": "A1.VCC-", "to": "-15V"}
+    {"from": "ui", "to": "R1.left"},
+    {"from": "R1.right", "to": "U1.IN-"},
+    {"from": "UR", "to": "R2.bottom"},
+    {"from": "R2.top", "to": "U1.IN+"},
+    {"from": "Uo", "to": "R3.right"},
+    {"from": "R3.left", "to": "U1.IN+"},
+    {"from": "+VCC", "to": "R.top"},
+    {"from": "R.bottom", "to": "Uo"},
+    {"from": "U1.OUT", "to": "Uo"},
+    {"from": "U1.GND", "to": "GND"}
   ],
   "analysis": {
-    "upper_threshold": "Vth+ = +VCC×R1/(R1+R2)，上升沿切换阈值",
-    "lower_threshold": "Vth- = -VCC×R1/(R1+R2)，下降沿切换阈值",
-    "hysteresis_width": "ΔV = Vth+-Vth- = 2×VCC×R1/(R1+R2)",
-    "center_voltage": "Vcenter = (Vth++Vth-)/2 = 0V（对称电源时）",
-    "noise_margin": "≈ΔV/2，噪声 < 滞回宽度则不会误触发",
-    "typical_values": "VCC=±15V, R1=10kΩ, R2=100kΩ → Vth+≈+1.36V, Vth-≈-1.36V, ΔV≈2.72V",
-    "transfer_characteristic": "输出状态翻转后阈值自动切换，形成滞回环"
+    "threshold_node": "同相端阈值 V+=加权平均(UR/R2, Uo/R3)，忽略输入偏置电流时 V+=(UR/R2+Uo/R3)/(1/R2+1/R3)",
+    "switching_rule": "ui 接反相端：ui>V+ 时输出趋向低电平；ui<V+ 时输出被 R 上拉为高电平",
+    "upper_threshold": "当输出为高电平 UOH 时，输入上升触发阈值 VTH_H=(UR/R2+UOH/R3)/(1/R2+1/R3)",
+    "lower_threshold": "当输出为低电平 UOL 时，输入下降释放阈值 VTH_L=(UR/R2+UOL/R3)/(1/R2+1/R3)",
+    "hysteresis_width": "ΔV=VTH_H-VTH_L≈(UOH-UOL)×R2/(R2+R3)",
+    "noise_margin": "输入噪声幅度小于滞回宽度时，不会在阈值附近反复翻转"
   },
   "common_faults": [
-    {"fault": "R2 开路", "consequence": "正反馈断路，退化为无滞回比较器，输出易抖动"},
-    {"fault": "滞回宽度太小", "consequence": "不足以克服输入噪声，仍可能抖动"},
-    {"fault": "滞回宽度太大", "consequence": "灵敏度降低，小信号无法触发翻转"},
-    {"fault": "R2 短路", "consequence": "同相端直连输出，Vth=±VCC，无实用意义"}
+    {"fault": "R3 开路", "consequence": "正反馈消失，退化为无滞回比较器，输出易抖动"},
+    {"fault": "R 上拉缺失", "consequence": "LM311 开集电极输出无法得到稳定高电平"},
+    {"fault": "R3 过大", "consequence": "正反馈太弱，滞回宽度太小，抗噪能力不足"},
+    {"fault": "R3 过小", "consequence": "滞回宽度过大，输入小信号无法触发翻转"},
+    {"fault": "ui 与 UR 接反", "consequence": "阈值公式仍成立，但输出逻辑方向与预期相反"}
   ],
   "teaching_points": [
-    "正反馈 vs 负反馈：正反馈加速翻转、产生滞回；负反馈稳定、线性",
-    "滞回宽度由 R1/R2 比值和电源电压决定",
-    "传输特性曲线呈现滞回环（顺时针/逆时针）",
-    "抗噪原理：翻转后阈值自动改变，噪声幅度需大于滞回宽度才能误触发",
-    "与数字施密特触发器（74HC14）的对比：原理相同，实现不同",
-    "实际应用：波形整形、脉冲产生、阈值检测防抖"
+    "本图的正反馈路径是 Uo→R3→同相端，不是输出接反相端的负反馈",
+    "滞回比较器有两个门限：输出状态不同，同相端参考电压不同",
+    "LM311 常见开集电极输出必须加上拉电阻 R",
+    "滞回宽度由 R2/R3 和输出高低电平决定",
+    "抗噪原理：翻转后阈值主动远离当前输入，避免阈值附近反复跳变"
   ],
-  "image": "knowledge/circuits/images/滞回电压比较器.jpg"
+  "image": "knowledge/circuits/images/滞回电压比较器.jpg",
+  "image_annotations": {
+    "visible_components": ["LM311", "R1", "R2", "R3", "R"],
+    "visible_nodes": ["ui", "UR", "Uo", "+VCC", "GND"],
+    "input_terminal": "ui 经 R1 接 LM311 反相端",
+    "reference_terminal": "UR 经 R2 接同相端",
+    "feedback_path": "Uo 经 R3 正反馈到同相端",
+    "output_terminal": "Uo 位于 LM311 输出和上拉电阻 R 的连接点",
+    "notes": [
+      "图片中的 R 是输出上拉电阻，R3 才是滞回正反馈电阻",
+      "该图为反相输入型施密特触发器，输入越过阈值时输出方向与同相输入型相反"
+    ]
+  }
 }

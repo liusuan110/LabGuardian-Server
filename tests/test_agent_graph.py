@@ -90,6 +90,58 @@ def test_diagnostic_graph_runs_without_station_findings() -> None:
     assert state.verification_report.passed is True
 
 
+def test_diagnostic_graph_answers_circuit_inventory_question_from_kb() -> None:
+    evidence = build_runtime_evidence_from_station(
+        station_id="LG-DEMO-01",
+        station={
+            "risk_level": "warning",
+            "diagnostics": ["RC1 缺失或连接异常", "RC2 缺失或连接异常"],
+            "comparison_report": {
+                "summary": {
+                    "reference_id": "diff_pair_current_source_ref_split_potentiometer",
+                    "reference_name": "差分放大器 + VT3 恒流源参考电路",
+                },
+                "items": [
+                    {
+                        "error_code": "COMPONENT_MISSING",
+                        "severity": "warning",
+                        "expected": {"ref_id": "RC1", "type": "Resistor"},
+                        "suggested_action": "请添加 RC1。",
+                    },
+                    {
+                        "error_code": "COMPONENT_MISSING",
+                        "severity": "warning",
+                        "expected": {"ref_id": "RC2", "type": "Resistor"},
+                        "suggested_action": "请添加 RC2。",
+                    },
+                ],
+            },
+            "netlist_v2": {
+                "components": [{"component_id": "Q1", "component_type": "Transistor"}],
+                "nets": [],
+            },
+        },
+        error_tag_service=ErrorTagService(),
+    )
+
+    state = run_diagnostic_graph(
+        evidence=evidence,
+        query="那差分电路一共需要几个电阻",
+        user_message="那差分电路一共需要几个电阻",
+        top_k=5,
+        max_react_iterations=4,
+    )
+
+    tool_names = {item["tool_name"] for item in state.tool_results}
+    assert "circuit_lookup_tool" in tool_names
+    assert "电阻类元件一共是 6 个" in state.final_answer
+    assert "RC1、RC2、RP、R1、R2、RE" in state.final_answer
+    assert "RP_LEFT 和 RP_RIGHT" in state.final_answer
+    assert "微观缺陷复检" not in state.final_answer
+    assert state.verification_report is not None
+    assert state.verification_report.needs_micro_inspection is False
+
+
 def test_diagnostic_graph_routes_failed_verification_to_repair(monkeypatch) -> None:
     evidence = build_runtime_evidence_from_station(
         station_id="S02",

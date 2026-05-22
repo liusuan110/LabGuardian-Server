@@ -1,69 +1,109 @@
 {
   "schema_version": "circuit_v1",
   "circuit_id": "comparator_no_hysteresis",
-  "name": "无滞回电压比较器（过零比较器）",
-  "category": "运算放大器电路",
-  "subcategory": "比较器",
+  "name": "无滞回电压比较器（单阈值比较器）",
+  "category": "比较器电路",
+  "subcategory": "无滞回比较器",
+  "aliases": [
+    "基本电压比较器",
+    "单门限比较器",
+    "过零比较器",
+    "开环比较器"
+  ],
   "keywords": [
     "电压比较器", "比较器", "comparator", "无滞回", "无迟滞",
-    "过零比较器", "阈值比较", "开环运放", "饱和输出",
-    "电平检测", "波形变换", "正弦波变方波", "整形电路"
+    "单阈值", "单门限", "过零比较器", "阈值比较",
+    "开环运放", "饱和输出", "电平检测", "正弦波变方波",
+    "输出限幅", "稳压管钳位"
   ],
-  "summary": "最基础的电压比较器，运放工作在开环状态（无反馈）。同相端接参考电压 Vref，反相端接输入信号 Vin。当 Vin>Vref 时输出负饱和（-VCC），当 Vin<Vref 时输出正饱和（+VCC）。过零比较器是 Vref=0 的特例，可将正弦波等模拟信号转换为方波。",
+  "retrieval_queries": [
+    "输入电压和参考电压比较的基础电路",
+    "没有滞回的比较器为什么会抖动",
+    "单阈值比较器输出限幅二极管作用",
+    "ui 大于 UR 时输出怎么翻转",
+    "正弦波变方波用哪种比较器"
+  ],
+  "summary": "图中是基础无滞回电压比较器。输入 ui 经 R1 接到反相端，参考电压 UR 经 R2 接到同相端；比较器/运放由 ±VCC 供电，输出经 R0 到 Uo，Uo 端并有双向稳压管/限幅二极管到地用于限制输出幅度。因为没有正反馈，它只有一个阈值，输入在阈值附近有噪声时容易产生输出抖动。",
   "components": [
     {
       "ref": "A1",
-      "type": "运算放大器",
-      "value": "LM741 / LM393",
+      "type": "运算放大器/比较器",
+      "value": "",
       "role": "比较元件",
-      "purpose": "开环工作，利用极高开环增益实现输入端微小差值的二值化输出"
+      "purpose": "开环工作，把 ui 与 UR 的差值放大到高/低饱和输出"
     },
     {
       "ref": "R1",
       "type": "电阻",
-      "value": "10kΩ",
+      "value": "",
       "role": "输入限流电阻",
-      "purpose": "保护运放输入端，限制输入电流"
+      "purpose": "连接 ui 到反相输入端，限制输入端电流"
     },
     {
       "ref": "R2",
       "type": "电阻",
-      "value": "10kΩ",
-      "role": "输出上拉/限流电阻",
-      "purpose": "限制运放输出电流，与后续数字电路电平匹配"
+      "value": "",
+      "role": "参考输入电阻",
+      "purpose": "连接参考电压 UR 到同相输入端，形成比较阈值"
+    },
+    {
+      "ref": "R0",
+      "type": "电阻",
+      "value": "",
+      "role": "输出限流电阻",
+      "purpose": "限制输出端和限幅二极管电流，保护比较器输出级"
+    },
+    {
+      "ref": "DZ",
+      "type": "双向稳压/限幅二极管",
+      "value": "",
+      "role": "输出限幅器件",
+      "purpose": "把 Uo 限制在安全幅度，便于驱动后级逻辑或观察方波"
     }
   ],
   "connections": [
-    {"from": "Input(Vin)", "to": "R1"},
-    {"from": "R1", "to": "A1.IN-"},
-    {"from": "Vref", "to": "A1.IN+"},
-    {"from": "A1.OUT", "to": "R2"},
-    {"from": "R2", "to": "Output(Vo)"},
-    {"from": "A1.VCC+", "to": "+15V"},
-    {"from": "A1.VCC-", "to": "-15V"}
+    {"from": "ui", "to": "R1.left"},
+    {"from": "R1.right", "to": "A1.IN-"},
+    {"from": "UR", "to": "R2.bottom"},
+    {"from": "R2.top", "to": "A1.IN+"},
+    {"from": "A1.OUT", "to": "R0.left"},
+    {"from": "R0.right", "to": "Uo"},
+    {"from": "Uo", "to": "DZ.top"},
+    {"from": "DZ.bottom", "to": "GND"},
+    {"from": "A1.VCC+", "to": "+VCC"},
+    {"from": "A1.VCC-", "to": "-VCC"}
   ],
   "analysis": {
-    "threshold": "Vth=Vref（单阈值）",
-    "output_high": "Vo≈+VCC（Vin<Vref 时）",
-    "output_low": "Vo≈-VCC（Vin>Vref 时）",
-    "transition_region": "极窄（运放开环增益 AVOL 极大→输入差≈0 即翻转）",
-    "hysteresis": "无（0V 滞回）",
-    "response_time": "受运放压摆率 SR 限制，通用运放 μs 级，专用比较器 ns 级",
-    "noise_immunity": "差：输入噪声在阈值附近可能导致输出多次翻转（抖动）"
+    "threshold": "Vth=UR（忽略输入偏置电流时）",
+    "switching_rule": "ui 接反相端：ui>UR 时输出趋向低电平，ui<UR 时输出趋向高电平",
+    "hysteresis": "无滞回，Vth 上升沿和下降沿相同",
+    "output_limit": "R0 与 DZ 将 Uo 限幅，输出幅度不一定等于运放饱和电压",
+    "noise_immunity": "阈值附近抗噪能力差，ui 的小噪声会导致输出多次翻转",
+    "use_case": "电平检测、过零检测、简单波形整形；噪声较大时应改用滞回比较器"
   },
   "common_faults": [
-    {"fault": "输入信号噪声在阈值附近", "consequence": "输出多次跳变（chattering），产生毛刺脉冲"},
-    {"fault": "运放用普通运放代替比较器", "consequence": "输出从饱和恢复时间长（过驱动恢复），速度慢"},
-    {"fault": "Vref 不稳定或浮空", "consequence": "阈值漂移，比较结果不可靠"},
-    {"fault": "未接输出限流电阻", "consequence": "运放输出电流过大可能损坏器件"}
+    {"fault": "输入信号在阈值附近有噪声", "consequence": "输出反复跳变，出现抖动或毛刺"},
+    {"fault": "UR 浮空或参考源不稳定", "consequence": "阈值漂移，比较结果不可靠"},
+    {"fault": "R0 缺失", "consequence": "限幅二极管导通时输出电流过大，可能损坏器件"},
+    {"fault": "把 ui 和 UR 接反", "consequence": "输出高低电平逻辑相反"},
+    {"fault": "普通运放用于高速比较", "consequence": "饱和恢复慢，输出边沿迟缓"}
   ],
   "teaching_points": [
-    "运放开环特性：AVOL 极高，输入端微小差值导致输出饱和",
-    "传输特性曲线：输出只有两个稳态（+VCC 和 -VCC）",
-    "比较器与线性放大器的本质区别：无反馈/正反馈 vs 负反馈",
-    "过零比较器应用：正弦波→方波，脉冲整形，电平检测",
-    "无滞回的问题：噪声环境下输出抖动，引出滞回比较器的必要性",
-    "专用比较器（LM393/LM339）vs 通用运放做比较器的区别"
+    "本图的输入 ui 接反相端，因此比较逻辑与同相输入比较器相反",
+    "无滞回比较器只有一个门限，适合干净信号，不适合阈值附近噪声大的场景",
+    "R0 与限幅二极管是输出保护/整形部分，不是滞回反馈",
+    "从无滞回比较器自然引出滞回比较器：增加正反馈形成两个门限"
   ],
-  "image": "knowledge/circuits/images/无滞回电压比较器.jpg"
+  "image": "knowledge/circuits/images/无滞回电压比较器.jpg",
+  "image_annotations": {
+    "visible_components": ["R1", "R2", "R0", "DZ/双向限幅二极管", "A1"],
+    "visible_nodes": ["ui", "UR", "Uo", "+VCC", "-VCC", "GND"],
+    "input_terminal": "ui 经 R1 接反相端",
+    "reference_terminal": "UR 经 R2 接同相端",
+    "output_terminal": "Uo 位于 R0 右侧并接限幅二极管到地",
+    "notes": [
+      "图片中 R2 是参考输入电阻，不是输出电阻",
+      "图片中 R0 是输出限流电阻，Uo 端有双向限幅器件"
+    ]
+  }
 }

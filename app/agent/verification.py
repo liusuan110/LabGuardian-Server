@@ -72,7 +72,12 @@ def verify_draft_answer(
     if issues:
         hint = "请重写回答，并补充：" + "；".join(issues)
 
-    needs_micro, suspected = _should_request_micro_inspection(evidence, context_pack)
+    needs_micro, suspected = _should_request_micro_inspection(
+        evidence,
+        context_pack,
+        tool_results=tool_results,
+        draft_answer=text,
+    )
 
     return VerificationReport(
         passed=passed,
@@ -251,6 +256,9 @@ def _has_visual_uncertainty(evidence: RuntimeEvidence) -> bool:
 def _should_request_micro_inspection(
     evidence: RuntimeEvidence,
     context_pack: ContextPack,
+    *,
+    tool_results: Sequence[Any] | None = None,
+    draft_answer: str = "",
 ) -> tuple[bool, list]:
     """White-box gate for VLM micro-defect inspection.
 
@@ -261,6 +269,9 @@ def _should_request_micro_inspection(
       (`missing_component`, `incomplete_circuit`, `unknown`) AND we have at
       least one finding to ground the inspection on.
     """
+    if _is_circuit_kb_grounded_answer(tool_results, draft_answer):
+        return False, []
+
     suspected = suggest_defect_types(evidence.error_tags)
     if suspected:
         return True, suspected
@@ -278,3 +289,27 @@ def _should_request_micro_inspection(
         ]
 
     return False, []
+
+
+def _is_circuit_kb_grounded_answer(
+    tool_results: Sequence[Any] | None,
+    draft_answer: str,
+) -> bool:
+    if "本地电路知识库" not in (draft_answer or ""):
+        return False
+    for result in tool_results or []:
+        if isinstance(result, dict):
+            tool_name = result.get("tool_name")
+            status = result.get("status")
+            payload = result.get("payload") or {}
+        else:
+            tool_name = getattr(result, "tool_name", "")
+            status = getattr(result, "status", "")
+            payload = getattr(result, "payload", {}) or {}
+        if (
+            tool_name == "circuit_lookup_tool"
+            and status == "ok"
+            and payload.get("circuits")
+        ):
+            return True
+    return False
