@@ -1,0 +1,152 @@
+{
+  "schema_version": "teaching_scene_v1",
+  "scene_id": "exp_differential_amplifier",
+  "scene_name": "差分放大器（NPN 差分对）的实验研究",
+  "course": "模拟电子技术实验",
+  "source_materials": [
+    {
+      "title": "模拟电子技术基础（童诗白）差分放大器章节",
+      "path": "knowledge/circuits/differential_amplifier.json",
+      "source_type": "circuit_reference"
+    }
+  ],
+  "learning_goals": [
+    "理解差分放大器对共模和差模信号的不同响应。",
+    "掌握差分对的对称性要求：Rc1 ≈ Rc2，Q1/Q2 配对。",
+    "理解尾电流源（恒流源）相对尾电阻的优势，能解释 CMRR 公式。",
+    "能用示波器同时观察差模输入和单端/双端输出，测量差模增益。",
+    "能识别不对称失衡导致的共模窜入。"
+  ],
+  "required_equipment": [
+    "双电源（VCC=+12V, VEE=-12V）",
+    "函数信号源（两路或一路 + 反相器）",
+    "双通道示波器",
+    "万用表",
+    "面包板",
+    "2 个 NPN BJT（S8050 或 S9013，最好配对）",
+    "Rc1, Rc2: 5.1kΩ × 2（精度 ≤1%）",
+    "Re（尾电阻）: 5.6kΩ 或电位器，或恒流源电路",
+    "Rb1, Rb2（输入接地）: 10kΩ × 2"
+  ],
+  "circuit_principles": [
+    {
+      "topic": "差模与共模信号分解",
+      "summary": "任意两输入 V1, V2 都可分解为差模分量 Vd=(V1-V2) 和共模分量 Vc=(V1+V2)/2。差分对放大 Vd（差模增益 Ad），抑制 Vc（共模增益 Ac）；CMRR=|Ad/Ac| 越大抑制能力越强。"
+    },
+    {
+      "topic": "对称性要求",
+      "summary": "Rc1 必须严格等于 Rc2（误差 <1%），两个 BJT 必须 β 和 Vbe 匹配。任何不对称都会让「纯共模输入」产生输出（共模窜入差模），CMRR 下降。"
+    },
+    {
+      "topic": "尾电流源",
+      "summary": "理想差分对要求两管共发射极接一个理想电流源。教学中用 Re（尾电阻）近似，但 Re 越大共模增益越小、CMRR 越好。Re=5.6kΩ 是教学折中；用恒流源电路（如另一个 BJT + 基准电压）能让 CMRR 提升 100 倍以上。"
+    },
+    {
+      "topic": "差模增益公式",
+      "summary": "单端输出（取 Vc1 或 Vc2）：Ad = -Rc/(2·re')；双端输出（Vc1 - Vc2）：Ad = -Rc/re'。re' = 26mV / Ie_per_transistor。Ie=1mA → re'≈26Ω → Ad ≈ -200（单端） 或 -400（双端）。"
+    },
+    {
+      "topic": "CMRR 与共模抑制",
+      "summary": "CMRR = |Ad/Ac| ≈ (Rc/(2·re')) / (Rc/(2·Re+re')) ≈ Re/re'（Re >> re' 时）。Re=5.6kΩ, re'=26Ω → CMRR ≈ 215 ≈ 47dB；理想恒流源等效 Re→∞ → CMRR > 100dB。"
+    }
+  ],
+  "expected_circuits": [
+    {
+      "circuit_id": "diff_pair_tail_resistor",
+      "description": "用尾电阻的差分对（教学最简版）：Q1/Q2 共发射极接 Re=5.6kΩ 到 -VEE，Vcc=+12V 经 Rc1=Rc2=5.1kΩ 接两管集电极，两输入经 10kΩ 偏置到 GND。",
+      "components": [
+        "2 NPN (S8050 配对)",
+        "Rc1=5.1kΩ",
+        "Rc2=5.1kΩ",
+        "Re=5.6kΩ (或电位器)",
+        "Rb1=10kΩ",
+        "Rb2=10kΩ"
+      ],
+      "output_node": "BJT collectors (Vc1, Vc2)",
+      "measurement_notes": [
+        "先单端置零：V1=V2=0V，万用表测 Vc1, Vc2 应该几乎相等。如果差异 > 100mV，说明对称性差。",
+        "差模测试：V1 加小幅正弦，V2 接地；CH1 接 Vin1，CH2 接 Vc2（不是 Vc1，因为对管输出相位相反）。",
+        "双端输出：用示波器 MATH 通道 CH1-CH2 = Vc1 - Vc2，差模增益翻倍。"
+      ]
+    }
+  ],
+  "expected_measurements": [
+    {
+      "target": "symmetry_check",
+      "method": "万用表测 V1=V2=0 时的 Vc1 和 Vc2。",
+      "expectation": "Vc1 ≈ Vc2，差异 <100mV；如果差异 >500mV，电阻或管子不对称需要换。"
+    },
+    {
+      "target": "differential_gain",
+      "method": "V1 小信号、V2 接地，测 Vout_single=Vc2_pp / Vin_pp。",
+      "expectation": "Ad ≈ 100~200（取决于 Rc 和 Ie 设计）。"
+    },
+    {
+      "target": "common_mode_rejection",
+      "method": "V1=V2=共同小信号（直接连一起后再接信号源），观察输出。",
+      "expectation": "理想情况下输出几乎为零，实际能看到很小的输出。CMRR = Ad/Ac。"
+    }
+  ],
+  "common_faults": [
+    {
+      "fault_id": "diff_pair_collector_resistor_mismatch",
+      "error_tags": [
+        "component_value_mismatch",
+        "asymmetric_circuit"
+      ],
+      "related_error_codes": [
+        "PARAMETRIC_INVARIANT_VIOLATED"
+      ],
+      "symptom": "纯共模输入（两输入一起接小信号）时输出明显，CMRR 远低于预期。或者静态下 Vc1 ≠ Vc2 差异 >500mV。",
+      "likely_reason": "Rc1 和 Rc2 阻值不对称（比如用了 5.1kΩ + 4.7kΩ 混搭，或者电阻精度太差±10%）。差分对对 Rc 对称性要求极高。",
+      "fix_steps": [
+        "万用表测 Rc1, Rc2 实际值，要求误差 <2%。",
+        "用同一批次（或精度 1% 金属膜电阻）替换。",
+        "如果还不对称，检查两个三极管的 β 是否匹配（hFE 测量挡）。",
+        "学生应该理解：差分对的对称性是它「差分」能力的根基。"
+      ],
+      "teaching_hint": "这正好对应 template.parametric_invariants 中的 diff_pair_symmetry 规则。"
+    },
+    {
+      "fault_id": "diff_pair_tail_path_broken",
+      "error_tags": [
+        "missing_or_broken_connection",
+        "wrong_node_connection"
+      ],
+      "related_error_codes": [
+        "FLOATING_PIN",
+        "NODE_MISMATCH"
+      ],
+      "symptom": "两管 Vc1 = Vc2 ≈ VCC（两管都截止），任何输入都无放大。",
+      "likely_reason": "尾电阻 Re（或恒流源）没有正确接到 -VEE，两管发射极悬空或直接接 GND。差分对必须有一个电流回路到负电源才能让两管偏置在放大区。",
+      "fix_steps": [
+        "确认 Q1.E 和 Q2.E 接在一起（共发射极）。",
+        "确认 Re 一端接共发射极节点，另一端接 -VEE（不是 GND）。",
+        "万用表测共发射极节点电压，应该约 -0.7V（Vbe 之下 = 0V_base - 0.7）。",
+        "如果是恒流源版本，确认恒流源管的偏置也正确。"
+      ],
+      "teaching_hint": "差分对实验最容易忘记接 VEE。AI 助教需要明确区分 GND 和 VEE。"
+    }
+  ],
+  "rag_queries": [
+    "差分放大器为什么 Rc1 和 Rc2 必须相等？",
+    "什么是共模抑制比 CMRR？怎么测？",
+    "差分对的尾电阻为什么要接 VEE 不能接 GND？",
+    "为什么差分放大单端输出和双端输出增益不一样？",
+    "Q1 和 Q2 用同一型号但 β 差很多怎么办？",
+    "差分增益 Ad 的公式是什么？"
+  ],
+  "project_mapping": {
+    "preferred_validator_codes": [
+      "PARAMETRIC_INVARIANT_VIOLATED",
+      "FLOATING_PIN",
+      "NODE_MISMATCH",
+      "COMPONENT_MISSING"
+    ],
+    "preferred_rag_modes": [
+      "diagnose",
+      "principle_explanation",
+      "parametric_check"
+    ]
+  }
+}

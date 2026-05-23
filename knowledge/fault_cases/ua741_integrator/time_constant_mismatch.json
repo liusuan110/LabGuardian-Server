@@ -1,0 +1,32 @@
+{
+  "schema_version": "fault_case_v1",
+  "knowledge_id": "int_time_constant_mismatch",
+  "scene_id": "exp_ua741_integrator",
+  "fault_id": "int_time_constant_mismatch",
+  "error_tags": [
+    "component_value_mismatch",
+    "frequency_mismatch"
+  ],
+  "related_error_codes": [
+    "PARAMETRIC_INVARIANT_VIOLATED"
+  ],
+  "title": "积分时间常数与信号周期不匹配（波形非三角波）",
+  "trigger_conditions": [
+    "输出不像三角波",
+    "波形像圆角方波或饱和削顶三角波",
+    "τ=RinCf 与输入周期 T 比例失调"
+  ],
+  "reference_text": "积分时间常数 τ=Rin·Cf 与输入信号周期 T 的关系决定积分效果：τ << T 时积分还没完输入就翻转，输出像「跟随」输入；τ >> T 时一个周期内只积分一点点，输出几乎平直；τ ≈ T/2 ~ T/10 时三角波最清晰。教学典型 Rin=10kΩ, Cf=0.1μF (τ=1ms) 配 1kHz 方波 (T=1ms)。",
+  "reference_images": [],
+  "reference_waveforms": [],
+  "reference_schematics": [],
+  "fix_steps": [
+    "计算当前 τ = Rin·Cf 和输入周期 T = 1/f。",
+    "如果 τ >> T → 减小 Rin 或 Cf。",
+    "如果 τ << T → 增大 Rin 或 Cf。",
+    "如果输出三角波削顶 → 减小输入幅度（防止积分到 ±13V 饱和）。",
+    "标准组合：10kΩ + 0.1μF + 1kHz 方波 ±1V → 三角波 ±0.25V。"
+  ],
+  "student_answer_template": "你的波形不像三角波，可能是 τ=RinCf 与输入周期 T 不匹配。教学经验是 τ 约取 T 的 1/2 到 1/10。计算一下你当前的 τ 和 T 的比，告诉我数值我帮你算应该调哪个电阻或电容。",
+  "source_materials": []
+}

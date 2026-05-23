@@ -1,0 +1,32 @@
+{
+  "schema_version": "fault_case_v1",
+  "knowledge_id": "sum_input_resistors_shorted_at_node",
+  "scene_id": "exp_ua741_summing_amplifier",
+  "fault_id": "sum_input_resistors_shorted_at_node",
+  "error_tags": [
+    "missing_isolation_resistor",
+    "wrong_topology"
+  ],
+  "related_error_codes": [
+    "MULTIPLE_INPUTS_SHORTED",
+    "NODE_MISMATCH"
+  ],
+  "title": "加法器各路输入未独立分支（共用电阻或直接短接）",
+  "trigger_conditions": [
+    "Vo 完全不符合求和公式",
+    "两路信号源被互相影响（一路改变另一路也变）",
+    "电路只用了一个输入电阻接两路输入"
+  ],
+  "reference_text": "反相加法器要求每路输入信号 Vi 都有自己独立的电阻 Ri 接到虚地点 pin2。这样 pin2 处发生电流叠加 Σ(Vi/Ri)，每路互不干扰。如果两路输入共用同一个 Ri，或者在 Ri 之前就短接成一路，就不是加法器了——而且两个信号源会互相加载（低阻抗对拉），输出无意义。",
+  "reference_images": [],
+  "reference_waveforms": [],
+  "reference_schematics": [],
+  "fix_steps": [
+    "对照电路图，确认每一路输入都有独立的电阻 Ri。",
+    "两路 Ri 的另一端汇合到 pin2（虚地节点），而不是在源端汇合。",
+    "信号源的输出端各自接到自己的 Ri，不能直接短接。",
+    "改正后单独激励每一路验证响应正常，再两路同时输入验证叠加。"
+  ],
+  "student_answer_template": "加法器的核心是「每路输入有独立电阻、在虚地点电流叠加」。你目前可能让两路信号源直接短接了，或者共用了一个电阻——这样它们会互相加载，输出就不对了。给每路输入都加一个独立的 R（典型 10kΩ），让它们各自接到 pin2 处汇合。",
+  "source_materials": []
+}

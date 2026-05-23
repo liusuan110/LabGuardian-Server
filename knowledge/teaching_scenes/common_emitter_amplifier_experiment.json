@@ -1,0 +1,171 @@
+{
+  "schema_version": "teaching_scene_v1",
+  "scene_id": "exp_common_emitter_amplifier",
+  "scene_name": "共射极放大器（NPN 分压式偏置）的实验研究",
+  "course": "模拟电子技术实验",
+  "source_materials": [
+    {
+      "title": "模拟电子技术基础（童诗白）共射极放大器章节",
+      "path": "knowledge/circuits/common_emitter_amplifier.json",
+      "source_type": "circuit_reference"
+    }
+  ],
+  "learning_goals": [
+    "理解 NPN 三极管在共射极组态下的放大原理与小信号模型。",
+    "掌握分压式偏置电路的 Q 点设计：选择 Rb1、Rb2、Rc、Re 使 Vce ≈ VCC/2。",
+    "理解发射极旁路电容 C_E 对交流增益的影响。",
+    "能用示波器观察并测量交流电压增益 Av = Vout / Vin。",
+    "能识别 Q 点偏移（饱和/截止）以及波形削顶的典型现象。"
+  ],
+  "required_equipment": [
+    "直流稳压电源（VCC 典型 +12V）",
+    "函数信号源（1kHz 正弦，幅度 10mV~50mV）",
+    "双通道示波器",
+    "万用表",
+    "面包板",
+    "1 个 NPN BJT（S8050 或 S9013）",
+    "Rb1: 33kΩ~47kΩ",
+    "Rb2: 10kΩ",
+    "Rc: 2.2kΩ~5.1kΩ",
+    "Re: 1kΩ",
+    "Cin / Cout: 10μF 电解电容 × 2",
+    "C_E: 47μF~100μF 电解电容"
+  ],
+  "circuit_principles": [
+    {
+      "topic": "分压式偏置",
+      "summary": "Rb1 和 Rb2 把 VCC 分压到基极，Vb ≈ VCC·Rb2/(Rb1+Rb2)；发射极电压 Ve = Vb - Vbe ≈ Vb - 0.7V；发射极电流 Ie = Ve / Re ≈ Ic；这种偏置对 β 不敏感，温度稳定性好。"
+    },
+    {
+      "topic": "Q 点设计",
+      "summary": "静态工作点 Q 应位于放大区中点：Vce ≈ VCC/2 ≈ 6V（当 VCC=12V）。Q 点过高会进入截止区（输出底部削顶），过低会进入饱和区（输出顶部削顶）。"
+    },
+    {
+      "topic": "交流增益",
+      "summary": "中频段电压增益 Av = -β·Rc / (β·re' + Re·(1+β))；当发射极加旁路电容 C_E 时，Re 在交流通路上被短路，增益简化为 Av ≈ -Rc/re' = -Ic·Rc/26mV（room temp），典型值 -100 ~ -300（负号表示反相）。"
+    },
+    {
+      "topic": "输入/输出耦合电容",
+      "summary": "Cin 和 Cout 阻止直流分量影响信号源和负载，只让交流信号通过；隔直电容必须有正确极性（电解电容正极接电位高的一端）。截止频率 fL ≈ 1/(2π·R·C)，10μF 配 10kΩ 约 1.6Hz，足以传递音频信号。"
+    },
+    {
+      "topic": "C_E 旁路电容的作用",
+      "summary": "C_E 在交流通路上短路 Re，使交流增益不被发射极电阻「负反馈」压低；典型可提升增益 10-100 倍。**没有 C_E 时**：Av ≈ -Rc/Re ≈ -3 (Rc=3k, Re=1k)；**有 C_E 时**：Av ≈ -Rc/re' ≈ -100+。"
+    }
+  ],
+  "expected_circuits": [
+    {
+      "circuit_id": "ce_amp_voltage_divider_standard",
+      "description": "标准分压式共射放大：VCC=12V，Rb1=47kΩ + Rb2=10kΩ 分压，Rc=2.2kΩ，Re=1kΩ，Cin/Cout=10μF，C_E=47μF。Q 点设计 Ic≈2mA, Vce≈6V，预期交流增益 Av ≈ -200。",
+      "components": [
+        "1 NPN BJT (S8050)",
+        "Rb1=47kΩ",
+        "Rb2=10kΩ",
+        "Rc=2.2kΩ",
+        "Re=1kΩ",
+        "Cin=10μF",
+        "Cout=10μF",
+        "C_E=47μF"
+      ],
+      "output_node": "BJT collector via Cout",
+      "measurement_notes": [
+        "先断开输入信号，万用表 DC 挡测 Vc、Ve、Vb，确认 Vce ≈ 6V、Vbe ≈ 0.7V。",
+        "接入小幅正弦（10mV pp）输入，示波器 CH1 看 Vin，CH2 看 Vout，注意两通道共地。",
+        "输出与输入反相（180° 相位差），幅度放大 100-300 倍。"
+      ]
+    }
+  ],
+  "expected_measurements": [
+    {
+      "target": "static_quiescent_point",
+      "method": "万用表测 Vc, Ve, Vb 三个节点对 GND 的电压，计算 Vce=Vc-Ve, Vbe=Vb-Ve, Ic≈Ie=Ve/Re。",
+      "expectation": "Vce 在 4V~8V 之间（VCC=12V），Vbe ≈ 0.6~0.7V，Ic 在 1~5mA 区间。"
+    },
+    {
+      "target": "ac_voltage_gain",
+      "method": "示波器 dual-channel 同时测 Vin 和 Vout，Av = Vout_pp / Vin_pp（注意符号：反相所以 Av 为负）。",
+      "expectation": "有 C_E 时 |Av| > 50，无 C_E 时 |Av| 约等于 Rc/Re。"
+    },
+    {
+      "target": "output_waveform_symmetry",
+      "method": "缓慢增大输入幅度，观察输出何时出现削顶。",
+      "expectation": "Q 点设计正确时，输出在饱和削顶和截止削顶之间能对称摆动至少 ±2V。"
+    }
+  ],
+  "common_faults": [
+    {
+      "fault_id": "ce_quiescent_point_saturation",
+      "error_tags": [
+        "wrong_quiescent_point",
+        "component_value_mismatch"
+      ],
+      "related_error_codes": [
+        "NODE_MISMATCH"
+      ],
+      "symptom": "输出波形顶部被严重削平（饱和削顶），且 Vce 测出来很小（<1V）。",
+      "likely_reason": "Rb2 太大或 Rb1 太小，基极电位 Vb 过高，导致 Ic 过大，三极管进入饱和区。",
+      "fix_steps": [
+        "万用表测 Vb 和 Vce，确认 Vb > 1V 且 Vce < 1V → 饱和。",
+        "增大 Rb1（或减小 Rb2），目标使 Vce ≈ VCC/2。",
+        "教学组合：Rb1=47kΩ, Rb2=10kΩ 一般可得 Vce≈6V。"
+      ],
+      "teaching_hint": "Q 点偏置是共射放大最核心的概念，应优先引导学生用万用表测静态电压。"
+    },
+    {
+      "fault_id": "ce_missing_emitter_bypass_low_gain",
+      "error_tags": [
+        "missing_optional_component"
+      ],
+      "related_error_codes": [
+        "COMPONENT_MISSING"
+      ],
+      "symptom": "电路能正常放大但增益只有 3-5 倍，远低于预期的 100+。",
+      "likely_reason": "发射极旁路电容 C_E 没有装，或装了但电容失效/极性反接。此时 Re 在交流通路上不被短路，增益被发射极负反馈压低到 Av ≈ -Rc/Re。",
+      "fix_steps": [
+        "确认 C_E 已正确并联在 Re 两端（C_E 正极接发射极、负极接 GND）。",
+        "测 C_E 两端是否有 DC 偏置（应该约等于 Ve，约 2V）。",
+        "若 C_E 反接，会鼓包，必须更换。",
+        "C_E 推荐 47μF 以上，保证低频段不衰减。"
+      ],
+      "teaching_hint": "学生常忽略 C_E 因为电路图里它是「可选」。这个故障是讲解「交流通路 vs 直流通路」的最好案例。"
+    },
+    {
+      "fault_id": "ce_bjt_pin_reversed",
+      "error_tags": [
+        "polarity_or_orientation_error"
+      ],
+      "related_error_codes": [
+        "POLARITY_REVERSED"
+      ],
+      "symptom": "电路完全不工作，Vce ≈ VCC（截止），或者反过来三极管发热严重。",
+      "likely_reason": "S8050/9013 在面包板上插反了：把发射极 E 和集电极 C 调换了。NPN 反接后 PN 结方向错误，无法形成正常放大。",
+      "fix_steps": [
+        "万用表二极管挡测 Vbe：黑表笔接 E、红表笔接 B，应该读到 0.6~0.7V。如果读不到，引脚定位错了。",
+        "8050/9013 TO-92 封装：印字面正对自己，从左到右是 E-B-C。",
+        "拔出三极管，按 E-B-C 顺序重新插。"
+      ],
+      "teaching_hint": "AI 助教可以基于 datasheet 的 pinout 给出精确指引；此错误在教学现场极常见。"
+    }
+  ],
+  "rag_queries": [
+    "共射放大器的 Q 点怎么设计？",
+    "为什么我的共射放大输出严重削顶？",
+    "C_E 旁路电容到底起什么作用？",
+    "8050 三极管的引脚顺序是什么？",
+    "共射放大器增益公式 Av 怎么算？",
+    "Vce 应该测到多少才是正常的 Q 点？"
+  ],
+  "project_mapping": {
+    "preferred_validator_codes": [
+      "COMPONENT_MISSING",
+      "POLARITY_REVERSED",
+      "NODE_MISMATCH",
+      "FLOATING_PIN"
+    ],
+    "preferred_rag_modes": [
+      "diagnose",
+      "principle_explanation",
+      "guided_fix"
+    ]
+  }
+}

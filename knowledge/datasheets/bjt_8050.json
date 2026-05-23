@@ -1,0 +1,142 @@
+{
+  "document_id": "bjt_8050",
+  "title": "S8050 / 9013 NPN 小信号三极管（通用教学）",
+  "part_numbers": [
+    "S8050",
+    "8050",
+    "9013",
+    "S9013",
+    "2N2222",
+    "NPN"
+  ],
+  "source_path": "knowledge_base/S8050_NPN_datasheet.pdf",
+  "chunks": [
+    {
+      "chunk_id": "bjt_8050.pinout.figure.1",
+      "modality": "figure",
+      "title": "8050 / 9013 TO-92 封装引脚（教学版）",
+      "text": "TO-92 塑料封装从**平面（印字面）正对自己**看，引脚从左到右依次为：**E（发射极） / B（基极） / C（集电极）**。这是 S8050、S9013、S9014 等国产 NPN 小功率管的标准 EBC 顺序。**警告**：2N2222（美系）的顺序是 E-B-C 但 TO-18 金属封装；2N3904 是 E-B-C 但顺序与封装方向有关；不同型号容易搞混。识别诀窍：印字面朝外，电阻分压如果做错就是引脚定位反了。",
+      "page": 1,
+      "section": "Pin Configuration",
+      "keywords": [
+        "8050",
+        "9013",
+        "NPN",
+        "TO-92",
+        "pinout",
+        "引脚",
+        "EBC",
+        "发射极",
+        "基极",
+        "集电极"
+      ],
+      "asset_path": null,
+      "table_html": "<table><tr><th>引脚</th><th>名称</th><th>位置（印字面朝自己）</th></tr><tr><td>1</td><td>E (发射极, Emitter)</td><td>最左</td></tr><tr><td>2</td><td>B (基极, Base)</td><td>中间</td></tr><tr><td>3</td><td>C (集电极, Collector)</td><td>最右</td></tr></table>",
+      "bbox": null,
+      "source_ref": {
+        "page": 1,
+        "figure_id": "fig_to92_pinout"
+      }
+    },
+    {
+      "chunk_id": "bjt_8050.electrical.table.1",
+      "modality": "table",
+      "title": "S8050 关键电气参数",
+      "text": "S8050 是 NPN 小信号放大三极管，最大集电极电流 Ic=700~1500mA、最大耐压 Vceo=25V、Vcbo=40V、Vebo=5V；典型 β（hFE）= 85~300（按档分类：D 档 64~160，E 档 100~300）；放大区典型 Vbe ≈ 0.6~0.7V；饱和区 Vce(sat) < 0.5V；截止频率 fT 约 150MHz。**8050 vs 9013 教学差异**：两者参数非常接近，常被混用；8050 略大电流（1.5A），9013 较小（500mA）。差分对/共射小信号实验中两者可互换。",
+      "page": 2,
+      "section": "Electrical Characteristics",
+      "keywords": [
+        "8050",
+        "9013",
+        "Ic",
+        "Vceo",
+        "Vbe",
+        "hFE",
+        "β",
+        "饱和"
+      ],
+      "asset_path": null,
+      "table_html": "<table><tr><th>参数</th><th>符号</th><th>典型</th><th>最大</th><th>单位</th></tr><tr><td>集电极电流</td><td>Ic</td><td>500</td><td>1500</td><td>mA</td></tr><tr><td>耐压（CE 开路）</td><td>Vceo</td><td>25</td><td>40</td><td>V</td></tr><tr><td>电流放大系数</td><td>hFE (β)</td><td>120~200</td><td>300</td><td>—</td></tr><tr><td>基极导通电压</td><td>Vbe(on)</td><td>0.65</td><td>0.85</td><td>V</td></tr><tr><td>饱和压降</td><td>Vce(sat)</td><td>0.3</td><td>0.5</td><td>V</td></tr><tr><td>截止频率</td><td>fT</td><td>150</td><td>—</td><td>MHz</td></tr></table>",
+      "bbox": null,
+      "source_ref": {
+        "page": 2,
+        "table_id": "tab_electrical"
+      }
+    },
+    {
+      "chunk_id": "bjt_8050.common_emitter.text",
+      "modality": "text",
+      "title": "8050 共射放大器偏置经验法则",
+      "text": "共射放大器（CE）的典型偏置（分压式）：选定 Ic（教学典型 1~5mA），则 Re = (0.1~0.2)·VCC/Ic（教学常用 1kΩ）；Rc 选使 Vce 约等于 VCC/2（教学常用 2.2k~10kΩ）；分压电阻 Rb1+Rb2 满足 Vb ≈ Vbe+Ic·Re（≈0.7+Ic·Re），且 R_b1∥R_b2 << β·Re 以稳定 Q 点。**典型教学组合**：VCC=12V, Ic=2mA, Re=1kΩ, Rc=2kΩ → Vce≈12-2·(1+2)=6V (位于放大区中点)。输入耦合电容 Cin、输出耦合电容 Cout 选 10μF（电解，注意极性），发射极旁路电容 C_E 选 47μF~100μF（让中频段交流增益 ≈ -Rc/re' 而非 -Rc/Re，提升约 10-100 倍）。",
+      "page": 3,
+      "section": "Common-Emitter Amplifier Design Rules",
+      "keywords": [
+        "共射",
+        "common emitter",
+        "偏置",
+        "Q点",
+        "分压式",
+        "Rb1",
+        "Rb2",
+        "Rc",
+        "Re",
+        "C_E",
+        "旁路"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 3,
+        "figure_id": "fig_ce_bias"
+      }
+    },
+    {
+      "chunk_id": "bjt_8050.diff_pair.text",
+      "modality": "text",
+      "title": "8050 差分放大器（差分对）设计要点",
+      "text": "差分对（differential pair）由两个**严格匹配的 NPN**（Q1, Q2）+ 两个**严格匹配的集电极电阻**（Rc1≈Rc2，误差 <1%）+ **共享尾电流源**（理想是恒流源，教学常用尾电阻 Re 代替）组成。两管发射极短接到尾电阻顶端，尾电阻另一端接 -VEE。**关键规则**：(1) **Rc1 必须 ≈ Rc2**，否则会出现共模放大、CMRR 急剧下降；(2) 两管尽量选同一批次（甚至双管芯封装），保证 Vbe 匹配；(3) 尾电流 Ie ≈ (Vb_common - Vbe - (-VEE)) / Re，每管 Ic ≈ Ie/2；(4) 差分增益 Ad = Rc/(2·re')，共模增益 Ac = Rc/(2·Re+re')，CMRR = Ad/Ac ≈ Re/re'（Re 越大 CMRR 越好，这是为什么需要恒流源代替尾电阻）。教学典型：VCC=±12V, Ie=2mA, Rc=5.1kΩ, Re=5.6kΩ → 差分增益 ≈ 100。",
+      "page": 4,
+      "section": "Differential Pair",
+      "keywords": [
+        "差分对",
+        "differential pair",
+        "对称",
+        "CMRR",
+        "尾电流源",
+        "Rc",
+        "匹配"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 4,
+        "figure_id": "fig_diff_pair"
+      }
+    },
+    {
+      "chunk_id": "bjt_8050.failures.text",
+      "modality": "text",
+      "title": "8050 常见学生失效模式",
+      "text": "(1) **引脚装反**：把 E 和 C 倒置插。8050 是 NPN，反插后基极→发射极变成 PN 反偏，三极管基本不工作。**判断方法**：测 Vbe，正常应 ≈ 0.65V；如果 |Vbe| 接近 0 或负值，大概率引脚反了。(2) **基极悬空**：Rb 没接好或断了，三极管处于截止区，Vce ≈ VCC。(3) **β 个体差异**：同型号不同管子 β 可能 80 vs 250，差 3 倍，导致 Q 点偏移。差分对实验必须配对管或接受不对称结果。(4) **发射极旁路电容 C_E 接反**：电解电容反接会鼓包甚至爆浆；C_E 正极应接发射极（电位高的一端），负极接 GND。(5) **饱和导通**：Rb 太小或输入信号过大，基极过流，Vce(sat) 钳位在 0.3V，输出「削顶」。",
+      "page": 5,
+      "section": "Common Failures",
+      "keywords": [
+        "引脚反",
+        "悬空",
+        "β 差异",
+        "电容反接",
+        "饱和",
+        "失效"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 5,
+        "figure_id": "fig_failures"
+      }
+    }
+  ]
+}

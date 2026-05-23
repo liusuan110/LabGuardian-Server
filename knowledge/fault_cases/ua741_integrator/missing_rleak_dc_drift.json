@@ -1,0 +1,33 @@
+{
+  "schema_version": "fault_case_v1",
+  "knowledge_id": "int_missing_rleak_dc_drift",
+  "scene_id": "exp_ua741_integrator",
+  "fault_id": "int_missing_rleak_dc_drift",
+  "error_tags": [
+    "missing_dc_feedback_path",
+    "missing_optional_component"
+  ],
+  "related_error_codes": [
+    "COMPONENT_MISSING",
+    "PARAMETRIC_INVARIANT_VIOLATED"
+  ],
+  "title": "积分器缺少 R_leak（DC 增益无穷大导致饱和漂移）",
+  "trigger_conditions": [
+    "通电后输出立刻或缓慢漂移到 ±13V",
+    "Vin=0 时 Vo 也无法回到 0",
+    "Cf 两端没有并联电阻"
+  ],
+  "reference_text": "理想积分器直流增益为无穷大。UA741 的输入失调电压 Vio≈1mV 在 DC 上被无穷放大，电容 Cf 会被充满电，输出饱和到 ±13V。R_leak 与 Cf 并联，把 DC 增益限制在 -R_leak/Rin（教学典型 -10 倍），既允许中频段正常积分，又防止 DC 漂移。R_leak 推荐 10~100 倍 Rin。",
+  "reference_images": [],
+  "reference_waveforms": [],
+  "reference_schematics": [],
+  "fix_steps": [
+    "断电。检查 Cf 两端是否并联了 R_leak。",
+    "如果没有，加一个 R_leak（典型 100kΩ）并联在 Cf 两端。",
+    "通电，万用表测 Vo 静态应在 ±200mV 以内。",
+    "加方波输入观察输出应为三角波。",
+    "如果加了 R_leak 还漂移，检查它确实是与 Cf 并联（两端节点相同），不是接到别处。"
+  ],
+  "student_answer_template": "你的积分器输出饱和漂移是因为缺少 R_leak（漏电阻）。理想积分器对 DC 是无穷大增益，UA741 自身的 1mV 失调电压会被放到饱和。在 Cf 两端并联一个 100kΩ 电阻就解决——这个电阻给 Cf 一个直流泄漏通道，把 DC 增益限制在 R_leak/Rin。",
+  "source_materials": []
+}

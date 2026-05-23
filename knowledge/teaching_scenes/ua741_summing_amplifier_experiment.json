@@ -1,0 +1,150 @@
+{
+  "schema_version": "teaching_scene_v1",
+  "scene_id": "exp_ua741_summing_amplifier",
+  "scene_name": "UA741 反相加法器（求和放大器）的实验研究",
+  "course": "模拟电子技术实验",
+  "source_materials": [
+    {
+      "title": "UA741 反相加法器参考电路",
+      "path": "knowledge/references/ua741_inverting_summing_amp_v1.py",
+      "source_type": "reference_dsl"
+    }
+  ],
+  "learning_goals": [
+    "理解「虚地」在反相加法器中如何让多路输入独立叠加。",
+    "掌握加法器的输出公式 Vo = -(Rf/R1·V1 + Rf/R2·V2 + ...)。",
+    "理解等权重和加权两种实现方式。",
+    "能搭建 2 路输入的反相求和电路并验证 Vo = -(V1+V2)。"
+  ],
+  "required_equipment": [
+    "双电源（VCC=+15V, VEE=-15V）",
+    "两路函数信号源（或一路 + 直流电压源）",
+    "双通道示波器",
+    "万用表",
+    "面包板",
+    "1 个 UA741",
+    "R1=10kΩ, R2=10kΩ (输入电阻，等权)",
+    "Rf=10kΩ (反馈电阻)",
+    "Rp=4.7kΩ ≈ R1∥R2∥Rf (偏置补偿)"
+  ],
+  "circuit_principles": [
+    {
+      "topic": "虚地与电流叠加",
+      "summary": "反相加法器中 pin2（IN-）是「虚地」V- ≈ 0V。每路输入 Vi 经独立的 Ri 流出电流 Ii = Vi/Ri 进入 pin2 节点；这些电流叠加后全部流过 Rf：Σ(Vi/Ri) = -Vout/Rf。"
+    },
+    {
+      "topic": "等权求和",
+      "summary": "当所有 Ri 都相等（R1=R2=...=Rg），公式简化为 Vo = -(Rf/Rg)·(V1+V2+...)；如果 Rf=Rg，则 Vo = -(V1+V2+...)，实现纯求和（带反相）。"
+    },
+    {
+      "topic": "加权求和",
+      "summary": "不同输入用不同 Ri 实现加权：例如 V1 权重要为 V2 的 2 倍，则 R1=R2/2；这样可实现 DAC、信号混合等应用。"
+    },
+    {
+      "topic": "支路独立性",
+      "summary": "因为 V- 是虚地，每路输入互不影响——你改变 V1 不会通过电路反馈影响 V2 的源。这是反相加法器相对同相加法器最大的优势。"
+    },
+    {
+      "topic": "偏置补偿电阻",
+      "summary": "Rp = R1 ∥ R2 ∥ ... ∥ Rf，接在 pin3 与 GND 之间，补偿输入偏置电流引起的失调。教学中可省略，但精度要求高时应加。"
+    }
+  ],
+  "expected_circuits": [
+    {
+      "circuit_id": "ua741_summing_2input_equal_weight",
+      "description": "两路等权求和：V1, V2 各经 10kΩ 接 pin2，Rf=10kΩ，预期 Vo = -(V1+V2)。",
+      "components": [
+        "1 UA741",
+        "R1=10kΩ (V1 → pin2)",
+        "R2=10kΩ (V2 → pin2)",
+        "Rf=10kΩ (pin2 → pin6)",
+        "Rp=3.3kΩ ≈ 10k∥10k∥10k = 3.33k (pin3 → GND)"
+      ],
+      "output_node": "UA741 pin6 (OUT)",
+      "measurement_notes": [
+        "测试 1：V1=+1V (DC), V2=0V → Vo 应该 ≈ -1V。",
+        "测试 2：V1=0V, V2=+1V → Vo 应该 ≈ -1V（验证支路对称）。",
+        "测试 3：V1=+1V, V2=+1V → Vo 应该 ≈ -2V（验证叠加）。",
+        "测试 4：V1=+1V, V2=-0.5V → Vo 应该 ≈ -0.5V（正负叠加）。"
+      ]
+    }
+  ],
+  "expected_measurements": [
+    {
+      "target": "single_branch_gain",
+      "method": "每次只激励一路（另一路接 GND），测 |Vo/Vi|。",
+      "expectation": "应该 ≈ Rf/Ri = 1（等权时）。"
+    },
+    {
+      "target": "superposition_verification",
+      "method": "同时激励 V1 和 V2，验证 Vo = -(V1+V2)。",
+      "expectation": "误差 <5%（受 UA741 失调电压影响）。"
+    },
+    {
+      "target": "weighted_sum",
+      "method": "把 R1 换成 5kΩ（V1 权重为 V2 的 2 倍），重测。",
+      "expectation": "Vo = -(2V1 + V2)。"
+    }
+  ],
+  "common_faults": [
+    {
+      "fault_id": "sum_input_resistors_shorted_at_node",
+      "error_tags": [
+        "missing_isolation_resistor",
+        "wrong_topology"
+      ],
+      "related_error_codes": [
+        "MULTIPLE_INPUTS_SHORTED",
+        "NODE_MISMATCH"
+      ],
+      "symptom": "两路输入电压之间出现冲突，信号源被互相「拽」，Vo 完全不符合公式。",
+      "likely_reason": "两路输入信号源直接短接在一起（或两路共用一个 Ri），失去了「每路独立电阻」的隔离作用。在虚地节点之前，每路必须有自己的 Ri，否则信号源会互相加载。",
+      "fix_steps": [
+        "对照电路图：V1 应该有自己的 R1，V2 应该有自己的 R2，两个电阻在 pin2 处汇合（在 pin2 处汇合，不是在源处汇合）。",
+        "如果只有一个 Ri 接两路输入 → 加另一个 Ri。",
+        "如果两路输入在汇入 Ri 之前就短接 → 把它们物理分开，各走各的 Ri。",
+        "通电后再测每一路单独输入的响应。"
+      ],
+      "teaching_hint": "这个错误本质是没理解「虚地节点电流叠加」原理。AI 助教可以用电流方向图解释。"
+    },
+    {
+      "fault_id": "sum_signal_sources_not_common_ground",
+      "error_tags": [
+        "missing_common_ground",
+        "wrong_node_connection"
+      ],
+      "related_error_codes": [
+        "MULTIPLE_DISCONNECTED_SUBGRAPHS",
+        "FLOATING_PIN"
+      ],
+      "symptom": "Vo 完全不符合求和公式，波形漂移、抖动或者输出为零。",
+      "likely_reason": "两路信号源的「地」没有连到同一个 GND（共用参考地）。这在用两个独立电源/信号源时常见——它们的负端必须短接成共同 GND 才能成立「共地系统」。",
+      "fix_steps": [
+        "确认两个信号源（或电压源）的 GND/负端用一根导线短接，并接到面包板的 GND 总线。",
+        "确认 UA741 的 pin4 接 -15V，pin7 接 +15V，电源 GND 也接到面包板的 GND 总线。",
+        "万用表测两路信号的「-端」对面包板 GND 都应该是 0V（短路通）。",
+        "共地后重测加法器输出。"
+      ],
+      "teaching_hint": "这是多路信号源实验里最容易被忽略的问题，对应规则层的「多子图未连通」错误码。"
+    }
+  ],
+  "rag_queries": [
+    "UA741 加法器为什么每路输入要有自己的电阻？",
+    "反相加法器的输出公式是什么？",
+    "怎么实现加权求和？",
+    "两路输入信号源的地要不要连一起？",
+    "为什么加法器叫「虚地求和」？"
+  ],
+  "project_mapping": {
+    "preferred_validator_codes": [
+      "MULTIPLE_INPUTS_SHORTED",
+      "MULTIPLE_DISCONNECTED_SUBGRAPHS",
+      "FLOATING_PIN",
+      "COMPONENT_MISSING"
+    ],
+    "preferred_rag_modes": [
+      "diagnose",
+      "principle_explanation"
+    ]
+  }
+}

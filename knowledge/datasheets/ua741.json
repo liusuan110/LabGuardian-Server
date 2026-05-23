@@ -1,0 +1,185 @@
+{
+  "document_id": "ua741",
+  "title": "μA741 / UA741 通用运算放大器",
+  "part_numbers": [
+    "UA741",
+    "uA741",
+    "μA741",
+    "LM741",
+    "MC1741",
+    "741"
+  ],
+  "source_path": "knowledge_base/UA741_datasheet_TI.pdf",
+  "chunks": [
+    {
+      "chunk_id": "ua741.pinout.figure.1",
+      "modality": "figure",
+      "title": "UA741 DIP-8 引脚图（顶视）",
+      "text": "UA741 标准 DIP-8 封装顶视图，逆时针 1→8：pin1 OFFSET NULL（调零1）、pin2 IN-（反相输入）、pin3 IN+（同相输入）、pin4 VEE（负电源/-V）、pin5 OFFSET NULL（调零2）、pin6 OUT（输出）、pin7 VCC（正电源/+V）、pin8 NC（空脚）。**关键易错点**：pin4 是负电源不是地，pin7 是正电源；反相输入是 pin2 不是 pin3；初学者最常把 pin2/3 调换。",
+      "page": 1,
+      "section": "Pin Configuration",
+      "keywords": [
+        "UA741",
+        "DIP-8",
+        "pinout",
+        "引脚",
+        "反相输入",
+        "OFFSET NULL",
+        "VCC",
+        "VEE"
+      ],
+      "asset_path": null,
+      "table_html": "<table><tr><th>Pin</th><th>名称</th><th>功能</th></tr><tr><td>1</td><td>OFFSET N1</td><td>调零端 1（通常接 10kΩ 电位器中点的一端）</td></tr><tr><td>2</td><td>IN-</td><td>反相输入</td></tr><tr><td>3</td><td>IN+</td><td>同相输入</td></tr><tr><td>4</td><td>VEE / V-</td><td>负电源（典型 -15V，单电源时接 GND）</td></tr><tr><td>5</td><td>OFFSET N2</td><td>调零端 2</td></tr><tr><td>6</td><td>OUT</td><td>输出</td></tr><tr><td>7</td><td>VCC / V+</td><td>正电源（典型 +15V）</td></tr><tr><td>8</td><td>NC</td><td>未连接</td></tr></table>",
+      "bbox": null,
+      "source_ref": {
+        "page": 1,
+        "figure_id": "fig_pinout_dip8"
+      }
+    },
+    {
+      "chunk_id": "ua741.electrical.table.1",
+      "modality": "table",
+      "title": "UA741 关键电气参数（典型值 @ VCC=±15V, Ta=25°C）",
+      "text": "供电电压范围 ±5V ~ ±18V（典型 ±15V），单电源工作时 +5V~+36V；输入失调电压 Vio 典型 1mV、最大 5mV；输入偏置电流 Ib 典型 80nA；开环增益 Avol 典型 200V/mV (≈106dB)；GBW 增益带宽积约 1MHz；压摆率 SR 典型 0.5V/μs；输出短路自保护。**与 LM358/LM324 的关键差别**：UA741 必须双电源（典型 ±15V），不能直接驱动到 0V 输出；LM324 可以单电源工作，输出能拉到接近地。",
+      "page": 2,
+      "section": "Electrical Characteristics",
+      "keywords": [
+        "UA741",
+        "Vio",
+        "失调",
+        "GBW",
+        "压摆率",
+        "供电",
+        "VCC",
+        "VEE",
+        "双电源"
+      ],
+      "asset_path": null,
+      "table_html": "<table><tr><th>参数</th><th>符号</th><th>典型</th><th>最大</th><th>单位</th></tr><tr><td>供电电压</td><td>VCC-VEE</td><td>±15</td><td>±18</td><td>V</td></tr><tr><td>输入失调电压</td><td>Vio</td><td>1</td><td>5</td><td>mV</td></tr><tr><td>输入偏置电流</td><td>Ib</td><td>80</td><td>500</td><td>nA</td></tr><tr><td>输入失调电流</td><td>Iio</td><td>20</td><td>200</td><td>nA</td></tr><tr><td>开环增益</td><td>Avol</td><td>200</td><td>-</td><td>V/mV</td></tr><tr><td>共模抑制比</td><td>CMRR</td><td>90</td><td>-</td><td>dB</td></tr><tr><td>增益带宽积</td><td>GBW</td><td>1</td><td>-</td><td>MHz</td></tr><tr><td>压摆率</td><td>SR</td><td>0.5</td><td>-</td><td>V/μs</td></tr></table>",
+      "bbox": null,
+      "source_ref": {
+        "page": 2,
+        "table_id": "tab_electrical"
+      }
+    },
+    {
+      "chunk_id": "ua741.inverting.text",
+      "modality": "text",
+      "title": "UA741 反相放大器典型接法",
+      "text": "UA741 反相放大器的标准连接：输入信号 Vin 经 Rg（输入电阻）接 pin2（IN-，反相输入）；反馈电阻 Rf 跨接在 pin2 和 pin6（OUT）之间；pin3（IN+，同相输入）经 Rp（偏置补偿电阻）接 GND，Rp 推荐取值为 Rg ∥ Rf 以补偿输入偏置电流引起的失调。电源 pin7 接 +VCC（典型 +15V），pin4 接 -VEE（典型 -15V）。**闭环增益 Av = -Rf/Rg**（负号表示相位反转）。常用搭配：Rg=1kΩ + Rf=10kΩ → Av=-10。注意：输出最大摆幅约 ±13V（饱和于 VCC-2V / VEE+2V），输入信号过大会出现「削顶」。",
+      "page": 3,
+      "section": "Typical Applications - Inverting Amplifier",
+      "keywords": [
+        "反相放大",
+        "inverting",
+        "Rf",
+        "Rg",
+        "Rp",
+        "偏置补偿",
+        "增益",
+        "Av"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 3,
+        "figure_id": "fig_inverting_amp"
+      }
+    },
+    {
+      "chunk_id": "ua741.summing.text",
+      "modality": "text",
+      "title": "UA741 加法器（反相求和放大器）",
+      "text": "反相加法器：多路输入 V1, V2, ..., Vn 各经独立输入电阻 R1, R2, ..., Rn 接到 pin2（IN-），共用反馈电阻 Rf 接 pin2-pin6。输出 Vo = -(Rf/R1·V1 + Rf/R2·V2 + ... + Rf/Rn·Vn)。当 R1=R2=...=Rn=Rg 时简化为 Vo = -(Rf/Rg)·(V1+V2+...+Vn)，实现等权求和。pin3 接 Rp = Rg ∥ Rf ∥ R1∥...∥Rn 到 GND 做偏置补偿（实际可简化为 Rg ∥ Rf）。**关键易错**：(1) 各输入支路必须有独立的输入电阻，不能直接短接到 pin2；(2) 各输入若需要不同权重，靠 R 比例实现，不要去调整输入信号本身；(3) 实验中两路同时输入时，必须共用 GND 作为参考。",
+      "page": 4,
+      "section": "Typical Applications - Summing Amplifier",
+      "keywords": [
+        "加法器",
+        "summing",
+        "求和",
+        "反相",
+        "权重",
+        "偏置补偿"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 4,
+        "figure_id": "fig_summing_amp"
+      }
+    },
+    {
+      "chunk_id": "ua741.integrator.text",
+      "modality": "text",
+      "title": "UA741 反相积分器",
+      "text": "标准反相积分器：输入 Vin 经 Rin（输入电阻）接 pin2；反馈支路是电容 Cf（接 pin2-pin6），实现 Vo = -(1/RinCf)·∫Vin dt。**必须并联 R_leak（漏电阻）**：理想积分器在直流增益无穷大，任何输入失调（包括 UA741 的 Vio≈1mV 和 Ib≈80nA）都会让输出缓慢漂移到饱和。R_leak 与 Cf 并联，给电容一个直流泄漏通道，把直流增益限制在 Av_dc = -R_leak/Rin。R_leak 推荐取 10·Rin ~ 100·Rin（既能限制漂移又不破坏积分频段）。pin3 通常直接接 GND（或经一个 R_p 接 GND 补偿）。**典型参数选择**：Rin=10kΩ，Cf=0.1μF，R_leak=100kΩ → 时间常数 τ=RinCf=1ms，截止频率 fc=1/(2π·R_leak·Cf)≈16Hz。",
+      "page": 5,
+      "section": "Typical Applications - Integrator",
+      "keywords": [
+        "积分器",
+        "integrator",
+        "R_leak",
+        "漏电阻",
+        "Cf",
+        "饱和漂移",
+        "直流增益"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 5,
+        "figure_id": "fig_integrator"
+      }
+    },
+    {
+      "chunk_id": "ua741.power.text",
+      "modality": "text",
+      "title": "UA741 电源连接与单电源/双电源工作模式",
+      "text": "UA741 设计上是双电源运放：标准接法 pin7=+15V，pin4=-15V，信号参考 GND（介于 +VCC 和 -VEE 之间），输出可正可负摆幅。**单电源工作（不推荐但可行）**：pin7=+12V~+15V，pin4=GND，此时输入信号必须先抬升到 VCC/2 偏置点（用两个等值电阻 R 从 VCC 分压到 GND，中点接 pin3 同时通过隔直电容耦合输入）。但 UA741 单电源时输出无法拉到接近 0V（典型最低 ≈1.5V），所以教学示范优先使用双电源。**最常见错误**：(1) pin4 接到 GND 而非 -VEE，导致输出无法负向摆幅；(2) pin7/pin4 接反（极性反接），可能造成芯片永久损坏；(3) 忘接电源（pin4 或 pin7 悬空），输出无电压或不稳定。",
+      "page": 6,
+      "section": "Power Supply Connection",
+      "keywords": [
+        "电源",
+        "VCC",
+        "VEE",
+        "双电源",
+        "单电源",
+        "极性",
+        "VCC/2",
+        "偏置"
+      ],
+      "asset_path": null,
+      "table_html": null,
+      "bbox": null,
+      "source_ref": {
+        "page": 6,
+        "figure_id": "fig_power_connection"
+      }
+    },
+    {
+      "chunk_id": "ua741.absolute.table",
+      "modality": "table",
+      "title": "UA741 绝对最大额定值（Absolute Maximum Ratings）",
+      "text": "供电电压 ±22V，差分输入电压 ±30V，单端输入电压 ±15V（不能超过电源电压），存储温度 -65°C ~ +150°C，工作结温 max 125°C。**注意**：输入电压绝不能超过电源轨电压，否则内部输入级保护二极管会击穿。输出短路时间无限（自带短路保护，但持续短路会增加芯片功耗，应避免）。",
+      "page": 2,
+      "section": "Absolute Maximum Ratings",
+      "keywords": [
+        "absolute maximum",
+        "绝对最大",
+        "±22V",
+        "短路保护",
+        "击穿"
+      ],
+      "asset_path": null,
+      "table_html": "<table><tr><th>参数</th><th>额定值</th></tr><tr><td>供电电压</td><td>±22V</td></tr><tr><td>差分输入电压</td><td>±30V</td></tr><tr><td>单端输入电压</td><td>±15V（不超电源轨）</td></tr><tr><td>输出短路</td><td>无限制（自保护）</td></tr><tr><td>工作温度</td><td>0 ~ +70°C</td></tr><tr><td>存储温度</td><td>-65 ~ +150°C</td></tr></table>",
+      "bbox": null,
+      "source_ref": {
+        "page": 2,
+        "table_id": "tab_abs_max"
+      }
+    }
+  ]
+}

@@ -1,0 +1,171 @@
+{
+  "schema_version": "teaching_scene_v1",
+  "scene_id": "exp_ua741_inverting_amplifier",
+  "scene_name": "UA741 反相放大器的实验研究",
+  "course": "模拟电子技术实验",
+  "source_materials": [
+    {
+      "title": "UA741 反相放大器参考电路",
+      "path": "knowledge/references/ua741_inverting_amp_gain10_v1.py",
+      "source_type": "reference_dsl"
+    }
+  ],
+  "learning_goals": [
+    "理解运算放大器的「虚短」和「虚断」两个基本概念。",
+    "掌握反相放大器的闭环增益公式 Av = -Rf/Rg。",
+    "理解偏置补偿电阻 Rp = Rg ∥ Rf 的作用。",
+    "掌握 UA741 双电源（±15V）接线方法，认识 VEE 与 GND 的区别。",
+    "能识别输出饱和、削顶、相位反转等典型现象。"
+  ],
+  "required_equipment": [
+    "双电源（VCC=+15V, VEE=-15V）",
+    "函数信号源（1kHz 正弦，幅度 0.1V~1V）",
+    "双通道示波器",
+    "万用表",
+    "面包板",
+    "1 个 UA741 IC（DIP-8）",
+    "Rg: 1kΩ (输入电阻)",
+    "Rf: 10kΩ (反馈电阻)",
+    "Rp: 910Ω 或 1kΩ (偏置补偿，可选)"
+  ],
+  "circuit_principles": [
+    {
+      "topic": "虚短 (Virtual Short)",
+      "summary": "理想运放在负反馈下，反相输入端 V- 和同相输入端 V+ 的电压几乎相等：V- ≈ V+。反相放大器中 V+ 接 GND，所以 V- 也约为 0V（「虚地」）。"
+    },
+    {
+      "topic": "虚断 (Virtual Open)",
+      "summary": "理想运放输入阻抗无限大，流入 V- 和 V+ 的电流为零。所以流过 Rg 的电流全部流过 Rf：Vin/Rg = -Vout/Rf。"
+    },
+    {
+      "topic": "闭环增益",
+      "summary": "由虚短虚断推出：Av = Vout/Vin = -Rf/Rg。负号表示输出与输入相位差 180°。教学常用 Rg=1kΩ, Rf=10kΩ → Av = -10。"
+    },
+    {
+      "topic": "偏置补偿电阻 Rp",
+      "summary": "UA741 输入偏置电流 Ib ≈ 80nA，流过 Rg ∥ Rf 会在 V- 产生失调电压。在 V+ 也加同样阻值的 Rp = Rg ∥ Rf 接 GND，让 Ib 在 V+ 产生相同压降，差分抵消。教学示范可省略 Rp（影响很小），但严谨设计应加。"
+    },
+    {
+      "topic": "输出摆幅与饱和",
+      "summary": "UA741 输出最大约 ±13V（VCC=±15V 时，输出端饱和于 VCC-2V）。如果 Vin · |Av| 超过 13V，输出会被钳位削顶。教学常用 Vin=1V·sin → Vout=10V·sin 接近上限。"
+    }
+  ],
+  "expected_circuits": [
+    {
+      "circuit_id": "ua741_inverting_gain10",
+      "description": "UA741 反相放大 Av=-10：Vin → Rg=1kΩ → pin2(IN-)，Rf=10kΩ 跨 pin2-pin6(OUT)，pin3(IN+) 经 Rp=910Ω 到 GND，pin7=+15V，pin4=-15V。输入 0.5V·sin(1kHz)，预期输出 5V·sin 反相。",
+      "components": [
+        "1 UA741 (DIP-8)",
+        "Rg=1kΩ (Vin → pin2)",
+        "Rf=10kΩ (pin2 → pin6)",
+        "Rp=910Ω (pin3 → GND)"
+      ],
+      "output_node": "UA741 pin6 (OUT)",
+      "measurement_notes": [
+        "通电后先测 pin7=+15V, pin4=-15V，确认电源接对。",
+        "万用表测 pin6 DC 应该接近 0V（无输入时输出应在 0 附近）。",
+        "接入小幅输入 (Vin=0.1V)，示波器看 Vin 和 Vout 应该反相、幅度 10:1。",
+        "缓慢加大 Vin，到 1.5V 时输出会饱和削顶（接近 ±13V 上限）。"
+      ]
+    }
+  ],
+  "expected_measurements": [
+    {
+      "target": "static_output_zero",
+      "method": "无输入时（Vin 接 GND）万用表 DC 测 pin6。",
+      "expectation": "Vout ≈ 0V（可能有 ±50mV 失调，正常）。如果 Vout ≈ ±13V 说明电路异常（可能没接 GND 或 Rf 断了）。"
+    },
+    {
+      "target": "closed_loop_gain",
+      "method": "示波器双通道测 Vin_pp 和 Vout_pp，Av = -Vout/Vin（注意反相所以加负号）。",
+      "expectation": "|Av| 应该约等于 Rf/Rg = 10，误差 <5%。"
+    },
+    {
+      "target": "phase_inversion",
+      "method": "示波器 dual-channel 同时观察输入和输出。",
+      "expectation": "输出与输入精确反相（180° 相位差），输出峰值对应输入谷值。"
+    }
+  ],
+  "common_faults": [
+    {
+      "fault_id": "inv_vee_pin_not_connected",
+      "error_tags": [
+        "missing_power_connection",
+        "wrong_power_rail"
+      ],
+      "related_error_codes": [
+        "FLOATING_PIN",
+        "COMPONENT_MISSING"
+      ],
+      "symptom": "输出固定在 +13V 或 +15V（正向饱和），无论输入如何变化，输出不能向负向摆幅。",
+      "likely_reason": "pin4（VEE）没接到 -15V 而是悬空或接到了 GND。UA741 是双电源芯片，没有负电源就无法输出负电压。",
+      "fix_steps": [
+        "万用表测 pin4 对 GND 的电压，应该是 -15V。",
+        "如果 pin4 = 0V → 接到了 GND；如果 pin4 浮动 → 悬空。",
+        "接 pin4 到 -15V 电源轨。",
+        "确认双电源的负端真的有 -15V 输出（部分电源默认只输出正电压，需要拨 +/- 模式）。",
+        "重新通电，输出应能正常正负摆幅。"
+      ],
+      "teaching_hint": "UA741 vs LM358/LM324 的差异是这个错误的根源。LM324 单电源也能工作，学生常以为 UA741 也行。"
+    },
+    {
+      "fault_id": "inv_input_pins_swapped",
+      "error_tags": [
+        "polarity_or_orientation_error",
+        "wrong_pin_assignment"
+      ],
+      "related_error_codes": [
+        "POLARITY_REVERSED"
+      ],
+      "symptom": "电路正反馈：输出立刻饱和到 +13V 或 -13V 不可控，看不到正常的反相放大波形。",
+      "likely_reason": "Vin 接到了 pin3（IN+）而不是 pin2（IN-），Rf 也接错位置。这样运放是正反馈而不是负反馈，立即饱和。",
+      "fix_steps": [
+        "对照 UA741 datasheet 引脚图：pin2 = IN-（反相），pin3 = IN+（同相）。",
+        "确认 Rg 从 Vin 接到 pin2，Rf 从 pin2 跨到 pin6（OUT）。",
+        "确认 pin3 接到 GND（经过 Rp 或者直接）。",
+        "重新通电后输出应该回到 0V 附近，加输入信号有正常反相放大。"
+      ],
+      "teaching_hint": "pin2/pin3 是 UA741 教学中最高频的错误。AI 助教应该一开始就强调引脚号。"
+    },
+    {
+      "fault_id": "inv_gain_calculation_error",
+      "error_tags": [
+        "wrong_component_value"
+      ],
+      "related_error_codes": [
+        "PARAMETRIC_MISMATCH"
+      ],
+      "symptom": "电路工作但测得的增益与 -Rf/Rg 计算值不符（比如设计 Av=-10 但实测 -1）。",
+      "likely_reason": "(1) Rg 和 Rf 装反了：把大电阻当输入小电阻当反馈，增益从 -10 变成 -1/10。(2) 阻值标识错误：色环读错或电位器位置不对。(3) Rf 实际开路，电路变成开环放大无穷大但被电源限幅。",
+      "fix_steps": [
+        "断电，万用表测 Rg 和 Rf 实际阻值。",
+        "确认 Rg 在 Vin → pin2 路径上，Rf 在 pin2 → pin6 路径上。",
+        "重新装好确认位置后通电测增益。",
+        "如果增益异常大且不稳定，检查 Rf 是否接触不良造成开环。"
+      ],
+      "teaching_hint": "这是「虚短虚断」理论与实际器件失配的最好教学案例。"
+    }
+  ],
+  "rag_queries": [
+    "UA741 反相放大器的 pin2 和 pin3 接什么？",
+    "为什么我的 UA741 输出一直是 +13V 不变？",
+    "什么是虚短和虚断？",
+    "Rf 和 Rg 怎么选？",
+    "UA741 必须用双电源吗？",
+    "反相放大器的偏置补偿电阻 Rp 起什么作用？"
+  ],
+  "project_mapping": {
+    "preferred_validator_codes": [
+      "FLOATING_PIN",
+      "POLARITY_REVERSED",
+      "COMPONENT_MISSING",
+      "NODE_MISMATCH",
+      "PARAMETRIC_MISMATCH"
+    ],
+    "preferred_rag_modes": [
+      "diagnose",
+      "principle_explanation",
+      "guided_fix"
+    ]
+  }
+}

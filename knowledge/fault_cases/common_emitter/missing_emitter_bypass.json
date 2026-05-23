@@ -1,0 +1,31 @@
+{
+  "schema_version": "fault_case_v1",
+  "knowledge_id": "ce_missing_emitter_bypass_low_gain",
+  "scene_id": "exp_common_emitter_amplifier",
+  "fault_id": "ce_missing_emitter_bypass_low_gain",
+  "error_tags": [
+    "missing_optional_component"
+  ],
+  "related_error_codes": [
+    "COMPONENT_MISSING"
+  ],
+  "title": "共射放大缺少发射极旁路电容 C_E（增益过低）",
+  "trigger_conditions": [
+    "电路工作但放大倍数只有 3-5 倍",
+    "Q 点测得正常（Vce ≈ VCC/2）",
+    "电路图缺 C_E 或 C_E 失效/反接"
+  ],
+  "reference_text": "发射极旁路电容 C_E 在交流通路上短路 Re，把交流增益从 -Rc/Re（约 -3）提升到 -Rc/re'（约 -100+）。没有 C_E 时电路依然能「放大」，但只是 Re 比例的小放大，看起来「不像在放大」。",
+  "reference_images": [],
+  "reference_waveforms": [],
+  "reference_schematics": [],
+  "fix_steps": [
+    "查电路图，确认 C_E 是否已连接在 Re 两端。",
+    "如果 C_E 已装，检查极性：正极接发射极（电位高的一端），负极接 GND。",
+    "电解电容反接会鼓包，必须更换。",
+    "C_E 推荐 47μF~100μF；电容值过小会让低频段增益下降。",
+    "添加/修复后重测增益，应能达到 100 倍以上。"
+  ],
+  "student_answer_template": "你的电路放大倍数只有几倍，符合「没有发射极旁路电容」的特征。C_E 是并联在发射极电阻 Re 两端的电解电容（47μF~100μF），它让交流增益从 Rc/Re 升级到 Rc/re'，通常能提升 30-100 倍。检查一下你的面包板上 Re 两端是否并了 C_E，注意正极朝向。",
+  "source_materials": []
+}

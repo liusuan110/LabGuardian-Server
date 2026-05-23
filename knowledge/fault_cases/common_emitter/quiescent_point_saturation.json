@@ -1,0 +1,32 @@
+{
+  "schema_version": "fault_case_v1",
+  "knowledge_id": "ce_quiescent_point_saturation",
+  "scene_id": "exp_common_emitter_amplifier",
+  "fault_id": "ce_quiescent_point_saturation",
+  "error_tags": [
+    "wrong_quiescent_point",
+    "component_value_mismatch"
+  ],
+  "related_error_codes": [
+    "NODE_MISMATCH"
+  ],
+  "title": "共射放大 Q 点过低（饱和削顶）",
+  "trigger_conditions": [
+    "输出波形顶部被严重削平",
+    "万用表测 Vce < 1V",
+    "Rb1 太小或 Rb2 太大"
+  ],
+  "reference_text": "共射放大的 Q 点应该让 Vce ≈ VCC/2（VCC=12V 时约 6V）。如果 Vce 测出来很小（<1V），三极管已经进入饱和区，集电极电流不能继续增大，输出波形顶部被钳位。需要调整偏置电阻使基极电压 Vb 下降。",
+  "reference_images": [],
+  "reference_waveforms": [],
+  "reference_schematics": [],
+  "fix_steps": [
+    "断电，万用表 DC 挡测 Vc, Ve, Vb 三个节点对 GND 的电压。",
+    "计算 Vce = Vc - Ve。若 Vce < 1V → 饱和。",
+    "增大 Rb1（或减小 Rb2）使 Vb 下降约 0.3-0.5V。",
+    "教学推荐组合：Rb1=47kΩ, Rb2=10kΩ, Rc=2.2kΩ, Re=1kΩ → Vce≈6V, Ic≈2mA。",
+    "重新通电、测 Vce 在 4-8V 区间后再接入信号。"
+  ],
+  "student_answer_template": "你的共射输出顶部削平了，这是 Q 点偏低进入饱和的典型现象。先断电用万用表测 Vce，如果不到 1V 就需要调大 Rb1（或调小 Rb2），目标是让 Vce 回到 VCC/2 附近（约 6V）。",
+  "source_materials": []
+}

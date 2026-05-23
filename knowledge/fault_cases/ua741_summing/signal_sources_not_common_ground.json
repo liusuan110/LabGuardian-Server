@@ -1,0 +1,32 @@
+{
+  "schema_version": "fault_case_v1",
+  "knowledge_id": "sum_signal_sources_not_common_ground",
+  "scene_id": "exp_ua741_summing_amplifier",
+  "fault_id": "sum_signal_sources_not_common_ground",
+  "error_tags": [
+    "missing_common_ground",
+    "wrong_node_connection"
+  ],
+  "related_error_codes": [
+    "MULTIPLE_DISCONNECTED_SUBGRAPHS",
+    "FLOATING_PIN"
+  ],
+  "title": "两路信号源未共地（参考地浮动）",
+  "trigger_conditions": [
+    "Vo 漂移、抖动或为零",
+    "用两个独立信号源/电源",
+    "面包板上出现多个 GND 子图未连通"
+  ],
+  "reference_text": "多路信号求和要求所有信号源、电源、运放都共用同一个 GND 参考。学生在用两个独立信号源时常忘记把它们的「-端」短接到共同 GND，导致两个信号实际是在不同参考系下产生的电压差，加法器无法正确叠加。",
+  "reference_images": [],
+  "reference_waveforms": [],
+  "reference_schematics": [],
+  "fix_steps": [
+    "找到所有的「地」：信号源 1 的 GND、信号源 2 的 GND、双电源的 GND、面包板的 GND 总线。",
+    "用一根导线把它们全部短接到面包板的 GND 总线。",
+    "万用表测两路信号的「-端」对面包板 GND 应该都是 0V（短路通）。",
+    "共地后重新通电测加法器输出，应符合 Vo = -(V1+V2)。"
+  ],
+  "student_answer_template": "如果你用了两个独立的信号源（或电压源），它们的「-端」必须共地。否则它们各自有自己的参考点，求和电路接到的不是统一坐标系下的电压。用一根线把所有的 GND 短接到面包板 GND 总线就解决了。",
+  "source_materials": []
+}

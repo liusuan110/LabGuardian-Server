@@ -1,0 +1,32 @@
+{
+  "schema_version": "fault_case_v1",
+  "knowledge_id": "inv_vee_pin_not_connected",
+  "scene_id": "exp_ua741_inverting_amplifier",
+  "fault_id": "inv_vee_pin_not_connected",
+  "error_tags": [
+    "missing_power_connection",
+    "wrong_power_rail"
+  ],
+  "related_error_codes": [
+    "FLOATING_PIN",
+    "COMPONENT_MISSING"
+  ],
+  "title": "UA741 pin4 (VEE) 未接负电源",
+  "trigger_conditions": [
+    "输出固定在 +13V 或 +15V 不变",
+    "改变输入信号输出无响应",
+    "万用表测 pin4 = 0V 或悬空"
+  ],
+  "reference_text": "UA741 是双电源运放，pin7 接 +VCC（典型 +15V），pin4 必须接 -VEE（典型 -15V）。学生常把 pin4 接到 GND（因为习惯了 LM324/LM358 这种单电源运放），导致 UA741 内部偏置错误，输出无法向负向摆幅，被钳位在正向饱和。",
+  "reference_images": [],
+  "reference_waveforms": [],
+  "reference_schematics": [],
+  "fix_steps": [
+    "万用表 DC 挡测 pin4 对 GND 的电压。",
+    "正常应读到 -15V；如果是 0V → 接到了 GND，重接到负电源轨。",
+    "如果电源本身没有 -15V 输出，检查双电源是否设置在双极性输出模式。",
+    "改正后输出应能正负摆幅。"
+  ],
+  "student_answer_template": "你的输出卡在 +13V 是因为 UA741 的 pin4（VEE）没有接 -15V。UA741 必须用双电源，pin7=+15V 配 pin4=-15V。先测 pin4 电压，如果是 0V 就是接到 GND 了，要接到电源的负输出端。",
+  "source_materials": []
+}

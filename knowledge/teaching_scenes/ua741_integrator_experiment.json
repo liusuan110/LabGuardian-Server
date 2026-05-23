@@ -1,0 +1,153 @@
+{
+  "schema_version": "teaching_scene_v1",
+  "scene_id": "exp_ua741_integrator",
+  "scene_name": "UA741 反相积分器的实验研究",
+  "course": "模拟电子技术实验",
+  "source_materials": [
+    {
+      "title": "UA741 积分器参考电路",
+      "path": "knowledge/references/ua741_integrator_v1.py",
+      "source_type": "reference_dsl"
+    }
+  ],
+  "learning_goals": [
+    "理解积分器作为有源 RC 低通滤波器的本质。",
+    "掌握积分公式 Vo = -(1/RinCf)·∫Vin dt。",
+    "理解漏电阻 R_leak 在防止直流漂移中的关键作用。",
+    "能观察方波输入下的三角波输出，并测量积分时间常数。",
+    "能识别「无 R_leak 时输出饱和漂移」这一典型现象。"
+  ],
+  "required_equipment": [
+    "双电源（VCC=+15V, VEE=-15V）",
+    "函数信号源（方波 1kHz, ±1V）",
+    "双通道示波器",
+    "万用表",
+    "面包板",
+    "1 个 UA741",
+    "Rin=10kΩ (输入电阻)",
+    "Cf=0.1μF (反馈电容)",
+    "R_leak=100kΩ (漏电阻，并联在 Cf 两端)",
+    "Rp=10kΩ (可选偏置补偿)"
+  ],
+  "circuit_principles": [
+    {
+      "topic": "积分原理",
+      "summary": "由虚地虚断推出：流过 Rin 的电流 i = Vin/Rin 全部流过 Cf。电容电流 i = Cf·dVc/dt，Vc = -Vo（虚地，Cf 两端电压等于 -Vo）。所以 -Cf·dVo/dt = Vin/Rin → Vo = -(1/RinCf)·∫Vin dt。"
+    },
+    {
+      "topic": "时间常数 τ",
+      "summary": "积分时间常数 τ = Rin·Cf。教学典型 Rin=10kΩ, Cf=0.1μF → τ = 1ms。输入方波周期 T 应该明显大于 τ（否则积分还没完成就翻转）。"
+    },
+    {
+      "topic": "方波 → 三角波",
+      "summary": "对称方波（±1V）积分后得到对称三角波。三角波峰峰值 Vo_pp = Vin·(T/4)/(Rin·Cf)·2 = Vin·T/(2·Rin·Cf)。1V±方波、1kHz、τ=1ms → Vo_pp = 1·1ms/(2·1ms) = 0.5V。"
+    },
+    {
+      "topic": "R_leak 的关键作用",
+      "summary": "理想积分器直流增益无穷大，UA741 的输入失调电压 Vio≈1mV 和偏置电流 Ib≈80nA 会让输出在数秒内漂移到饱和（±13V），完全无法工作。R_leak 与 Cf 并联，给 Cf 一个直流泄漏通道，把直流增益限制在 -R_leak/Rin。R_leak 推荐 10~100 倍 Rin（10·Rin 抑制漂移，100·Rin 兼顾积分精度）。"
+    },
+    {
+      "topic": "截止频率",
+      "summary": "加了 R_leak 后，电路变成一阶有源低通：fc = 1/(2π·R_leak·Cf)。R_leak=100kΩ, Cf=0.1μF → fc ≈ 16Hz。低于 fc 的信号被「压扁」为放大；高于 fc 的信号被正常积分。输入信号频率应 >> fc。"
+    }
+  ],
+  "expected_circuits": [
+    {
+      "circuit_id": "ua741_integrator_with_leak",
+      "description": "标准积分器：Vin → Rin=10kΩ → pin2；Cf=0.1μF 跨 pin2-pin6；R_leak=100kΩ 与 Cf 并联；pin3 → Rp=10kΩ → GND。",
+      "components": [
+        "1 UA741",
+        "Rin=10kΩ",
+        "Cf=0.1μF",
+        "R_leak=100kΩ (并联 Cf)",
+        "Rp=10kΩ (可选)"
+      ],
+      "output_node": "UA741 pin6 (OUT)",
+      "measurement_notes": [
+        "通电先确认 Vo 静态在 0V 附近（万用表测）。如果飘到 ±13V 说明 R_leak 没接好。",
+        "输入 1kHz 对称方波，幅度 ±1V，示波器 CH1=Vin, CH2=Vo。",
+        "Vo 应该是对称三角波，峰峰值约 0.5V，相位上下颠倒。",
+        "可以扫频测低频（10Hz 以下）时输出会被 R_leak 限幅成放大状态。"
+      ]
+    }
+  ],
+  "expected_measurements": [
+    {
+      "target": "static_offset",
+      "method": "无输入信号时（Vin 接 GND），万用表测 pin6 DC 电压。",
+      "expectation": "Vo 应在 ±200mV 以内（R_leak 限制了漂移）。如果 |Vo| > 5V 说明 R_leak 失效或漏装。"
+    },
+    {
+      "target": "integration_waveform",
+      "method": "方波 ±1V 输入，示波器观察输出。",
+      "expectation": "输出是三角波，斜率与 Vin/Rin/Cf 一致。"
+    },
+    {
+      "target": "frequency_response",
+      "method": "扫频从 10Hz 到 10kHz，测每个频点 |Vo/Vin|。",
+      "expectation": "fc≈16Hz 以下平坦（放大状态），fc 以上以 -20dB/dec 衰减（积分状态）。"
+    }
+  ],
+  "common_faults": [
+    {
+      "fault_id": "int_missing_rleak_dc_drift",
+      "error_tags": [
+        "missing_dc_feedback_path",
+        "missing_optional_component"
+      ],
+      "related_error_codes": [
+        "COMPONENT_MISSING",
+        "PARAMETRIC_INVARIANT_VIOLATED"
+      ],
+      "symptom": "通电后输出立刻或缓慢漂移到 ±13V 饱和，无论输入什么都被钳位，看不到积分波形。",
+      "likely_reason": "缺少 R_leak（漏电阻）。理想积分器对 DC 增益无穷大，UA741 的 Vio 和 Ib 会让 Cf 在几秒内充满电，输出饱和。",
+      "fix_steps": [
+        "断电，检查 Cf 两端是否并联了 R_leak（典型 100kΩ）。",
+        "如果没有，并上一个 R_leak（取值 10·Rin ~ 100·Rin）。",
+        "重新通电后输出应该在 0V 附近稳定，加方波输入能看到三角波。",
+        "如果 R_leak 装了但依然漂移，检查 R_leak 是否真正与 Cf 并联（不是串联），万用表二极管挡测两点应短路通。"
+      ],
+      "teaching_hint": "这是积分器最经典的「理论 vs 现实」教学案例。AI 助教应该直接画出 R_leak ∥ Cf 的图示。"
+    },
+    {
+      "fault_id": "int_time_constant_mismatch",
+      "error_tags": [
+        "component_value_mismatch",
+        "frequency_mismatch"
+      ],
+      "related_error_codes": [
+        "PARAMETRIC_INVARIANT_VIOLATED"
+      ],
+      "symptom": "输出虽然不漂移但波形不像三角波——可能是带圆角的「几乎方波」，或者饱和削顶的三角波。",
+      "likely_reason": "(1) τ=RinCf 与输入周期 T 关系不合理：τ >> T 时积分几乎是直线（增益太小看不到三角波）；τ << T 时积分还没完就翻转，输出像跟随的方波。(2) 输入幅度过大，积分到 ±13V 饱和。",
+      "fix_steps": [
+        "计算 τ = Rin·Cf 和输入周期 T = 1/f。",
+        "经验：τ ≈ T/2 ~ T/10 才能看到清晰的三角波。",
+        "如果 τ 太小：增大 Rin 或 Cf。",
+        "如果输入饱和：减小输入幅度，或者增大 Rin/Cf 减慢积分速度。",
+        "标准教学组合：Rin=10kΩ, Cf=0.1μF (τ=1ms), 输入 1kHz (T=1ms) → 1 个周期内积分到约 0.25V，三角波清晰。"
+      ],
+      "teaching_hint": "这个故障对应「时间常数与信号周期匹配」的教学要点，是 RC 一阶电路概念在有源电路中的延伸。"
+    }
+  ],
+  "rag_queries": [
+    "为什么积分器一定要并联 R_leak？",
+    "积分器输出一通电就饱和是怎么回事？",
+    "积分时间常数 τ 怎么选？",
+    "积分器方波输入为什么是三角波输出？",
+    "R_leak 应该选多大？",
+    "积分器和有源低通滤波器是一回事吗？"
+  ],
+  "project_mapping": {
+    "preferred_validator_codes": [
+      "COMPONENT_MISSING",
+      "PARAMETRIC_INVARIANT_VIOLATED",
+      "FLOATING_PIN"
+    ],
+    "preferred_rag_modes": [
+      "diagnose",
+      "principle_explanation",
+      "parametric_check"
+    ]
+  }
+}

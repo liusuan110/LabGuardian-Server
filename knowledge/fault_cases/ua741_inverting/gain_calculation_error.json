@@ -1,0 +1,30 @@
+{
+  "schema_version": "fault_case_v1",
+  "knowledge_id": "inv_gain_calculation_error",
+  "scene_id": "exp_ua741_inverting_amplifier",
+  "fault_id": "inv_gain_calculation_error",
+  "error_tags": [
+    "wrong_component_value"
+  ],
+  "related_error_codes": [
+    "PARAMETRIC_MISMATCH"
+  ],
+  "title": "Rf 和 Rg 装反（增益变倒数）",
+  "trigger_conditions": [
+    "电路工作但增益与设计不符",
+    "设计 Av=-10 但实测 Av=-0.1（差 100 倍）",
+    "增益是设计值的倒数"
+  ],
+  "reference_text": "反相放大增益 Av = -Rf/Rg，其中 Rg 是输入电阻（Vin → pin2），Rf 是反馈电阻（pin2 → pin6）。如果学生把 1kΩ 装到反馈、10kΩ 装到输入，增益就从 -10 变成 -0.1。",
+  "reference_images": [],
+  "reference_waveforms": [],
+  "reference_schematics": [],
+  "fix_steps": [
+    "万用表测两个电阻的实际阻值。",
+    "确认大值的（10kΩ）在 pin2-pin6 之间（反馈位置）。",
+    "确认小值的（1kΩ）在 Vin-pin2 之间（输入位置）。",
+    "调换位置后重测增益。"
+  ],
+  "student_answer_template": "你的增益是设计值的倒数，多半是 Rf 和 Rg 装反了。反相放大的 Av = -Rf/Rg，反馈电阻（pin2 → pin6）应该是大的那个，输入电阻（Vin → pin2）应该是小的。互换一下就好。",
+  "source_materials": []
+}

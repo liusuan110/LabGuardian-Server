@@ -1,0 +1,31 @@
+{
+  "schema_version": "fault_case_v1",
+  "knowledge_id": "ce_bjt_pin_reversed",
+  "scene_id": "exp_common_emitter_amplifier",
+  "fault_id": "ce_bjt_pin_reversed",
+  "error_tags": [
+    "polarity_or_orientation_error"
+  ],
+  "related_error_codes": [
+    "POLARITY_REVERSED"
+  ],
+  "title": "S8050 / 9013 三极管引脚装反",
+  "trigger_conditions": [
+    "电路完全不工作",
+    "Vce ≈ VCC（接近 12V，三极管截止）",
+    "或三极管异常发热"
+  ],
+  "reference_text": "国产 NPN 小信号管 S8050、S9013 的 TO-92 封装从印字面正对自己看，引脚顺序是 **E（左）- B（中）- C（右）**。学生常按 C-B-E 顺序插入（参考过欧美教材或别的型号），导致发射极和集电极互换，PN 结方向反向，三极管不能正常放大。",
+  "reference_images": [],
+  "reference_waveforms": [],
+  "reference_schematics": [],
+  "fix_steps": [
+    "断电，把三极管从面包板拔出。",
+    "确认型号是 S8050 或 S9013（NPN），印字面朝自己。",
+    "用万用表二极管挡验证：黑表笔接预期的 E，红表笔接预期的 B，应读到约 0.65V（Vbe 正常）。",
+    "按 E-B-C 顺序重新插入（左中右）。",
+    "重新通电测 Vce ≈ VCC/2 即恢复正常。"
+  ],
+  "student_answer_template": "测一下 Vce 看是不是接近 VCC，如果是，多半是三极管装反了。S8050/9013 的 TO-92 封装印字面朝外，引脚从左到右是 E-B-C。用万用表二极管挡测 Vbe，正常应该约 0.65V，没读到就是反了。",
+  "source_materials": []
+}

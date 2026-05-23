@@ -1,0 +1,32 @@
+{
+  "schema_version": "fault_case_v1",
+  "knowledge_id": "diff_pair_tail_path_broken",
+  "scene_id": "exp_differential_amplifier",
+  "fault_id": "diff_pair_tail_path_broken",
+  "error_tags": [
+    "missing_or_broken_connection",
+    "wrong_node_connection"
+  ],
+  "related_error_codes": [
+    "FLOATING_PIN",
+    "NODE_MISMATCH"
+  ],
+  "title": "差分对尾电阻未接 VEE（两管截止）",
+  "trigger_conditions": [
+    "Vc1 ≈ Vc2 ≈ VCC",
+    "任意输入都无输出响应",
+    "万用表测共发射极节点悬空或异常"
+  ],
+  "reference_text": "差分对需要一个尾电流回路：两管发射极短接后通过 Re（尾电阻）或恒流源到 **-VEE（负电源轨）**。学生常把 Re 接到 GND 而非 VEE，此时共射极节点电位无法低于 0V，两管 Vbe 无法达到 0.7V 导通，整个差分对截止。",
+  "reference_images": [],
+  "reference_waveforms": [],
+  "reference_schematics": [],
+  "fix_steps": [
+    "确认两个 BJT 的发射极是不是接在一起（共发射极节点）。",
+    "确认 Re（教学常用 5.6kΩ）一端接共发射极节点，另一端接 **-VEE 而不是 GND**。",
+    "万用表测共发射极节点对 GND 电压，应该约 -0.7V（两管 Vbe 之下）。",
+    "如果你只有单电源 +12V，需要把两个输入加 +6V 偏置（VCC/2），然后尾电阻接 GND；这是单电源版本，参数要重算。"
+  ],
+  "student_answer_template": "你的差分对两管都截止了（Vc1 ≈ Vc2 ≈ VCC）。最常见的原因是尾电阻 Re 接到了 GND 而不是 -VEE。差分对必须有负电源给两管的发射极一个低于 GND 的电位（约 -0.7V），这样基极（接近 0V）才能让 Vbe 达到 0.7V 导通。检查 Re 的下端是不是接到了负电源轨。",
+  "source_materials": []
+}

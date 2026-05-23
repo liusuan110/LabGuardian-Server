@@ -4,12 +4,25 @@ from app.services.rag_service import RagService
 from app.services.teaching_kb_service import TeachingKbService
 
 
-def test_teaching_kb_lists_only_rc_stage_one_scene():
+def test_teaching_kb_lists_all_demo_topology_scenes():
+    """The KB carries one scene per demo topology (6 demos total: RC + 5 amps).
+
+    Updated when the analog-circuit demo scenes were added; the original
+    assertion `== {"exp_first_order_rc"}` would now spuriously fail.
+    """
     service = TeachingKbService()
 
     scene_ids = {scene["scene_id"] for scene in service.list_scenes()}
 
-    assert scene_ids == {"exp_first_order_rc"}
+    expected = {
+        "exp_first_order_rc",
+        "exp_common_emitter_amplifier",
+        "exp_differential_amplifier",
+        "exp_ua741_inverting_amplifier",
+        "exp_ua741_summing_amplifier",
+        "exp_ua741_integrator",
+    }
+    assert scene_ids == expected
 
 
 def test_teaching_kb_matches_validator_error_code():

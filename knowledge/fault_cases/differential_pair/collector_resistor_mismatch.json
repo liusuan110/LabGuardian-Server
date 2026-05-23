@@ -1,0 +1,31 @@
+{
+  "schema_version": "fault_case_v1",
+  "knowledge_id": "diff_pair_collector_resistor_mismatch",
+  "scene_id": "exp_differential_amplifier",
+  "fault_id": "diff_pair_collector_resistor_mismatch",
+  "error_tags": [
+    "component_value_mismatch",
+    "asymmetric_circuit"
+  ],
+  "related_error_codes": [
+    "PARAMETRIC_INVARIANT_VIOLATED"
+  ],
+  "title": "差分对集电极电阻 Rc1 ≠ Rc2 导致失衡",
+  "trigger_conditions": [
+    "纯共模输入时输出明显非零",
+    "静态 Vc1 与 Vc2 差异 > 500mV",
+    "CMRR 测得远低于预期"
+  ],
+  "reference_text": "差分对的对称性是它差分放大能力的根本。Rc1 和 Rc2 必须严格匹配（精度 ≤1%）；如果用了 5.1kΩ + 4.7kΩ 这种「近似」组合，差分对就会把共模信号也放大，CMRR 急剧下降。Template Layer 的 parametric_invariant 规则就是检测这种违规。",
+  "reference_images": [],
+  "reference_waveforms": [],
+  "reference_schematics": [],
+  "fix_steps": [
+    "万用表 200Ω/2kΩ 挡精确测 Rc1, Rc2 的实际阻值，要求误差 <2%。",
+    "如果阻值偏差大，换成同一批次的金属膜电阻（1% 精度）。",
+    "替换后重新测 Vc1, Vc2（静态），应该几乎相等。",
+    "如果电阻对称了 CMRR 依然差，检查两个 BJT 的 β（hFE）是否匹配。"
+  ],
+  "student_answer_template": "你的差分对失衡是因为 Rc1 ≠ Rc2。差分对对集电极电阻的对称性要求很高（建议 1% 精度），如果你用的是普通 5% 碳膜电阻，5.1k 标称的实际可能是 4.8k~5.4k。换两个同批次的 1% 金属膜电阻就能解决。",
+  "source_materials": []
+}

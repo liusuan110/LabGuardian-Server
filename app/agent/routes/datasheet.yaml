@@ -74,3 +74,19 @@ auto_fire_part_numbers:
   - 74ls74
   - sn74ls74a
   - 54ls74
+  # UA741 (covers inverting / summing / integrator demos)
+  - ua741
+  - "μa741"
+  - ua741cn
+  - lm741
+  - mc1741
+  - "741"
+  # NPN small-signal BJT (covers common-emitter / differential-pair demos)
+  - s8050
+  - "8050"
+  - s9013
+  - "9013"
+  - s9014
+  - "9014"
+  - 2n2222
+  - 2n3904

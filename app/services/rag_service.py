@@ -120,11 +120,16 @@ class RagService:
 
             if self._teaching_kb_service:
                 error_tag_values = [tag["error_tag"] for tag in error_tags]
+                # Cap teaching_scene hits to leave room for fault_case_pack
+                # and other downstream evidence items. With 6 demo scenes in
+                # the KB, an unbounded top_k=5 would consume all slots and
+                # truncate the more-specific fault_case_pack at the end.
+                scene_cap = max(1, top_k - 2)
                 teaching_hits = self._teaching_kb_service.search(
                     query=query,
                     error_codes=error_codes,
                     error_tags=error_tag_values,
-                    top_k=top_k,
+                    top_k=scene_cap,
                 )
                 knowledge_pack = self._build_mrag_pack(
                     query=query,
@@ -234,11 +239,16 @@ class RagService:
                 )
 
         used_retrieval = bool(citations) and bool(query.strip())
+        # Cap citations at top_k for UI density.
+        # Evidence is bumped to top_k + 3 because the fixed items (station_state,
+        # error_tags, fault_case_pack) must survive even when many teaching
+        # scenes hit; pure top_k truncation would otherwise silently drop the
+        # higher-value fault_case_pack at the tail.
         return {
             "station": station,
             "reference": reference,
             "citations": citations[:top_k],
-            "evidence": evidence[:top_k],
+            "evidence": evidence[: top_k + 3],
             "used_retrieval": used_retrieval,
         }
 

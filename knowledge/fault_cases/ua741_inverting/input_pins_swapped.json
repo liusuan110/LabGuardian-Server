@@ -1,0 +1,32 @@
+{
+  "schema_version": "fault_case_v1",
+  "knowledge_id": "inv_input_pins_swapped",
+  "scene_id": "exp_ua741_inverting_amplifier",
+  "fault_id": "inv_input_pins_swapped",
+  "error_tags": [
+    "polarity_or_orientation_error",
+    "wrong_pin_assignment"
+  ],
+  "related_error_codes": [
+    "POLARITY_REVERSED"
+  ],
+  "title": "UA741 pin2 / pin3 输入端调换（正反馈）",
+  "trigger_conditions": [
+    "输出立即饱和（+13V 或 -13V）",
+    "输入有信号但输出不响应",
+    "调小输入电阻输出依然饱和"
+  ],
+  "reference_text": "UA741 的 pin2 是反相输入 (IN-)，pin3 是同相输入 (IN+)。反相放大器要求 Vin 经 Rg 接到 pin2，pin3 接 GND（或经 Rp）。如果 Vin 误接到 pin3，Rf 反馈回 pin2，整个电路从负反馈变成正反馈，输出会立刻被推到饱和并停留在那里。",
+  "reference_images": [],
+  "reference_waveforms": [],
+  "reference_schematics": [],
+  "fix_steps": [
+    "断电，对照 UA741 datasheet：pin2=IN-，pin3=IN+。",
+    "确认 Vin → Rg → pin2 路径正确。",
+    "确认 Rf 跨在 pin2 和 pin6（OUT）之间。",
+    "确认 pin3 接 GND（经过 Rp 或者直接）。",
+    "重新通电后输出应回到 0V，加信号有正常 -Rf/Rg 增益。"
+  ],
+  "student_answer_template": "输出立即饱和不变化是经典的「正反馈」现象——你可能把 pin2 和 pin3 搞反了。UA741 的 pin2 是反相输入（接 Rg 和 Rf），pin3 是同相输入（接 GND）。检查一下你的输入电阻 Rg 是不是接到了 pin3。",
+  "source_materials": []
+}
