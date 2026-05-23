@@ -1,0 +1,48 @@
+{
+  "phases": [
+    {
+      "start_s": 6.4373016357421875e-06,
+      "end_s": 5.005204677581787,
+      "name": "idle_pre",
+      "n_infs": 0
+    },
+    {
+      "start_s": 5.00528883934021,
+      "end_s": 20.52204418182373,
+      "name": "CPU_workload",
+      "n_infs": 498
+    },
+    {
+      "start_s": 20.522083520889282,
+      "end_s": 25.527233123779297,
+      "name": "cooldown_1",
+      "n_infs": 0
+    },
+    {
+      "start_s": 25.527302265167236,
+      "end_s": 41.19583606719971,
+      "name": "GPU_workload",
+      "n_infs": 841
+    },
+    {
+      "start_s": 41.19589424133301,
+      "end_s": 46.2010555267334,
+      "name": "cooldown_2",
+      "n_infs": 0
+    },
+    {
+      "start_s": 46.20112609863281,
+      "end_s": 61.42190098762512,
+      "name": "NPU_workload",
+      "n_infs": 1153
+    },
+    {
+      "start_s": 61.42195105552673,
+      "end_s": 66.42708778381348,
+      "name": "idle_post",
+      "n_infs": 0
+    }
+  ],
+  "sample_interval_s": 0.5,
+  "n_samples": 272
+}

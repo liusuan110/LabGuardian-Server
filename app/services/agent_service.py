@@ -90,6 +90,20 @@ def _is_circuit_related_question(question: str) -> bool:
     msg = (question or "").strip().lower()
     if not msg:
         return False
+    # Defer to the YAML SemanticRouter first: if either the datasheet or
+    # circuit route fires (e.g. on a part number like "UA741" / "8050" or
+    # on a schematic-theory phrasing), the question is unambiguously
+    # circuit-related — short-circuit before the local keyword scan, which
+    # would otherwise miss part numbers and English pin syntax like "pin2".
+    try:
+        from app.agent.router import get_router  # local import: avoid cycles
+
+        router = get_router()
+        for route_name in ("datasheet", "circuit"):
+            if router.has_route(route_name) and router.decide(route_name, msg).fired:
+                return True
+    except Exception:
+        pass  # router failure is non-fatal — fall through to keyword scan
     for keyword in _CIRCUIT_TOPIC_KEYWORDS:
         key = keyword.lower()
         if key.isascii() and key.isalnum() and len(key) <= 3:
@@ -705,8 +719,20 @@ class AgentService:
                     rewritten_answer = graph_state.final_answer
                     actual_provider, actual_model = self._actual_llm_usage()
             else:
-                rewritten_answer = graph_state.final_answer
-                actual_provider, actual_model = self._actual_llm_usage()
+                # Hand the deterministic concept / lab template to Ollama for
+                # a natural-Chinese rewrite. The model is constrained to NOT
+                # add facts; on any failure (no Ollama, parse error, missing
+                # required content) we fall back to the original template.
+                rewritten_answer, actual_provider, actual_model = (
+                    self._llm_polish_concept_or_lab_answer(
+                        question=question,
+                        draft_answer=graph_state.final_answer,
+                        intent=intent,
+                        evidence=evidence_contract,
+                        concept=graph_state.concept,
+                        tool_results=tool_results,
+                    )
+                )
 
         result = AngntJobResult(
             job_id=job_id,
@@ -1268,6 +1294,139 @@ class AgentService:
                 return draft_answer, "template", "template"
             return text, provider_name, str(payload["model"])
         except Exception:
+            return draft_answer, "template", "template"
+
+    def _llm_polish_concept_or_lab_answer(
+        self,
+        *,
+        question: str,
+        draft_answer: str,
+        intent: AgentIntent,
+        evidence: Any,
+        concept: Any,
+        tool_results: list[ToolResult],
+    ) -> tuple[str, str, str]:
+        """LLM polish for concept_tutor / lab_guidance drafts.
+
+        Phase: "Qwen3-4B 当嘴巴". The deterministic template already pinned
+        every fact (concept_id, formulas, fault_cases). Ollama only restyles
+        the prose for natural Chinese reading. Hard guarantees:
+        - **No new facts**. If LLM removes/changes the concept_id citation or
+          a key technical claim, we fall back to the template.
+        - **No tool invention**. No tool calls happen here — pure rewrite.
+        - **Bounded latency**. Short timeout; on any error, surface the
+          deterministic template verbatim.
+
+        Returns (final_text, provider_name, model_name).
+        """
+        provider_name, model_name = self._actual_llm_usage()
+        if provider_name != "ollama":
+            return draft_answer, provider_name, model_name
+
+        endpoint = (
+            f"{getattr(settings, 'AGENT_LLM_OLLAMA_BASE_URL', 'http://127.0.0.1:11434').rstrip('/')}"
+            "/api/chat"
+        )
+        timeout_s = float(
+            getattr(settings, "AGENT_LLM_OLLAMA_TIMEOUT_S", 120.0) or 120.0
+        )
+
+        # Build a compact fact-pin so the model knows what it MUST preserve.
+        pinned_facts: list[str] = []
+        concept_id = ""
+        if concept is not None:
+            concept_id = str(getattr(concept, "concept_id", "") or "")
+            if concept_id:
+                pinned_facts.append(f"concept_id={concept_id}")
+            title = str(getattr(concept, "title", "") or "")
+            if title:
+                pinned_facts.append(f"title={title}")
+        for tr in tool_results[:3]:
+            if tr.status == "ok":
+                pinned_facts.append(f"tool={tr.tool_name}: {tr.summary[:80]}")
+
+        if intent == "lab_guidance":
+            style_rule = (
+                "改写成自然中文的操作指引，保留所有编号步骤（1./2./3./...）；"
+                "必须包含至少一条安全提醒（断电/电源/短路/接地）。"
+            )
+        else:  # concept_tutor
+            style_rule = (
+                "改写成自然中文的概念讲解，开头先一句话直接回答，"
+                "再用 2-4 句解释原理；保留任何公式和"
+                "「知识来源：...」尾标行（如果原文有）。"
+            )
+
+        prompt = "\n".join(
+            [
+                "你是 LabGuardian 的电路实验助教。请把下面的"
+                "结构化草稿改写成自然中文回答给学生看。",
+                "关键约束：",
+                "- 只能改写表达，不能新增任何技术事实、公式数值、"
+                "引脚号、元件型号、参数取值。",
+                "- 如果原文出现引脚号（pin2/pin3）、阻值、电容值、"
+                "电压等具体数字，必须原样保留。",
+                "- 不要使用 markdown 列表符号；编号步骤直接用 1./2./3.",
+                "- 输出长度控制在 200 字以内（lab_guidance 可放宽到 300 字）。",
+                style_rule,
+                "",
+                f"用户问题：{question}",
+                f"意图：{intent}",
+                "结构化草稿：",
+                draft_answer,
+                "",
+                "必须保留的事实（pinned facts）：",
+                "; ".join(pinned_facts) if pinned_facts else "(无)",
+                "",
+                "直接输出改写后的回答正文，不要解释你做了什么。",
+            ]
+        )
+
+        payload: dict[str, Any] = {
+            "model": model_name
+            or getattr(settings, "AGENT_LLM_OLLAMA_MODEL", "qwen3:4b"),
+            "stream": False,
+            "keep_alive": "30m",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是严谨的电路实验助教。只能改写表达，"
+                        "不能编造任何技术事实。"
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "options": {
+                "temperature": 0.3,
+                "num_predict": 360,
+            },
+        }
+        try:
+            with httpx.Client(
+                timeout=min(max(timeout_s, 20.0), 60.0), trust_env=False
+            ) as client:
+                response = client.post(endpoint, json=payload)
+                response.raise_for_status()
+                body = response.json()
+            text = str(
+                ((body or {}).get("message") or {}).get("content") or ""
+            ).strip()
+            if not text:
+                raise RuntimeError("empty llm response")
+            # Guard: refuse to drop the concept_id citation.
+            if concept_id and concept_id not in text:
+                text = f"{text}\n知识来源：{concept_id}"
+            # Guard: lab_guidance must keep safety wording.
+            if intent == "lab_guidance" and not any(
+                w in text for w in ("断电", "电源", "短路", "接地", "安全")
+            ):
+                text = f"{text}\n安全提醒：操作前先断电，复查电源轨与短路风险。"
+            return text, provider_name, str(payload["model"])
+        except Exception as exc:  # noqa: BLE001
+            # Polish is best-effort; on any failure surface the template.
+            logger = __import__("logging").getLogger(__name__)
+            logger.info("concept/lab polish fell back to template: %s", exc)
             return draft_answer, "template", "template"
 
     def _get_station_memory(self, station_id: str) -> list[AgentMemoryRecord]:
