@@ -4,6 +4,7 @@ from typing import Any
 
 from app.agent.contracts import DiagnosticFinding, EvidenceRef, RuntimeEvidence
 from app.services.error_tag_service import ErrorTagService
+from app.services.scene_resolver import resolve_scene_id
 
 REPORT_ITEM_BUCKETS = (
     "items",
@@ -47,6 +48,11 @@ def build_runtime_evidence_from_station(
     netlist_v2 = station.get("netlist_v2", {}) or {}
     visual = _extract_visual_uncertainty(netlist_v2, station.get("runtime_metadata", {}) or {})
 
+    # WP-1 (2026-05-24): resolve the canonical teaching scene_id from
+    # station / validator state. Empty string when topology is unknown;
+    # downstream tools MUST NOT fall back to ``exp_first_order_rc``.
+    scene_id = resolve_scene_id(station=station, comparison_report=comparison_report) or ""
+
     return RuntimeEvidence(
         station_id=station_id,
         risk_level=_normalize_risk_level(station.get("risk_level")),
@@ -60,6 +66,7 @@ def build_runtime_evidence_from_station(
         validator_report_v2=comparison_report,
         circuit_snapshot=str(station.get("circuit_snapshot", "") or ""),
         runtime_metadata=station.get("runtime_metadata", {}) or {},
+        current_scene_id=scene_id,
         ambiguous_pin_count=visual["ambiguous_pin_count"],
         fallback_pin_count=visual["fallback_pin_count"],
         snap_conflict_count=visual["snap_conflict_count"],

@@ -1,8 +1,18 @@
 """
 RAG 服务最小骨架
 
-当前仅基于课堂态与 pipeline 结果构造结构化上下文与引用，
-后续可替换为真实向量检索与知识库编排。
+WP-0 (2026-05-24): legacy PDF KB (KbService / Chroma / OpenAI embeddings) has
+been removed from the agent main path. The production retrieval contract is
+documented in ``docs/retrieval-contract.md`` and only consumes:
+
+  - teaching_scene + fault_case (via TeachingKbService, rule-based)
+  - datasheet v2 (via DatasheetKbService, local OpenVINO embeddings)
+  - circuit knowledge (via CircuitKbService)
+  - structured station / error_tag facts
+
+The legacy ``KbService`` class is retained for admin PDF upload tooling
+(``app/api/v1/kb.py``) but is no longer reachable from the agent graph or
+this service.
 """
 
 from __future__ import annotations
@@ -12,20 +22,18 @@ from typing import Any
 from app.schemas.angnt import AngntCitation, AngntEvidence
 from app.services.classroom_state import ClassroomState
 from app.services.error_tag_service import ErrorTagService
-from app.services.kb_service import KbService
 from app.services.mrag_service import MragService
+from app.services.scene_resolver import resolve_scene_id, scene_display_name
 from app.services.teaching_kb_service import TeachingKbService
 
 
 class RagService:
     def __init__(
         self,
-        kb_service: KbService | None = None,
         teaching_kb_service: TeachingKbService | None = None,
         error_tag_service: ErrorTagService | None = None,
         mrag_service: MragService | None = None,
     ) -> None:
-        self._kb_service = kb_service
         self._teaching_kb_service = teaching_kb_service
         self._error_tag_service = error_tag_service
         self._mrag_service = mrag_service
@@ -54,6 +62,14 @@ class RagService:
                 if self._error_tag_service
                 else []
             )
+            # WP-1 (2026-05-24): resolve scene_id from topology context.
+            # None → no fault_case_pack will be added below; we MUST NOT
+            # default to "exp_first_order_rc" (that bug is what WP-1 fixes).
+            scene_id = resolve_scene_id(
+                station=station,
+                comparison_report=comparison_report,
+            )
+            scene_label = scene_display_name(scene_id) or "教学场景"
             summary = (
                 f"risk={station.get('risk_level', 'safe')}, "
                 f"progress={station.get('progress', 0.0):.2f}, "
@@ -78,24 +94,28 @@ class RagService:
                         "diagnostics": diagnostics[:top_k],
                         "error_codes": error_codes[:top_k],
                         "error_tags": error_tags[:top_k],
+                        "scene_id": scene_id or "",
                     },
                 )
             )
             if error_tags:
+                # WP-1: title/summary are now scene-aware (or generic when
+                # topology unknown), not hardcoded to "一阶 RC".
+                error_tag_scope = scene_id or "unknown_topology"
                 citations.append(
                     AngntCitation(
                         source_type="error_tags",
-                        source_id=f"{station_id}:rc_error_tags",
-                        title="一阶 RC 结构化错误标签",
+                        source_id=f"{station_id}:{error_tag_scope}:error_tags",
+                        title=f"{scene_label} 结构化错误标签",
                         snippet="；".join(tag["error_tag"] for tag in error_tags[:top_k]),
                     )
                 )
                 evidence.append(
                     AngntEvidence(
                         evidence_type="error_tags",
-                        source_id=f"{station_id}:rc_error_tags",
-                        summary="从 validator_report_v2 映射得到的一阶 RC 教学错误标签",
-                        payload={"error_tags": error_tags[:top_k]},
+                        source_id=f"{station_id}:{error_tag_scope}:error_tags",
+                        summary=f"从 validator_report_v2 映射得到的 {scene_label} 教学错误标签",
+                        payload={"error_tags": error_tags[:top_k], "scene_id": scene_id or ""},
                     )
                 )
 
@@ -125,14 +145,35 @@ class RagService:
                 # the KB, an unbounded top_k=5 would consume all slots and
                 # truncate the more-specific fault_case_pack at the end.
                 scene_cap = max(1, top_k - 2)
-                teaching_hits = self._teaching_kb_service.search(
-                    query=query,
-                    error_codes=error_codes,
-                    error_tags=error_tag_values,
-                    top_k=scene_cap,
-                )
+                if scene_id:
+                    # WP-1 (2026-05-24): when topology is resolved, fetch
+                    # the resolved scene DIRECTLY rather than running the
+                    # cross-scene query ranker. The ranker can truncate the
+                    # correct scene below scene_cap and leave the topology
+                    # entirely uncovered in evidence (silent recall miss).
+                    teaching_hits = self._build_scene_hit_for_resolved_topology(
+                        scene_id=scene_id,
+                        query=query,
+                        error_tag_values=error_tag_values,
+                        error_codes=error_codes,
+                        top_k=scene_cap,
+                    )
+                else:
+                    # No topology context → keep the cross-scene query ranker
+                    # for concept-style questions.
+                    teaching_hits = self._teaching_kb_service.search(
+                        query=query,
+                        error_codes=error_codes,
+                        error_tags=error_tag_values,
+                        top_k=scene_cap,
+                    )
+                # WP-1: build_pack only runs when we have a resolved scene_id.
+                # When None, knowledge_pack stays empty → no fault_case_pack
+                # is added below. Non-RC topologies (or topology-unknown
+                # turns) no longer pull RC fault cases.
                 knowledge_pack = self._build_mrag_pack(
                     query=query,
+                    scene_id=scene_id,
                     error_tag_values=error_tag_values,
                     error_codes=error_codes,
                     diagnostics=diagnostics,
@@ -173,12 +214,16 @@ class RagService:
                             },
                         )
                     )
-                if knowledge_pack.get("fault_cases"):
+                # WP-1: fault_case_pack source_id is now scene-keyed. Block
+                # is reached only when knowledge_pack has cases AND scene_id
+                # was resolved (the _build_mrag_pack guard ensures both).
+                if knowledge_pack.get("fault_cases") and scene_id:
+                    pack_source_id = f"{station_id}:{scene_id}_fault_cases"
                     citations.append(
                         AngntCitation(
                             source_type="fault_case_pack",
-                            source_id=f"{station_id}:exp_first_order_rc_fault_cases",
-                            title="一阶 RC 图文纠错知识包",
+                            source_id=pack_source_id,
+                            title=f"{scene_label} 图文纠错知识包",
                             snippet="；".join(
                                 str(case.get("title", ""))
                                 for case in knowledge_pack["fault_cases"][:top_k]
@@ -188,8 +233,8 @@ class RagService:
                     evidence.append(
                         AngntEvidence(
                             evidence_type="fault_case_pack",
-                            source_id=f"{station_id}:exp_first_order_rc_fault_cases",
-                            summary="一阶 RC 本地图文知识单元",
+                            source_id=pack_source_id,
+                            summary=f"{scene_label} 本地图文知识单元",
                             payload=knowledge_pack,
                         )
                     )
@@ -212,31 +257,10 @@ class RagService:
                 )
             )
 
-        if self._kb_service and query.strip():
-            kb_hits = self._kb_service.retrieve(query=query, top_k=top_k)
-            for hit, _ in kb_hits:
-                meta = hit.get("metadata", {}) or {}
-                source_id = f'{meta.get("doc_id", "")}:{meta.get("chunk_index", "")}'
-                citations.append(
-                    AngntCitation(
-                        source_type="datasheet_pdf",
-                        source_id=source_id,
-                        title=str(hit.get("title") or "datasheet"),
-                        snippet=str(hit.get("snippet") or "")[:260],
-                    )
-                )
-                evidence.append(
-                    AngntEvidence(
-                        evidence_type="datasheet_chunk",
-                        source_id=source_id,
-                        summary=str(hit.get("title") or "datasheet"),
-                        payload={
-                            "filename": meta.get("filename") or meta.get("source") or "datasheet",
-                            "page": meta.get("page"),
-                            "text": str(hit.get("text") or "")[:2400],
-                        },
-                    )
-                )
+        # WP-0: legacy PDF KB fusion (KbService.retrieve → Chroma → OpenAI)
+        # was removed here. Datasheet evidence now flows exclusively through
+        # the ``datasheet_lookup_tool`` in the agent graph, backed by the
+        # local DatasheetKbService (OpenVINO embeddings).
 
         used_retrieval = bool(citations) and bool(query.strip())
         # Cap citations at top_k for UI density.
@@ -251,16 +275,6 @@ class RagService:
             "evidence": evidence[: top_k + 3],
             "used_retrieval": used_retrieval,
         }
-
-    def answer_with_kb(
-        self,
-        *,
-        query: str,
-        top_k: int,
-    ) -> tuple[str, list[AngntCitation], list[AngntEvidence], bool]:
-        if not self._kb_service:
-            return "未启用知识库。", [], [], False
-        return self._kb_service.answer(query=query, top_k=top_k)
 
     def _extract_error_codes(self, comparison_report: dict[str, Any]) -> list[str]:
         codes: list[str] = []
@@ -283,20 +297,72 @@ class RagService:
                 codes.append(code)
         return codes
 
+    def _build_scene_hit_for_resolved_topology(
+        self,
+        *,
+        scene_id: str,
+        query: str,
+        error_tag_values: list[str],
+        error_codes: list[str],
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        """Build a single teaching_scene hit for the resolved topology.
+
+        WP-1: when topology is known we bypass the cross-scene ranker and
+        return exactly one hit for the resolved scene_id. This guarantees:
+          (a) the resolved scene is always present in evidence (no
+              ranker-truncation recall misses), and
+          (b) no other scene can leak into teaching_scene evidence.
+
+        Returns ``[]`` if the scene_id is not loadable (caller treats this
+        as "no teaching_scene evidence").
+        """
+        if not self._teaching_kb_service:
+            return []
+        scene = self._teaching_kb_service.get_scene(scene_id)
+        if not scene:
+            return []
+        matching_faults = self._teaching_kb_service.search_fault_cases(
+            query=query,
+            scene_id=scene_id,
+            error_tags=error_tag_values,
+            error_codes=error_codes,
+            top_k=max(1, top_k),
+        )
+        return [
+            {
+                "scene_id": scene.get("scene_id", scene_id),
+                "scene_name": scene.get("scene_name", ""),
+                "course": scene.get("course", ""),
+                "learning_goals": scene.get("learning_goals", []),
+                "circuit_principles": scene.get("circuit_principles", []),
+                "expected_measurements": scene.get("expected_measurements", []),
+                "matching_faults": matching_faults,
+                "source_materials": scene.get("source_materials", []),
+                "score": 100,  # synthetic; we know this is the correct scene
+            }
+        ]
+
     def _build_mrag_pack(
         self,
         *,
         query: str,
+        scene_id: str | None,
         error_tag_values: list[str],
         error_codes: list[str],
         diagnostics: list[Any],
         station: dict[str, Any],
         top_k: int,
     ) -> dict[str, Any]:
+        # WP-1 (2026-05-24): when topology is unknown, return empty pack.
+        # MUST NOT fall back to "exp_first_order_rc"; that's the bug WP-1
+        # fixes. Caller treats empty pack as "no fault_case_pack evidence".
+        if not scene_id:
+            return {}
         if self._mrag_service:
             return self._mrag_service.build_pack(
                 query=query,
-                scene_id="exp_first_order_rc",
+                scene_id=scene_id,
                 error_tags=error_tag_values,
                 structured_context={
                     "error_codes": error_codes[:top_k],
@@ -307,10 +373,18 @@ class RagService:
                 top_k=top_k,
             )
         if self._teaching_kb_service:
+            # WP-1 v6 (2026-05-24): the no-MragService fallback path used
+            # to skip ``error_codes`` — meaning any caller injected without
+            # a MragService (legacy tests, downgraded runs) would get
+            # ``fault_cases=[]`` even with valid FLOATING_PIN / NODE_MISMATCH
+            # in evidence. Production DI always provides MragService so this
+            # branch is rarely hit, but it MUST also honor the canonical
+            # validator↔KB bridge to keep the contract uniform.
             return self._teaching_kb_service.build_knowledge_pack(
                 query=query,
-                scene_id="exp_first_order_rc",
+                scene_id=scene_id,
                 error_tags=error_tag_values,
+                error_codes=error_codes[:top_k],
                 top_k=top_k,
             )
         return {}

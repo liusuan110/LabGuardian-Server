@@ -65,22 +65,42 @@ def test_teaching_kb_lists_rc_fault_cases():
 def test_teaching_kb_searches_fault_case_by_error_tag():
     service = TeachingKbService()
 
-    cases = service.search_fault_cases(error_tags=["probe_mode_error"])
+    # WP-1 (2026-05-24): scene_id now required (default was RC).
+    cases = service.search_fault_cases(
+        scene_id="exp_first_order_rc",
+        error_tags=["probe_mode_error"],
+    )
 
     assert cases
     assert cases[0]["knowledge_id"] == "rc_probe_x10_not_accounted"
     assert cases[0]["reference_waveforms"]
 
 
+def test_teaching_kb_search_fault_cases_skips_on_empty_scene_id():
+    """WP-1: empty scene_id MUST return [] rather than silently defaulting to RC."""
+    service = TeachingKbService()
+    assert service.search_fault_cases(error_tags=["probe_mode_error"]) == []
+
+
 def test_teaching_kb_builds_rc_knowledge_pack():
     service = TeachingKbService()
 
-    pack = service.build_knowledge_pack(error_tags=["wrong_node_connection"])
+    # WP-1: scene_id now required.
+    pack = service.build_knowledge_pack(
+        scene_id="exp_first_order_rc",
+        error_tags=["wrong_node_connection"],
+    )
 
     assert pack["scene_id"] == "exp_first_order_rc"
     assert pack["fault_cases"]
     assert pack["references"]["texts"]
     assert pack["fix_steps"]
+
+
+def test_teaching_kb_build_pack_skips_on_empty_scene_id():
+    """WP-1: empty scene_id MUST return {} rather than silently defaulting to RC."""
+    service = TeachingKbService()
+    assert service.build_knowledge_pack(error_tags=["wrong_node_connection"]) == {}
 
 
 def test_teaching_kb_matches_rc_measurement_question():
@@ -109,6 +129,9 @@ def test_error_tag_service_maps_rc_validator_report():
 
     tags = service.extract_tags(report)
 
+    # WP-1 (2026-05-24): teaching_focus tags renamed to scene-agnostic
+    # (``rc_output_node`` → ``expected_output_node``). See
+    # ``docs/retrieval-contract.md`` for the migration rationale.
     assert tags == [
         {
             "error_tag": "wrong_node_connection",
@@ -119,17 +142,22 @@ def test_error_tag_service_maps_rc_validator_report():
             "expected": "ROW_10_L",
             "actual": "ROW_11_L",
             "suggested_action": "",
-            "teaching_focus": ["rc_output_node", "breadboard_node"],
+            "teaching_focus": ["expected_output_node", "breadboard_node"],
             "evidence_refs": [],
         }
     ]
 
 
 def test_rag_context_includes_rc_error_tags_and_scene():
+    # WP-1 (2026-05-24): topology_label is now required to surface a
+    # fault_case_pack. Without it the resolver returns None and the
+    # pack is skipped (the old code defaulted to RC unconditionally —
+    # see ``docs/retrieval-contract.md``).
     classroom = ClassroomState()
     classroom.update_station(
         {
             "station_id": "S01",
+            "topology_label": "rc_first_order",
             "risk_level": "warning",
             "progress": 0.5,
             "diagnostics": ["C1.pin1 节点不匹配"],
@@ -153,20 +181,27 @@ def test_rag_context_includes_rc_error_tags_and_scene():
     context = service.build_context(
         classroom=classroom,
         station_id="S01",
-        query="为什么积分电路输出波形不对",
+        query="为什么 RC 一阶电路输出波形不对",
     )
 
     evidence_types = [item.evidence_type for item in context["evidence"]]
     assert "error_tags" in evidence_types
     assert "teaching_scene" in evidence_types
     assert "fault_case_pack" in evidence_types
+    # WP-1: the fault_case_pack source_id is scene-keyed.
+    pack = next(item for item in context["evidence"] if item.evidence_type == "fault_case_pack")
+    assert "exp_first_order_rc" in pack.source_id
 
 
-def test_rag_context_can_use_fault_case_from_query_without_error_tag():
+def test_rag_context_skips_fault_case_pack_when_topology_unknown():
+    """WP-1: generic measurement questions with no topology context MUST
+    NOT pull RC fault cases. The old buggy default was ``exp_first_order_rc``
+    regardless of input — this test pins the corrected behavior."""
     classroom = ClassroomState()
     classroom.update_station(
         {
             "station_id": "S02",
+            # NOTE: deliberately no topology_label.
             "risk_level": "safe",
             "progress": 0.2,
             "diagnostics": [],
@@ -182,4 +217,8 @@ def test_rag_context_can_use_fault_case_from_query_without_error_tag():
     )
 
     evidence_types = [item.evidence_type for item in context["evidence"]]
-    assert "fault_case_pack" in evidence_types
+    assert "fault_case_pack" not in evidence_types, (
+        "WP-1 contract violation: fault_case_pack surfaced without a "
+        "resolved scene_id — would silently inject RC content into "
+        "non-RC distillation samples."
+    )

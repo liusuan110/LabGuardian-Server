@@ -42,11 +42,20 @@ def run_diagnostic_tools(
         results.append(board_schema_lookup_tool(_board_lookup_input_from_evidence(evidence)))
 
     if "fault_case_lookup_tool" in tool_names:
+        # WP-1 (2026-05-24): scene_id is injected from runtime evidence so
+        # non-RC topologies don't silently pull RC fault cases. Empty
+        # current_scene_id → tool skips retrieval (see fault_case_lookup_tool).
+        # WP-1 v4 (2026-05-24): error_codes is the canonical KB recall
+        # signal — without it the agent path matches only on tags that
+        # don't exist in the KB vocabulary, returning empty fault_cases
+        # even when validator clearly identified the fault.
         results.append(
             fault_case_lookup_tool(
                 FaultCaseLookupInput(
                     query=query,
                     error_tags=evidence.error_tags,
+                    error_codes=evidence.error_codes,
+                    scene_id=evidence.current_scene_id,
                     top_k=min(top_k, 5),
                 )
             )
@@ -54,6 +63,8 @@ def run_diagnostic_tools(
 
     if "datasheet_lookup_tool" in tool_names:
         component_id = first_finding.component_id if first_finding else ""
+        # WP-3 v2 (2026-05-24): inject scene_id so DISTILL_MODE can restrict
+        # the datasheet candidate set to the current scene's allowed chips.
         results.append(
             datasheet_lookup_tool(
                 DatasheetLookupInput(
@@ -63,6 +74,7 @@ def run_diagnostic_tools(
                     package_type=_package_type_from_evidence(evidence, component_id),
                     query=query,
                     error_family=context_pack.error_family,
+                    scene_id=evidence.current_scene_id,
                 )
             )
         )

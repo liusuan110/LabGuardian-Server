@@ -66,14 +66,20 @@ def build_context_pack(
     derail into "what's wrong with the wiring" detours.
     """
     family = classify_error_family(evidence)
+    # WP-1 v3 (2026-05-24): fault_case_lookup_tool is unconditional only
+    # when we actually have a scene to query. Without ``current_scene_id``
+    # the tool would return ``status="skipped"`` on every call and burn
+    # a ReAct iteration — which can crowd out the safety_rule tool on
+    # dangerous-circuit paths (test_diagnostic_graph_runs_white_box_short_circuit_path).
+    has_scene = bool((evidence.current_scene_id or "").strip())
     if intent in ("diagnostic", "mixed"):
-        allow_tools = _allowed_tools_for_family(family)
+        allow_tools = _allowed_tools_for_family(family, has_scene=has_scene)
     elif intent == "concept_tutor":
-        allow_tools = _allowed_tools_for_concept()
+        allow_tools = _allowed_tools_for_concept(has_scene=has_scene)
     elif intent == "lab_guidance":
-        allow_tools = _allowed_tools_for_lab_guidance()
+        allow_tools = _allowed_tools_for_lab_guidance(has_scene=has_scene)
     else:  # defensive — unknown future intent → safest superset
-        allow_tools = _allowed_tools_for_family(family)
+        allow_tools = _allowed_tools_for_family(family, has_scene=has_scene)
     merged_query = (user_message or query or "").strip().lower()
     if merged_query and _looks_like_datasheet_query(merged_query, evidence):
         if not any(tool.name == "datasheet_lookup_tool" for tool in allow_tools):
@@ -253,14 +259,24 @@ def _build_pushed_facts(
     return facts
 
 
-def _allowed_tools_for_family(family: ErrorFamily) -> list[AllowedTool]:
-    common = [
-        AllowedTool(
-            name="fault_case_lookup_tool",
-            reason="检索与当前错误类型匹配的本地教学故障知识。",
-            required=True,
+def _allowed_tools_for_family(
+    family: ErrorFamily,
+    *,
+    has_scene: bool = True,
+) -> list[AllowedTool]:
+    # WP-1 v3: fault_case_lookup_tool is included ONLY when topology has
+    # been resolved. Without a scene, the tool would always return
+    # ``status="skipped"`` and burn a ReAct iteration — potentially
+    # crowding out other required tools (e.g. safety_rule on dangerous paths).
+    common: list[AllowedTool] = []
+    if has_scene:
+        common.append(
+            AllowedTool(
+                name="fault_case_lookup_tool",
+                reason="检索与当前错误类型匹配的本地教学故障知识。",
+                required=True,
+            )
         )
-    ]
     if family == "short_circuit":
         return [
             AllowedTool(
@@ -326,39 +342,40 @@ def _allowed_tools_for_family(family: ErrorFamily) -> list[AllowedTool]:
     return common
 
 
-def _allowed_tools_for_concept() -> list[AllowedTool]:
+def _allowed_tools_for_concept(*, has_scene: bool = True) -> list[AllowedTool]:
     """Tool whitelist for ``concept_tutor`` intent.
 
-    The teaching-concept tool is the primary source. fault_case_lookup is
-    kept because the local fault-case knowledge units double as worked
-    examples (symptom → reason → fix) and are useful for "为什么 LED 不亮"
-    style theory questions. datasheet/circuit lookups are not seeded here
-    — they're added by the query-aware gates below when relevant, so the
-    planner only sees them if the question actually warrants them.
+    The teaching-concept tool is the primary source. ``fault_case_lookup_tool``
+    is included only when topology has been resolved (WP-1 v3: empty scene
+    would make every call a no-op that burns a ReAct iteration).
     """
-    return [
+    tools = [
         AllowedTool(
             name="teaching_concept_lookup_tool",
             reason="检索本地教学概念库，回答原理/定义/公式问题。",
             required=True,
         ),
-        AllowedTool(
-            name="fault_case_lookup_tool",
-            reason="作为概念解释的辅助 — 本地故障案例兼作工作示例。",
-        ),
     ]
+    if has_scene:
+        tools.append(
+            AllowedTool(
+                name="fault_case_lookup_tool",
+                reason="作为概念解释的辅助 — 本地故障案例兼作工作示例。",
+            )
+        )
+    return tools
 
 
-def _allowed_tools_for_lab_guidance() -> list[AllowedTool]:
+def _allowed_tools_for_lab_guidance(*, has_scene: bool = True) -> list[AllowedTool]:
     """Tool whitelist for ``lab_guidance`` intent.
 
     Operational questions need to ground in (a) board topology so we can
     say "把红表笔接在 row 17"，(b) safety rules so we always lead with
     断电/限流, and (c) optional teaching concepts when the operation
-    requires explanation. fault_case is included as a fallback evidence
-    source for "为什么这里没读到电压" follow-ups.
+    requires explanation. ``fault_case_lookup_tool`` is added only when
+    topology has been resolved (WP-1 v3).
     """
-    return [
+    tools = [
         AllowedTool(
             name="board_schema_lookup_tool",
             reason="操作问题需要面包板/孔位/导通节点信息。",
@@ -373,11 +390,15 @@ def _allowed_tools_for_lab_guidance() -> list[AllowedTool]:
             name="teaching_concept_lookup_tool",
             reason="如有需要，补充测量原理或量程选择的概念知识。",
         ),
-        AllowedTool(
-            name="fault_case_lookup_tool",
-            reason="操作失败时的故障案例查询作为辅助证据。",
-        ),
     ]
+    if has_scene:
+        tools.append(
+            AllowedTool(
+                name="fault_case_lookup_tool",
+                reason="操作失败时的故障案例查询作为辅助证据。",
+            )
+        )
+    return tools
 
 
 def _prompt_rules_for_family(family: ErrorFamily) -> list[str]:

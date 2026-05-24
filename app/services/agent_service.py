@@ -501,28 +501,24 @@ class AgentService:
         diagnostics = station.get("diagnostics", []) if station else []
         risk_reasons = station.get("risk_reasons", []) if station else []
 
-        if request.mode == "rag":
-            answer, kb_citations, kb_evidence, used = self._rag_service.answer_with_kb(
-                query=request.user_message or request.query,
-                top_k=request.top_k,
-            )
-            citations = list(kb_citations) + list(base_context.get("citations", []))
-            evidence = list(kb_evidence) + list(base_context.get("evidence", []))
-            used_retrieval = bool(used) or bool(base_context.get("used_retrieval"))
-            actions = self._build_actions(risk_level=risk_level, diagnostics=diagnostics)
-        else:
-            answer = self._build_answer(
-                station_id=request.station_id,
-                mode=request.mode,
-                query=request.user_message or request.query,
-                risk_level=risk_level,
-                diagnostics=diagnostics,
-                risk_reasons=risk_reasons,
-            )
-            citations = base_context["citations"]
-            evidence = base_context["evidence"]
-            used_retrieval = base_context["used_retrieval"]
-            actions = self._build_actions(risk_level=risk_level, diagnostics=diagnostics)
+        # WP-0 (2026-05-24): the ``mode == "rag"`` branch that called
+        # ``RagService.answer_with_kb`` (legacy PDF KB / Chroma / OpenAI) has
+        # been removed. All modes now share the same structured-context build
+        # path; chip/datasheet questions are routed via the agent graph's
+        # ``datasheet_lookup_tool`` (local OpenVINO embeddings). See
+        # ``docs/retrieval-contract.md``.
+        answer = self._build_answer(
+            station_id=request.station_id,
+            mode=request.mode,
+            query=request.user_message or request.query,
+            risk_level=risk_level,
+            diagnostics=diagnostics,
+            risk_reasons=risk_reasons,
+        )
+        citations = base_context["citations"]
+        evidence = base_context["evidence"]
+        used_retrieval = base_context["used_retrieval"]
+        actions = self._build_actions(risk_level=risk_level, diagnostics=diagnostics)
 
         return AngntJobResult(
             job_id=job_id,

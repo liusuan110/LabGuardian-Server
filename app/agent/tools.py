@@ -11,7 +11,6 @@ from app.domain.board_schema import BoardSchema
 from app.services.circuit_kb_service import CircuitKbService, looks_like_circuit_query
 from app.services.datasheet_kb_service import DatasheetKbService
 from app.services.embedding_backend import create_embedding_backend
-from app.services.kb_service import KbService
 from app.services.teaching_kb_service import TeachingKbService
 
 _DATASHEET_KB_SINGLETON: DatasheetKbService | None = None
@@ -57,7 +56,19 @@ class BoardSchemaLookupInput(BaseModel):
 class FaultCaseLookupInput(BaseModel):
     query: str = ""
     error_tags: list[str] = Field(default_factory=list)
-    scene_id: str = "exp_first_order_rc"
+    # WP-1 v4 (2026-05-24): ``error_codes`` is the canonical validator↔KB
+    # bridge. fault_case JSONs declare ``related_error_codes`` (e.g.
+    # FLOATING_PIN, COMPONENT_MISSING). Validator emits the same codes.
+    # Tag matching is supplementary because the renamed scene-agnostic
+    # tags (``missing_required_component`` etc.) don't appear in the KB
+    # vocabulary, while ``related_error_codes`` always does.
+    error_codes: list[str] = Field(default_factory=list)
+    # WP-1 (2026-05-24): default removed. Empty scene_id means "no
+    # topology context known" → the tool skips retrieval rather than
+    # silently defaulting to RC. Callers should pass
+    # ``state.runtime_evidence.current_scene_id`` (which the scene
+    # resolver populates from station / comparison_report).
+    scene_id: str = ""
     top_k: int = Field(default=3, ge=1, le=10)
 
 
@@ -79,6 +90,20 @@ class DatasheetLookupInput(BaseModel):
     package_type: str = ""
     query: str = ""
     error_family: str = "unknown"
+    # WP-3 v3 (2026-05-24): when ``scene_id`` is set, the underlying
+    # ``DatasheetKbService.search`` ALWAYS hard-filters candidate
+    # documents to the scene's whitelist (see
+    # ``app.services.scene_resolver.allowed_datasheets_for_scene``).
+    # This is the production retrieval contract — train ≡ deploy. The
+    # earlier v2 design that gated this on ``DISTILL_MODE`` produced a
+    # train-test distribution shift: student trained on UA741+passive
+    # only, but at deploy saw BJT/NE555 chunks too. Restoring symmetric
+    # behavior makes the shift impossible.
+    #
+    # Admin/debug paths that genuinely need cross-chip search should
+    # call ``DatasheetKbService.search()`` directly without scene_id
+    # (e.g. the ``/api/v1/kb/*`` admin endpoints).
+    scene_id: str = ""
 
 
 LOCAL_DATASHEET_FALLBACKS: dict[str, dict[str, Any]] = {
@@ -211,17 +236,39 @@ def fault_case_lookup_tool(
     *,
     teaching_kb_service: TeachingKbService | None = None,
 ) -> ToolResult:
+    # WP-1 (2026-05-24): no scene context → skip retrieval. We MUST NOT
+    # silently fall back to the RC scene (which is the bug this WP fixes).
+    # See ``docs/retrieval-contract.md`` and ``app/services/scene_resolver.py``.
+    scene_id = (args.scene_id or "").strip()
+    if not scene_id:
+        return ToolResult(
+            tool_name="fault_case_lookup_tool",
+            status="skipped",
+            summary="无场景上下文（current_scene_id 为空），跳过 fault_case 检索。",
+            payload={
+                "fault_cases": [],
+                "skip_reason": "no_scene_context",
+            },
+        )
+
     service = teaching_kb_service or TeachingKbService()
+    # WP-1 v4: pass error_codes through — this is the canonical recall
+    # signal (related_error_codes in fault_case JSONs). Without it the
+    # agent path could only match on the renamed scene-agnostic tags,
+    # which don't appear in the KB → fault_case_pack stays empty even
+    # when validator clearly identifies the fault family.
     cases = service.search_fault_cases(
         query=args.query,
-        scene_id=args.scene_id,
+        scene_id=scene_id,
         error_tags=args.error_tags,
+        error_codes=args.error_codes,
         top_k=args.top_k,
     )
     return ToolResult(
         tool_name="fault_case_lookup_tool",
-        summary=f"命中 fault_cases={len(cases)}。",
+        summary=f"命中 fault_cases={len(cases)}（scene_id={scene_id}）。",
         payload={
+            "scene_id": scene_id,
             "fault_cases": [
                 {
                     "knowledge_id": case.get("knowledge_id", ""),
@@ -231,7 +278,7 @@ def fault_case_lookup_tool(
                     "fix_steps": case.get("fix_steps", [])[:4],
                 }
                 for case in cases
-            ]
+            ],
         },
     )
 
@@ -251,11 +298,26 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
     # uniform RetrievedChunk dicts with `chunk_id` + `modality` (the contract the
     # verifier enforces). Falls through to legacy Chroma/PDF retrieval and then
     # to rule-based fallback to preserve existing behavior.
+    #
+    # WP-3 v3 (2026-05-24): scene whitelist is now a PRODUCTION contract
+    # (was DISTILL_MODE-only in v2). Whenever scene_id is set, restrict the
+    # candidate set so train ≡ deploy. Empty scene_id keeps the legacy
+    # full-corpus search for concept_tutor questions without topology
+    # context and for admin tools that bypass the agent graph.
+    allowed_docs: frozenset[str] | None = None
+    if (args.scene_id or "").strip():
+        from app.services.scene_resolver import allowed_datasheets_for_scene
+        allowed_docs = allowed_datasheets_for_scene(args.scene_id)
+        # If scene_id is valid but unknown to the resolver, allowed_docs
+        # is None → no filter applied (caller MUST ensure scene_id is a
+        # known demo scene if filtering is required).
+
     v2_hits: list[dict[str, Any]] = []
     try:
         retrieved = _get_datasheet_kb().search(
             query=query,
             part_numbers=[args.part_number] if args.part_number else None,
+            allowed_document_ids=allowed_docs,
             top_k=4,
         )
         for chunk in retrieved:
@@ -282,6 +344,36 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
             )
     except Exception:
         v2_hits = []
+
+    # WP-3 (2026-05-24): in distillation mode, when local v2 misses we
+    # MUST NOT fall back to LOCAL_DATASHEET_FALLBACKS — those hand-coded
+    # rules are useful in dev but would inject synthetic "rule_id=fallback.*"
+    # evidence into shrinkage data that the on-device runtime (with the
+    # same DATASHEET_EMBEDDING_BACKEND=openvino setup) would never actually
+    # produce. Return an explicit skipped result so the agent answers
+    # without datasheet evidence in this case.
+    if not v2_hits and getattr(settings, "DISTILL_MODE", False):
+        return ToolResult(
+            tool_name="datasheet_lookup_tool",
+            status="skipped",
+            summary=(
+                "datasheet 本地 v2 未命中；DISTILL_MODE 下不回落保守规则集，"
+                "返回 skipped 以保持训练↔部署一致。"
+            ),
+            payload={
+                "provider": "distill_fail_closed",
+                "component_id": args.component_id,
+                "component_type": args.component_type,
+                "part_number": args.part_number,
+                "package_type": args.package_type,
+                "query": query,
+                "query_intent": query_intent,
+                "error_family": args.error_family,
+                "miss_reason": "datasheet_v2_miss_distill_fail_closed",
+                "hits": [],
+                "rules": [],
+            },
+        )
 
     if v2_hits:
         rules = [
@@ -310,64 +402,13 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
             },
         )
 
-    hits: list[dict[str, Any]] = []
-    kb_query_allowed = True
-    if key in LOCAL_DATASHEET_FALLBACKS and not args.part_number:
-        kb_query_allowed = bool(KbService()._chip_hints_from_query(query))
-    if kb_query_allowed:
-        try:
-            kb = KbService()
-            raw_hits = kb.retrieve(query=query, top_k=min(4, max(1, int(getattr(settings, "KB_DEFAULT_TOP_K", 6)))))
-            for hit, _ in raw_hits[:4]:
-                meta = hit.get("metadata", {}) or {}
-                doc_id = meta.get("doc_id", "")
-                chunk_index = meta.get("chunk_index", "")
-                chunk_id = f"{doc_id}:{chunk_index}" if doc_id else ""
-                hits.append(
-                    {
-                        "chunk_id": chunk_id,
-                        "modality": "text",
-                        "document_id": doc_id,
-                        "title": hit.get("title") or "",
-                        "snippet": hit.get("snippet") or "",
-                        "filename": meta.get("filename") or meta.get("source") or "",
-                        "page": meta.get("page"),
-                        "score": hit.get("score", 0.0),
-                        "confidence": 0.0,
-                        "matched_features": [],
-                        "debug": {},
-                        "query_intent": query_intent,
-                        # `source_id` retained as alias for downstream citation
-                        # builders that haven't migrated to `chunk_id` yet.
-                        "source_id": chunk_id,
-                    }
-                )
-        except Exception:
-            hits = []
-
-    if hits:
-        rules = [
-            f"参考资料：{item.get('title') or item.get('filename') or 'datasheet'}：{str(item.get('snippet') or '').strip()}"
-            for item in hits[:3]
-            if item.get("snippet")
-        ]
-        return ToolResult(
-            tool_name="datasheet_lookup_tool",
-            summary=f"datasheet 检索命中 {len(hits)} 段（{hits[0].get('filename') or 'pdf'}）。",
-            payload={
-                "provider": "kb_retrieval",
-                "component_id": args.component_id,
-                "component_type": args.component_type,
-                "part_number": args.part_number,
-                "package_type": args.package_type,
-                "query": query,
-                "query_intent": query_intent,
-                "error_family": args.error_family,
-                "miss_reason": "",
-                "hits": hits,
-                "rules": rules[:4],
-            },
-        )
+    # WP-0 (2026-05-24): the legacy KbService / Chroma / OpenAI fallback
+    # that lived between ``local_datasheet_v2`` and ``LOCAL_DATASHEET_FALLBACKS``
+    # has been removed. The flow is now:
+    #   local_datasheet_v2 (DatasheetKbService, on-device OV embeddings)
+    #     → LOCAL_DATASHEET_FALLBACKS (structured rules in this file)
+    #     → "no_structured_datasheet_hit" miss
+    # See ``docs/retrieval-contract.md``.
 
     fallback = LOCAL_DATASHEET_FALLBACKS.get(key)
     matched_key = key if key in LOCAL_DATASHEET_FALLBACKS else ""

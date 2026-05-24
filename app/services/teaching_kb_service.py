@@ -108,16 +108,33 @@ class TeachingKbService:
         self,
         *,
         query: str = "",
-        scene_id: str = "exp_first_order_rc",
+        scene_id: str = "",
         error_tags: list[str] | None = None,
+        error_codes: list[str] | None = None,
         top_k: int = 5,
     ) -> list[dict[str, Any]]:
+        # WP-1 (2026-05-24): default was ``"exp_first_order_rc"`` — that
+        # silently fell back to RC for any non-RC caller. Now required.
+        # Empty scene_id → no results (caller MUST NOT treat this as RC).
+        #
+        # WP-1 v3 (2026-05-24): ``error_codes`` parameter added. The
+        # renamed scene-agnostic ``error_tags`` (missing_required_component
+        # etc.) do not appear in fault_case JSONs (which use domain-specific
+        # vocabularies like ``missing_power_connection``). The reliable
+        # bridge between validator and KB is the ``related_error_codes``
+        # field on each fault_case. We now score that intersection too.
+        scene_id = (scene_id or "").strip()
+        if not scene_id:
+            return []
         query_terms = self._query_terms(query.lower().strip())
         requested_tags = {tag for tag in (error_tags or []) if tag}
+        requested_codes = {code for code in (error_codes or []) if code}
         scored: list[tuple[int, dict[str, Any]]] = []
 
         for fault_case in self.list_fault_cases(scene_id=scene_id):
-            score = self._score_fault_case(fault_case, query_terms, requested_tags)
+            score = self._score_fault_case(
+                fault_case, query_terms, requested_tags, requested_codes
+            )
             if score <= 0:
                 continue
             scored.append((score, fault_case))
@@ -129,15 +146,21 @@ class TeachingKbService:
         self,
         *,
         query: str = "",
-        scene_id: str = "exp_first_order_rc",
+        scene_id: str = "",
         error_tags: list[str] | None = None,
+        error_codes: list[str] | None = None,
         top_k: int = 5,
     ) -> dict[str, Any]:
+        # WP-1: same hardening as search_fault_cases.
+        scene_id = (scene_id or "").strip()
+        if not scene_id:
+            return {}
         scene = self.get_scene(scene_id) or {}
         fault_cases = self.search_fault_cases(
             query=query,
             scene_id=scene_id,
             error_tags=error_tags,
+            error_codes=error_codes,
             top_k=top_k,
         )
         return {
@@ -209,11 +232,20 @@ class TeachingKbService:
         fault_case: dict[str, Any],
         query_terms: set[str],
         requested_tags: set[str],
+        requested_codes: set[str] | None = None,
     ) -> int:
         text = json.dumps(fault_case, ensure_ascii=False).lower()
         score = sum(1 for term in query_terms if term and term in text)
         fault_tags = set(fault_case.get("error_tags", []))
         score += 12 * len(fault_tags & requested_tags)
+        # WP-1 v3 (2026-05-24): error_code intersection is the **primary**
+        # validator↔KB bridge. validator emits codes like NODE_MISMATCH /
+        # FLOATING_PIN; each fault_case JSON declares which it handles via
+        # ``related_error_codes``. Weight slightly higher than tag matches
+        # because codes are canonical, tags are vocabulary-drifty.
+        if requested_codes:
+            fault_codes = set(fault_case.get("related_error_codes", []))
+            score += 15 * len(fault_codes & requested_codes)
         return score
 
     def _collect_references(self, fault_cases: list[dict[str, Any]]) -> dict[str, list[str]]:

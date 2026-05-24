@@ -188,6 +188,19 @@ class Settings(BaseSettings):
     DATASHEET_EMBEDDING_FUSION_WEIGHT: float = 0.55
     DATASHEET_EMBEDDING_MAX_LEN: int = 256
 
+    # ---- WP-3 (2026-05-24): distillation profile gate ----
+    # When True, ``datasheet_lookup_tool`` runs fail-closed: a local-v2
+    # miss returns ``status="skipped"`` instead of falling back to the
+    # hand-coded ``LOCAL_DATASHEET_FALLBACKS`` rule set. This makes the
+    # train↔deploy contract auditable — distillation samples never carry
+    # synthetic "保守规则" evidence that the on-device runtime would never
+    # actually produce. See ``docs/retrieval-contract.md`` §3.
+    #
+    # Production / development default is False (fallbacks remain helpful
+    # in dev). Distillation scripts MUST set ``DISTILL_MODE=true`` in env,
+    # and ``scripts/distill/precheck_retrieval.py`` enforces it.
+    DISTILL_MODE: bool = False
+
     # ---- Local VLM (optional, edge deployment) ----
     VLM_PROVIDER: str = "template"
     VLM_BASE_URL: str | None = None

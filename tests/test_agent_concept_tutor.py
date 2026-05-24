@@ -24,32 +24,16 @@ def _service() -> AgentService:
     return AgentService(rag_service=RagService())
 
 
+# WP-0 (2026-05-24): ``_FakeDatasheetRagService`` previously overrode the
+# legacy ``RagService.answer_with_kb`` to assert it was *not* called by the
+# new local-datasheet path. ``answer_with_kb`` and the legacy PDF KB path
+# have now been removed from the agent main path entirely (see
+# ``docs/retrieval-contract.md``), so the mock collapses to a tracker shell
+# kept only to confirm no legacy call site re-emerges.
 class _FakeDatasheetRagService(RagService):
     def __init__(self) -> None:
         super().__init__()
         self.last_top_k = 0
-
-    def answer_with_kb(self, *, query: str, top_k: int):
-        self.last_top_k = top_k
-        return (
-            "NE555 的 DIP-8 引脚为 GND、TRIG、OUT、RESET、VCC、DISCH、THRES、CONT。",
-            [
-                AngntCitation(
-                    source_type="datasheet_pdf",
-                    source_id="fake:pin",
-                    title="NE555 p3",
-                    snippet="pin configuration",
-                )
-            ],
-            [
-                AngntEvidence(
-                    evidence_type="datasheet_chunk",
-                    source_id="fake:pin",
-                    summary="NE555 p3",
-                )
-            ],
-            True,
-        )
 
 
 def _submit(service: AgentService, classroom: ClassroomState, *, mode: str, query: str):

@@ -1,6 +1,22 @@
 # RAG / PCM 教学知识库设计
 
-本项目里的 RAG 应定位为“实验调试助教”，而不是通用电子百科问答。
+> **⚠️ 历史设计稿 — 部分章节已超越 (since WP-0, 2026-05-24)**
+>
+> 本文档记录早期 RAG/PCM 设计与 Phase 1–3 的演进历史。**最新可执行契约以
+> [`docs/retrieval-contract.md`](./retrieval-contract.md) 为准**。两者冲突时
+> 以 retrieval-contract 为准。已超越的具体章节：
+>
+> - **旧 Chroma/PDF KB 三段回退**（`local_datasheet_v2 → kb_retrieval → local_fallback`
+>   原描述）：`kb_retrieval` 中间层在 WP-0 已下线，agent 主链路不再可达。
+>   现行流程仅 `local_datasheet_v2 → local_fallback`。
+> - **`scene_id="exp_first_order_rc"` 隐含默认**：在 WP-1 全链路移除，
+>   未解析的 topology 一律 fail-open，不再回落 RC。
+>
+> 仍然适用的部分：`teaching_scene` / `fault_case` / `circuit_kb` / `datasheet_v2`
+> 四通道架构、`mrag_pack` 版本契约、`OpenVINOEmbeddingBackend` 设计、ingest
+> 流水线等。修改本文档时请同步勾选/作废相应章节。
+
+本项目里的 RAG 应定位为"实验调试助教"，而不是通用电子百科问答。
 
 当前架构已经从单纯 RAG 继续推进到 PCM：
 
@@ -254,7 +270,8 @@ Datasheet 检索从“PDF 全文 + 本地规则 fallback”升级为“多模态
   - `lm324.json` — text + schematic
   - `passive_capacitor_polarity.json` — 纯 text，演示 `source_path=null` 的合法形态
 - **检索服务**：`app/services/datasheet_kb_service.py` 的 `DatasheetKbService`，纯关键词 + part-number 别名打分，离线、确定性、可单测。`EmbeddingBackend` 抽象 (`app/services/embedding_backend.py`) 默认 `NullEmbeddingBackend`，Phase 3 可换成 OpenVINO INT8 实现，但 chunk 向量在开发机预计算成 `.npz`，板上仅做 query 编码。
-- **工具入口**：`datasheet_lookup_tool` 三级回退—— `local_datasheet_v2` → `kb_retrieval`（旧 Chroma/PDF，**新增** `chunk_id = doc_id:chunk_index` 与 `modality="text"` 的回填）→ `local_fallback`（带 `rule_id`）。
+- **工具入口**：`datasheet_lookup_tool` 当前为两级回退——`local_datasheet_v2` → `local_fallback`（带 `rule_id`）。  
+  *⚠️ 原设计的中间层 `kb_retrieval`（旧 Chroma/PDF）已于 WP-0（2026-05-24）下线*，理由见 [`retrieval-contract.md`](./retrieval-contract.md) §2。`KbService` 类仍保留供 admin PDF 上传 API，但 agent 主链路、`RagService.build_context`、蒸馏脚本均不可达。
 - **mrag_pack 版本契约**：`MragService.build_pack(..., retrieved=...)` 在带 `datasheet_chunks / figures / tables` 时输出 `pack_version="mrag_pack_v2"` + 顶层 `retrieved`；未传或为空仍输出 v1，旧 VLM/前端无感知。
 - **Verifier 强约束**：`verify_draft_answer` 新增 `tool_results` 可选入参；当 `datasheet_lookup_tool` 命中 chunk 路径，回答必须引用至少一个 `chunk_id`；走 `local_fallback` 时必须引用至少一个 `rule_id`。
 

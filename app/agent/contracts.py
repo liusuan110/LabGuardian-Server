@@ -72,6 +72,13 @@ class RuntimeEvidence(BaseModel):
     validator_report_v2: dict[str, Any] = Field(default_factory=dict)
     circuit_snapshot: str = ""
     runtime_metadata: dict[str, Any] = Field(default_factory=dict)
+    # WP-1 (2026-05-24): canonical teaching scene_id for this turn. One of
+    # the 6 demo scenes (e.g. ``exp_common_emitter_amplifier``) or empty
+    # string when the upstream pipeline could not identify a topology.
+    # Empty MUST be treated as "skip fault_case retrieval"; tools and
+    # services MUST NOT fall back to ``exp_first_order_rc`` (that bug is
+    # what WP-1 fixes). See ``app/services/scene_resolver.py``.
+    current_scene_id: str = ""
     history_facts: list[str] = Field(default_factory=list)
     history_summary: str = ""
     # Visual-uncertainty signals extracted from netlist_v2 components/pins.
@@ -240,6 +247,15 @@ class DiagnosticState(BaseModel):
     react_trace: list[ReActStep] = Field(default_factory=list)
     react_iterations: int = 0
     max_react_iterations: int = 4
+    # WP-1 v5 (2026-05-24): True when ``max_react_iterations`` came from
+    # ``settings.REACT_MAX_ITERATIONS`` (no caller override) — in that
+    # case ``build_context_pack_node`` may expand the cap upward to fit
+    # ``len(allowed_tools)`` so required tools like ``safety_rule_lookup_tool``
+    # always get a slot on dangerous-circuit turns. False when the caller
+    # passed an explicit value, which is treated as a hard limit and
+    # never auto-expanded (preserves test cases that intentionally cap
+    # ReAct at 2 to verify termination behavior).
+    react_cap_auto_expand: bool = True
     react_terminate_reason: str = ""
     # Phase 6 — VLM micro-defect findings (only populated when verifier gates allow it)
     vlm_findings: list[VlmFinding] = Field(default_factory=list)

@@ -116,13 +116,49 @@ def _dispatch_tool(tool_name: str, arguments: dict, state: DiagnosticState) -> T
         if tool_name == "board_schema_lookup_tool":
             return board_schema_lookup_tool(BoardSchemaLookupInput(**args))
         if tool_name == "fault_case_lookup_tool":
+            # WP-1 (2026-05-24): the planner is NOT allowed to override
+            # scene_id. The resolved ``runtime_evidence.current_scene_id``
+            # is the single source of truth — otherwise a UA741 / diff-pair
+            # turn whose planner emits ``scene_id="exp_first_order_rc"``
+            # would re-introduce RC fault cases (the bug WP-1 fixes).
+            # Empty scene_id → tool skips retrieval; see
+            # ``docs/retrieval-contract.md`` and ``app/services/scene_resolver.py``.
+            planner_scene = str(args.get("scene_id") or "").strip()
+            if planner_scene and planner_scene != evidence.current_scene_id:
+                # Log but ignore — we never trust the planner over the resolver.
+                import logging
+                logging.getLogger(__name__).warning(
+                    "react_observe: planner tried to override scene_id "
+                    "(planner=%r, resolved=%r); using resolved value.",
+                    planner_scene,
+                    evidence.current_scene_id,
+                )
+            # WP-1 v4 (2026-05-24): inject error_codes from evidence. The
+            # planner may override with a more specific subset, but never
+            # with codes the validator didn't actually emit (defense same
+            # spirit as scene_id override).
+            planner_codes = args.get("error_codes")
+            if isinstance(planner_codes, list):
+                # Allow only codes that are a subset of validator's codes.
+                allowed_codes = [
+                    c for c in planner_codes
+                    if c in (evidence.error_codes or [])
+                ]
+                injected_codes = allowed_codes or evidence.error_codes
+            else:
+                injected_codes = evidence.error_codes
             payload = {
                 "query": args.get("query", state.query),
                 "error_tags": args.get("error_tags", evidence.error_tags),
+                "error_codes": injected_codes,
+                "scene_id": evidence.current_scene_id,
                 "top_k": args.get("top_k", min(state.top_k, 5)),
             }
             return fault_case_lookup_tool(FaultCaseLookupInput(**payload))
         if tool_name == "datasheet_lookup_tool":
+            # WP-3 v2 (2026-05-24): same scene_id injection as static
+            # tool_runner — planner is not allowed to override (same defense
+            # as fault_case_lookup_tool, see above).
             payload = {
                 "component_id": args.get("component_id", ""),
                 "component_type": args.get("component_type", ""),
@@ -130,6 +166,7 @@ def _dispatch_tool(tool_name: str, arguments: dict, state: DiagnosticState) -> T
                 "package_type": args.get("package_type", ""),
                 "query": args.get("query", state.query),
                 "error_family": args.get("error_family", state.error_family),
+                "scene_id": evidence.current_scene_id,
             }
             return datasheet_lookup_tool(DatasheetLookupInput(**payload))
         if tool_name == "circuit_lookup_tool":

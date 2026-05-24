@@ -6,9 +6,16 @@ from app.services.teaching_kb_service import TeachingKbService
 
 
 class MragService:
-    """Builds local multimodal RAG packs for the first-order RC experiment."""
+    """Builds local multimodal RAG packs for any of the 6 demo scenes.
 
-    DEFAULT_SCENE_ID = "exp_first_order_rc"
+    WP-1 (2026-05-24): ``DEFAULT_SCENE_ID`` was previously
+    ``"exp_first_order_rc"`` — a silent RC fallback that contaminated
+    non-RC topology turns. ``scene_id`` is now required; empty input
+    returns an empty pack rather than defaulting to RC. See
+    ``docs/retrieval-contract.md``.
+    """
+
+    DEFAULT_SCENE_ID = ""  # WP-1: empty → caller must supply scene_id.
 
     def __init__(self, teaching_kb_service: TeachingKbService) -> None:
         self._teaching_kb_service = teaching_kb_service
@@ -24,15 +31,27 @@ class MragService:
         top_k: int = 5,
         retrieved: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # WP-1: empty scene_id → empty pack. MUST NOT default to RC.
+        scene_id = (scene_id or "").strip()
+        if not scene_id:
+            return {}
         scene = self._teaching_kb_service.get_scene(scene_id) or {}
         context = dict(structured_context or {})
         snapshot = str(circuit_snapshot or "").strip()
         if snapshot and not context.get("circuit_snapshot"):
             context["circuit_snapshot"] = snapshot
+        # WP-1 v3: pull error_codes out of structured_context (RagService
+        # already puts them there) and pass to KB scoring. This makes
+        # validator codes the primary recall signal, independent of the
+        # scene-agnostic error_tag vocabulary.
+        ctx_error_codes = context.get("error_codes") or []
+        if not isinstance(ctx_error_codes, list):
+            ctx_error_codes = []
         fault_cases = self._teaching_kb_service.search_fault_cases(
             query=query,
             scene_id=scene_id,
             error_tags=error_tags,
+            error_codes=[str(c) for c in ctx_error_codes if c],
             top_k=top_k,
         )
         compact_cases = [self._compact_fault_case(case) for case in fault_cases]

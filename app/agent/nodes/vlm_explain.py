@@ -110,14 +110,25 @@ def _inspect(state: DiagnosticState, context_pack, defect_types: Iterable[MicroD
         return findings
 
     pack: dict = {}
-    try:
-        pack = mrag_service.build_pack(
-            error_tags=state.runtime_evidence.error_tags,
-            query=state.query,
-            circuit_snapshot=state.runtime_evidence.circuit_snapshot or "",
+    # WP-1 (2026-05-24): scene_id must come from the resolved topology
+    # context. When empty, skip MRag pack assembly entirely — silently
+    # defaulting to RC (the old library default) would pull RC fault
+    # cases into VLM micro-defect prompts for, say, UA741 questions.
+    scene_id = (state.runtime_evidence.current_scene_id or "").strip()
+    if scene_id:
+        try:
+            pack = mrag_service.build_pack(
+                scene_id=scene_id,
+                error_tags=state.runtime_evidence.error_tags,
+                query=state.query,
+                circuit_snapshot=state.runtime_evidence.circuit_snapshot or "",
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("MRag pack assembly failed: %s", exc)
+    else:
+        logger.debug(
+            "vlm_explain: empty current_scene_id, skipping MRag pack (WP-1)."
         )
-    except Exception as exc:  # pragma: no cover
-        logger.warning("MRag pack assembly failed: %s", exc)
 
     for defect_type in defect_types:
         try:

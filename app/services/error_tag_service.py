@@ -1,32 +1,43 @@
+"""Maps validator_report_v2 items to scene-agnostic teaching error tags.
+
+WP-1 (2026-05-24): the tag vocabulary was previously RC-flavored
+(``missing_rc_component`` / ``incomplete_rc_circuit`` / ``rc_output_node``
+/ ``rc_component_set``), which leaked RC framing into non-RC topologies
+(common-emitter, differential-pair, UA741 family) — a silent
+distillation-data contamination. The tags below are now topology-agnostic
+and carry the same semantics across all 6 demo scenes. See
+``docs/retrieval-contract.md``.
+"""
+
 from __future__ import annotations
 
 from typing import Any
 
 
 class ErrorTagService:
-    """Maps validator_report_v2 items to RC-experiment teaching error tags."""
+    """Maps validator_report_v2 items to scene-agnostic teaching error tags."""
 
-    _RC_CODE_TO_TAG: dict[str, str] = {
+    _CODE_TO_TAG: dict[str, str] = {
         "NODE_MISMATCH": "wrong_node_connection",
         "HOLE_MISMATCH": "wrong_hole_connection",
         "FLOATING_PIN": "floating_connection",
         "COMPONENT_SHORTED_SAME_NET": "scope_ground_or_short_risk",
-        "COMPONENT_MISSING": "missing_rc_component",
-        "COMPONENT_INSTANCE_MISSING": "missing_rc_component",
+        "COMPONENT_MISSING": "missing_required_component",
+        "COMPONENT_INSTANCE_MISSING": "missing_required_component",
         "PIN_MISSING": "floating_connection",
         "PIN_EXTRA": "unexpected_connection",
-        "TOPOLOGY_VALID_SUBSET": "incomplete_rc_circuit",
-        "MULTIPLE_DISCONNECTED_SUBGRAPHS": "incomplete_rc_circuit",
+        "TOPOLOGY_VALID_SUBSET": "incomplete_circuit",
+        "MULTIPLE_DISCONNECTED_SUBGRAPHS": "incomplete_circuit",
     }
 
     _TAG_FOCUS: dict[str, list[str]] = {
-        "wrong_node_connection": ["rc_output_node", "breadboard_node"],
+        "wrong_node_connection": ["expected_output_node", "breadboard_node"],
         "wrong_hole_connection": ["breadboard_hole", "reference_circuit_compare"],
         "floating_connection": ["open_circuit", "pin_contact"],
         "scope_ground_or_short_risk": ["scope_ground", "reference_ground", "short_risk"],
-        "missing_rc_component": ["rc_component_set", "reference_circuit_compare"],
+        "missing_required_component": ["required_component_set", "reference_circuit_compare"],
         "unexpected_connection": ["extra_pin", "reference_circuit_compare"],
-        "incomplete_rc_circuit": ["closed_loop", "reference_circuit_compare"],
+        "incomplete_circuit": ["closed_loop", "reference_circuit_compare"],
     }
 
     def extract_tags(self, comparison_report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -37,7 +48,7 @@ class ErrorTagService:
             code = item.get("error_code")
             if not isinstance(code, str):
                 continue
-            tag = self._RC_CODE_TO_TAG.get(code)
+            tag = self._CODE_TO_TAG.get(code)
             if not tag:
                 continue
             component_id = str(

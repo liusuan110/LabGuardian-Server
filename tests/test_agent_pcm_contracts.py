@@ -131,13 +131,29 @@ def test_board_schema_lookup_tool_explains_rail_segments() -> None:
 
 
 def test_fault_case_lookup_tool_uses_teaching_kb() -> None:
+    # WP-1 (2026-05-24): scene_id must be passed explicitly now; the old
+    # ``exp_first_order_rc`` default was removed to prevent wrong-scene
+    # leakage (see ``docs/retrieval-contract.md``).
     result = fault_case_lookup_tool(
-        FaultCaseLookupInput(error_tags=["wrong_node_connection"])
+        FaultCaseLookupInput(
+            error_tags=["wrong_node_connection"],
+            scene_id="exp_first_order_rc",
+        )
     )
 
     assert result.payload["fault_cases"]
     knowledge_ids = {case["knowledge_id"] for case in result.payload["fault_cases"]}
     assert "rc_wrong_output_node_for_integrator" in knowledge_ids
+
+
+def test_fault_case_lookup_tool_skips_without_scene_id() -> None:
+    """WP-1: empty scene_id must skip retrieval (not silently default to RC)."""
+    result = fault_case_lookup_tool(
+        FaultCaseLookupInput(error_tags=["wrong_node_connection"])
+    )
+    assert result.status == "skipped"
+    assert result.payload["fault_cases"] == []
+    assert result.payload["skip_reason"] == "no_scene_context"
 
 
 def test_datasheet_lookup_tool_uses_local_fallback() -> None:

@@ -1,3 +1,29 @@
+"""Legacy PDF knowledge-base service (Chroma + OpenAI / Ollama embeddings).
+
+.. deprecated:: 2026-05-24 (WP-0)
+
+    This service is **NOT** part of the agent main path or the distillation
+    retrieval contract. It is retained solely for the admin PDF upload /
+    inspection endpoints in ``app/api/v1/kb.py``.
+
+    DO NOT add new callers from any of these locations:
+
+    - ``app/agent/**``                  → use ``DatasheetKbService`` instead
+    - ``app/services/rag_service.py``   → stays on structured context only
+    - ``app/services/agent_service.py`` → uses ``RagService.build_context``
+    - ``scripts/distill/**``            → distillation is fail-closed; legacy
+                                          PDF KB must not be reachable
+
+    Production retrieval flows exclusively through:
+
+    - ``TeachingKbService`` (rule-based scene / fault_case selection)
+    - ``DatasheetKbService`` (local OpenVINO embeddings, v2)
+    - ``CircuitKbService`` (structured circuit knowledge)
+
+    See ``docs/retrieval-contract.md`` for the full contract and the
+    distillation precheck requirements.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -33,6 +59,7 @@ class _KbDocRecord:
 
 
 class KbService:
+    """Legacy PDF KB. See module docstring — admin-only since WP-0 (2026-05-24)."""
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._storage_dir = Path(settings.KB_STORAGE_DIR)

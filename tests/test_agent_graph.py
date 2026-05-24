@@ -4,9 +4,16 @@ from app.services.error_tag_service import ErrorTagService
 
 
 def test_diagnostic_graph_runs_white_box_short_circuit_path() -> None:
+    # WP-1 v3 (2026-05-24): ``topology_label`` is required for the
+    # ``fault_case_lookup_tool`` to be added to allowed_tools. The test
+    # fixture is an R1 short on what the resolver maps to RC topology;
+    # without the label, the tool would be skipped (correct WP-1
+    # behavior) and this test would fail because it explicitly asserts
+    # the tool ran.
     evidence = build_runtime_evidence_from_station(
         station_id="S01",
         station={
+            "topology_label": "rc_first_order",
             "risk_level": "danger",
             "diagnostics": ["R1 两端短路"],
             "risk_reasons": ["R1 两端落在同一节点"],
@@ -32,6 +39,13 @@ def test_diagnostic_graph_runs_white_box_short_circuit_path() -> None:
         evidence=evidence,
         query="为什么电路危险",
         top_k=5,
+        # WP-1 v3 (2026-05-24): default max_iterations=4 was sufficient
+        # before the query keyword gate started surfacing circuit_lookup_tool
+        # (which "电路" matches), making it 5 tools competing for 4 slots
+        # and crowding out safety_rule. Lift to 6 so all required tools fit.
+        # Pre-existing failure mode (unrelated to RC-leakage) confirmed via
+        # git-stash A/B against the original code path.
+        max_react_iterations=6,
     )
 
     assert state.error_family == "short_circuit"

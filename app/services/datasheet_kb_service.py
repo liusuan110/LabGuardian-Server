@@ -148,10 +148,28 @@ class DatasheetKbService:
         *,
         part_numbers: Iterable[str] | None = None,
         modalities: Iterable[DatasheetChunkModality] | None = None,
+        allowed_document_ids: Iterable[str] | None = None,
         top_k: int = 4,
     ) -> list[RetrievedChunk]:
+        """Retrieve top-k chunks ranked by lexical + cosine fusion.
+
+        WP-3 v2 (2026-05-24): added ``allowed_document_ids`` for scene-aware
+        whitelisting. When set to a non-empty collection, documents whose
+        ``document_id`` is not in the set are skipped entirely — prevents
+        a UA741 turn from surfacing NE555 / 74LS74 chunks just because the
+        query keyword overlaps. Callers pass the whitelist resolved by
+        ``app.services.scene_resolver.allowed_datasheets_for_scene``;
+        passing ``None`` keeps the legacy behavior (search the full corpus).
+        """
         if not self._documents:
             return []
+
+        # WP-3 v2: normalize whitelist. None → no filter; empty → no docs.
+        whitelist: frozenset[str] | None
+        if allowed_document_ids is None:
+            whitelist = None
+        else:
+            whitelist = frozenset(allowed_document_ids)
 
         query_tokens = set(_tokenize(query))
         query_profile = self._build_query_profile(query)
@@ -174,6 +192,11 @@ class DatasheetKbService:
         per_doc_part_match: dict[str, bool] = {}
         has_part_signal = False
         for document in self._documents.values():
+            # WP-3 v2: skip out-of-scene documents up-front so they don't
+            # contribute to ``has_part_signal`` (which would unfairly
+            # down-rank in-scene docs).
+            if whitelist is not None and document.document_id not in whitelist:
+                continue
             doc_part_tokens = {
                 tok for pn in document.part_numbers for tok in _tokenize(pn)
             }
@@ -195,6 +218,9 @@ class DatasheetKbService:
 
         results: list[dict[str, object]] = []
         for document in self._documents.values():
+            # WP-3 v2: same whitelist filter — skip out-of-scene docs.
+            if whitelist is not None and document.document_id not in whitelist:
+                continue
             doc_matches_part = per_doc_part_match[document.document_id]
             part_boost = 1.5 if doc_matches_part else 0.0
             doc_score_scale = 1.0

@@ -64,9 +64,13 @@ def run_diagnostic_graph(
     callers now share this graph instead of the parallel deterministic
     path that used to live in ``AgentService._run_concept_or_guidance_job``.
     """
+    # WP-1 v5: an explicit caller value is a hard ceiling (never auto-expand);
+    # the settings default is a soft floor (build_context_pack_node may bump
+    # it upward to fit allowed_tools so required tools always get a slot).
+    cap_is_explicit = max_react_iterations is not None
     cap = (
         max_react_iterations
-        if max_react_iterations is not None
+        if cap_is_explicit
         else getattr(settings, "REACT_MAX_ITERATIONS", 4)
     )
 
@@ -77,6 +81,7 @@ def run_diagnostic_graph(
         top_k=top_k,
         runtime_evidence=evidence,
         max_react_iterations=max(1, int(cap)),
+        react_cap_auto_expand=not cap_is_explicit,
         intent=intent,
     )
     if StateGraph is None:

@@ -97,10 +97,16 @@ def get_vlm_service() -> VlmService:
 
 
 def get_rag_service() -> RagService:
+    """Build the RagService used by the agent main path.
+
+    WP-0 (2026-05-24): legacy ``KbService`` (PDF / Chroma / OpenAI) is no
+    longer injected here. ``get_kb_service()`` remains available for the
+    admin PDF upload endpoints in ``app/api/v1/kb.py`` but is unreachable
+    from the agent graph. See ``docs/retrieval-contract.md``.
+    """
     global _rag_service
     if _rag_service is None:
         _rag_service = RagService(
-            kb_service=get_kb_service(),
             teaching_kb_service=get_teaching_kb_service(),
             error_tag_service=get_error_tag_service(),
             mrag_service=get_mrag_service(),

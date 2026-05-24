@@ -5,6 +5,7 @@ from app.services.vlm_service import VlmService
 
 def _sample_pack():
     return MragService(teaching_kb_service=TeachingKbService()).build_pack(
+        scene_id="exp_first_order_rc",  # WP-1: scene_id now required
         query="示波器 X10 档为什么读数要乘以 10",
         error_tags=["probe_mode_error"],
         structured_context={"error_codes": [], "risk_level": "safe"},
