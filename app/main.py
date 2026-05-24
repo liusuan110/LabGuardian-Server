@@ -10,8 +10,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-from app.core.config import settings
+from app.core.config import PROJECT_ROOT, settings
 from app.core.deps import get_version_service
 from app.api.v1 import (
     angnt,
@@ -60,6 +61,12 @@ app.add_middleware(
 )
 
 # 路由
+app.mount(
+    "/knowledge",
+    StaticFiles(directory=str(PROJECT_ROOT / "knowledge")),
+    name="knowledge",
+)
+
 app.include_router(classroom.router, prefix=settings.API_V1_PREFIX)
 app.include_router(pipeline.router, prefix=settings.API_V1_PREFIX)
 app.include_router(references.router, prefix=settings.API_V1_PREFIX)
