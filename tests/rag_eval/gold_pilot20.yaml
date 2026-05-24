@@ -1,0 +1,305 @@
+# WP-4 Pilot Gold Set — 20 题（schema 验证 + 用户审核版本）
+#
+# 目的：在扩展到 60 题前，先验证 6 字段 schema 在每种 (拓扑 × intent)
+# 组合下落得下。验证维度：
+#   - scene_id_expected 在 6 demo 之内（WP-1 v3 契约）
+#   - fault_case_ids_expected 真实存在于 knowledge/fault_cases/**
+#   - datasheet_chunk_ids_expected 真实存在于 knowledge/datasheets/*.json
+#   - forbidden_ids 支持 <scene_id>:* glob 表达"整场景不应出现"
+#   - required_sources 描述教师必须看到的 evidence 类型
+#
+# 分布（6 拓扑 × 4 intent）：
+#   diagnostic   8 题（每个拓扑至少 1）
+#   concept_tutor 6 题（每个拓扑 1）
+#   lab_guidance 3 题（RC / UA741 反相 / UA741 积分）
+#   mixed         3 题（共射 / UA741 加法 / UA741 积分）
+#
+# 命名规范：qid = <scene_abbr>_<intent_abbr>_NNN
+#   rc / ce / diff / ua_inv / ua_sum / ua_int
+#   diag / cnc / lab / mix
+# ---------------------------------------------------------------------------
+
+# ===== 一阶 RC (3 题) =====
+
+- qid: rc_cnc_001
+  query: "RC 一阶电路的时间常数 τ 怎么算？τ 越大意味着什么？"
+  intent: concept_tutor
+  scene_id_expected: exp_first_order_rc
+  fault_case_ids_expected: []
+  datasheet_chunk_ids_expected:
+    - passive.capacitor_polarity.text.1
+  forbidden_ids:
+    - "exp_common_emitter_amplifier:*"
+    - "exp_ua741_inverting_amplifier:*"
+    - ne555.pinout.figure.1
+    - bjt_8050.common_emitter.text
+  required_sources: [teaching_scene]
+  notes: "纯概念题，命中 teaching_scene 的 circuit_principles 即可；不应出现任何 fault_case"
+
+- qid: rc_diag_001
+  query: "示波器测 RC 输出的时候波形幅度不对，但电路看起来没问题，可能是什么原因？"
+  intent: diagnostic
+  scene_id_expected: exp_first_order_rc
+  fault_case_ids_expected:
+    - rc_probe_x10_not_accounted
+  datasheet_chunk_ids_expected: []
+  forbidden_ids:
+    - rc_capacitor_value_mismatch
+    - rc_wrong_signal_offset
+    - "exp_ua741_inverting_amplifier:*"
+  required_sources: [fault_case, teaching_scene]
+  notes: "X10 探头模式 fault_case；同场景的 capacitor_value_mismatch / wrong_signal_offset 是干扰项"
+
+- qid: rc_lab_001
+  query: "我用示波器测 RC 输出，黑夹子接到 GND 后电源红灯亮起了，应该怎么接？"
+  intent: lab_guidance
+  scene_id_expected: exp_first_order_rc
+  fault_case_ids_expected:
+    - rc_scope_ground_not_reference_ground
+  datasheet_chunk_ids_expected: []
+  forbidden_ids:
+    - "exp_common_emitter_amplifier:*"
+  required_sources: [fault_case, teaching_scene]
+  notes: "示波器黑夹子接错节点导致短路；必须给出安全规则"
+
+# ===== 共射放大 (3 题) =====
+
+- qid: ce_cnc_001
+  query: "共射放大器为什么要把 BJT 的 Q 点设在 VCE = VCC/2？"
+  intent: concept_tutor
+  scene_id_expected: exp_common_emitter_amplifier
+  fault_case_ids_expected: []
+  datasheet_chunk_ids_expected:
+    - bjt_8050.common_emitter.text
+  forbidden_ids:
+    - "exp_first_order_rc:*"
+    - ua741.inverting.text
+  required_sources: [teaching_scene, datasheet_v2]
+  notes: "概念题但应同时拿到 datasheet 的设计经验法则"
+
+- qid: ce_diag_001
+  query: "我搭的共射放大器输出波形顶部被严重削平，下面正常，怎么回事？"
+  intent: diagnostic
+  scene_id_expected: exp_common_emitter_amplifier
+  fault_case_ids_expected:
+    - ce_quiescent_point_saturation
+  datasheet_chunk_ids_expected:
+    - bjt_8050.common_emitter.text
+  forbidden_ids:
+    - ce_bjt_pin_reversed
+    - "exp_first_order_rc:*"
+    - ua741.inverting.text
+  required_sources: [fault_case, datasheet_v2, structured_fact]
+  notes: "Q 点过低饱和削顶；同场景的 bjt_pin_reversed 是高频干扰项必须排除"
+
+- qid: ce_mix_001
+  query: "我的 BJT 装上去之后电路完全不工作，但万用表测电源都正常，怎么排查？"
+  intent: mixed
+  scene_id_expected: exp_common_emitter_amplifier
+  fault_case_ids_expected:
+    - ce_bjt_pin_reversed
+  datasheet_chunk_ids_expected:
+    - bjt_8050.pinout.figure.1
+    - bjt_8050.failures.text
+  forbidden_ids:
+    - ua741.pinout.figure.1
+    - "exp_ua741_inverting_amplifier:*"
+  required_sources: [fault_case, datasheet_v2]
+  notes: "BJT 引脚装反（最高频学生错误）；mixed = 既要诊断又要补 pinout 概念"
+
+# ===== 差分对 (3 题) =====
+
+- qid: diff_cnc_001
+  query: "BJT 差分对的共模抑制比 CMRR 是怎么来的？为什么两个集电极电阻必须严格匹配？"
+  intent: concept_tutor
+  scene_id_expected: exp_differential_amplifier
+  fault_case_ids_expected: []
+  datasheet_chunk_ids_expected:
+    - bjt_8050.diff_pair.text
+  forbidden_ids:
+    - "exp_first_order_rc:*"
+    - ua741.inverting.text
+  required_sources: [teaching_scene, datasheet_v2]
+  notes: "概念 + datasheet 设计原理"
+
+- qid: diff_diag_001
+  query: "差分对两个输出端的静态电压差了 1.5V，输入是平衡的，是什么问题？"
+  intent: diagnostic
+  scene_id_expected: exp_differential_amplifier
+  fault_case_ids_expected:
+    - diff_pair_collector_resistor_mismatch
+  datasheet_chunk_ids_expected:
+    - bjt_8050.diff_pair.text
+  forbidden_ids:
+    - diff_pair_tail_path_broken
+    - "exp_common_emitter_amplifier:*"
+  required_sources: [fault_case, datasheet_v2]
+  notes: "集电极电阻不对称导致静态失配；tail_path_broken 是同场景干扰项"
+
+- qid: diff_diag_002
+  query: "差分对两个输出端都钉在 VCC 不动，输入接什么都没反应，怎么办？"
+  intent: diagnostic
+  scene_id_expected: exp_differential_amplifier
+  fault_case_ids_expected:
+    - diff_pair_tail_path_broken
+  datasheet_chunk_ids_expected: []
+  forbidden_ids:
+    - diff_pair_collector_resistor_mismatch
+    - ne555.pinout.figure.1
+  required_sources: [fault_case, structured_fact]
+  notes: "尾电流路径断开 → 整个差分对没偏置电流"
+
+# ===== UA741 反相放大 (4 题) =====
+
+- qid: ua_inv_cnc_001
+  query: '运放反相放大器里说的"虚短虚断"是什么意思？为什么 V- 和 V+ 几乎相等？'
+  intent: concept_tutor
+  scene_id_expected: exp_ua741_inverting_amplifier
+  fault_case_ids_expected: []
+  datasheet_chunk_ids_expected:
+    - ua741.inverting.text
+  forbidden_ids:
+    - "exp_first_order_rc:*"
+    - bjt_8050.common_emitter.text
+  required_sources: [teaching_scene, datasheet_v2]
+  notes: "核心运放概念"
+
+- qid: ua_inv_diag_001
+  query: "我的 UA741 反相放大器输出一直钉在 +13V 不变，无论输入信号怎么动，输出都不变。"
+  intent: diagnostic
+  scene_id_expected: exp_ua741_inverting_amplifier
+  fault_case_ids_expected:
+    - inv_vee_pin_not_connected
+  datasheet_chunk_ids_expected:
+    - ua741.pinout.figure.1
+    - ua741.electrical.table.1
+  forbidden_ids:
+    - inv_input_pins_swapped
+    - inv_gain_calculation_error
+    - "exp_first_order_rc:*"
+  required_sources: [fault_case, datasheet_v2, structured_fact]
+  notes: "经典的 pin4 (VEE) 没接到负电源；inv_input_pins_swapped 症状相似必须排除"
+
+- qid: ua_inv_diag_002
+  query: "通电就饱和到 -13V，输入接小信号也是一直 -13V，是不是接反了？"
+  intent: diagnostic
+  scene_id_expected: exp_ua741_inverting_amplifier
+  fault_case_ids_expected:
+    - inv_input_pins_swapped
+  datasheet_chunk_ids_expected:
+    - ua741.pinout.figure.1
+  forbidden_ids:
+    - inv_vee_pin_not_connected
+    - inv_gain_calculation_error
+  required_sources: [fault_case, datasheet_v2]
+  notes: "pin2/pin3 接反 → 正反馈；与 VEE 缺失要区分"
+
+- qid: ua_inv_lab_001
+  query: "怎么用万用表确认我的反相放大器增益是 -10，应该怎么操作？"
+  intent: lab_guidance
+  scene_id_expected: exp_ua741_inverting_amplifier
+  fault_case_ids_expected: []
+  datasheet_chunk_ids_expected:
+    - ua741.electrical.table.1
+  forbidden_ids:
+    - "exp_first_order_rc:*"
+  required_sources: [teaching_scene]
+  notes: "操作指南，从 teaching_scene 的 expected_measurements 取"
+
+# ===== UA741 加法器 (3 题) =====
+
+- qid: ua_sum_cnc_001
+  query: "UA741 反相加法器的输出公式是什么？为什么每路输入电阻都要相等？"
+  intent: concept_tutor
+  scene_id_expected: exp_ua741_summing_amplifier
+  fault_case_ids_expected: []
+  datasheet_chunk_ids_expected:
+    - ua741.summing.text
+  forbidden_ids:
+    - "exp_ua741_inverting_amplifier:*"
+    - "exp_first_order_rc:*"
+  required_sources: [teaching_scene, datasheet_v2]
+  notes: "加法器特有的公式与输入电阻设计"
+
+- qid: ua_sum_diag_001
+  query: "我搭的加法器把两路输入直接连到 pin2 没串电阻，输出一直饱和，是这个原因吗？"
+  intent: diagnostic
+  scene_id_expected: exp_ua741_summing_amplifier
+  fault_case_ids_expected:
+    - sum_input_resistors_shorted_at_node
+  datasheet_chunk_ids_expected:
+    - ua741.summing.text
+  forbidden_ids:
+    - sum_signal_sources_not_common_ground
+  required_sources: [fault_case, datasheet_v2]
+  notes: "输入端直接短接到虚地节点"
+
+- qid: ua_sum_mix_001
+  query: "两路信号源是从不同的电池盒接过来的，加法器输出乱跳，但单独接一路又正常。"
+  intent: mixed
+  scene_id_expected: exp_ua741_summing_amplifier
+  fault_case_ids_expected:
+    - sum_signal_sources_not_common_ground
+  datasheet_chunk_ids_expected:
+    - ua741.summing.text
+  forbidden_ids:
+    - sum_input_resistors_shorted_at_node
+    - "exp_first_order_rc:*"
+  required_sources: [fault_case, teaching_scene, datasheet_v2]
+  notes: "多路信号源没共地 → 浮空参考；mixed 因为需要既解释又给步骤"
+
+# ===== UA741 积分器 (4 题) =====
+
+- qid: ua_int_cnc_001
+  query: "UA741 反相积分器的输出公式怎么推？积分时间常数 τ = R_in × C_f 对吗？"
+  intent: concept_tutor
+  scene_id_expected: exp_ua741_integrator
+  fault_case_ids_expected: []
+  datasheet_chunk_ids_expected:
+    - ua741.integrator.text
+  forbidden_ids:
+    - "exp_first_order_rc:*"
+    - "exp_ua741_inverting_amplifier:*"
+    - bjt_8050.diff_pair.text
+  required_sources: [teaching_scene, datasheet_v2]
+  notes: "积分器核心公式；要明确区别于 RC 一阶（学生最常混）"
+
+- qid: ua_int_diag_001
+  query: "我的积分器输入接 0V，输出却一直慢慢往 +13V 漂，没接信号就饱和了。"
+  intent: diagnostic
+  scene_id_expected: exp_ua741_integrator
+  fault_case_ids_expected:
+    - int_missing_rleak_dc_drift
+  datasheet_chunk_ids_expected:
+    - ua741.integrator.text
+  forbidden_ids:
+    - int_time_constant_mismatch
+    - "exp_ua741_inverting_amplifier:*"
+  required_sources: [fault_case, datasheet_v2]
+  notes: "缺少 R_leak（直流反馈）→ 输入失调电压被积分到饱和"
+
+- qid: ua_int_lab_001
+  query: "怎么验证我搭的积分器真的在做积分？应该输什么信号、看什么输出？"
+  intent: lab_guidance
+  scene_id_expected: exp_ua741_integrator
+  fault_case_ids_expected: []
+  datasheet_chunk_ids_expected:
+    - ua741.integrator.text
+  forbidden_ids:
+    - "exp_first_order_rc:*"
+  required_sources: [teaching_scene, datasheet_v2]
+  notes: "操作指南；方波输入 → 三角波输出是经典验证手段"
+
+- qid: ua_int_mix_001
+  query: "输入 1 kHz 方波，输出应该是三角波，但我看到的是几乎没幅度的小波动，怎么回事？"
+  intent: mixed
+  scene_id_expected: exp_ua741_integrator
+  fault_case_ids_expected:
+    - int_time_constant_mismatch
+  datasheet_chunk_ids_expected:
+    - ua741.integrator.text
+  forbidden_ids:
+    - int_missing_rleak_dc_drift
+    - "exp_first_order_rc:*"
+  required_sources: [fault_case, teaching_scene, datasheet_v2]
+  notes: "时间常数与信号频率不匹配 → 积分幅度很小；mixed 因要解释 τ vs f 关系"
