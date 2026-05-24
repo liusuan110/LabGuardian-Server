@@ -43,8 +43,35 @@ class ClassroomState:
 
     # ---- 心跳更新 ----
 
+    # WP-3 v4 (2026-05-24): fields that the pipeline / agent backend stamps
+    # into station state and that subsequent heartbeats from the student
+    # device MUST NOT erase. The student client doesn't compute these —
+    # they're server-side derivations from pipeline runs (topology
+    # classifier, netlist normalization, etc.). Replacing them on every
+    # 2s heartbeat would nuke the WP-1 / WP-3 contract.
+    _PIPELINE_DERIVED_FIELDS = frozenset(
+        [
+            "topology_label",          # WP-1 v3: GNN-A scene resolver source
+            "scene_id",                # WP-1: explicit scene override
+            "netlist_v2",              # pipeline S3 output
+            "comparison_report",       # pipeline S4 output
+            "circuit_snapshot",        # pipeline S3 text rendering
+            "semantic_analysis",       # pipeline S5 output
+            "runtime_metadata",        # pipeline runtime info
+            "missing_components",      # S4 derived
+            "match_level",             # S4 derived
+        ]
+    )
+
     def update_station(self, heartbeat: Dict[str, Any]) -> List[str]:
-        """更新工位状态, 返回新产生的警报列表"""
+        """更新工位状态, 返回新产生的警报列表.
+
+        WP-3 v4: heartbeats are now a **partial update** — server-stamped
+        pipeline fields (topology_label, netlist_v2, comparison_report, etc.)
+        are preserved unless the incoming payload explicitly carries them.
+        Prior behavior replaced the whole snapshot, which silently erased
+        the WP-1 scene context within seconds of every pipeline run.
+        """
         station_id = heartbeat.get("station_id", "unknown")
         now = time.time()
         new_alerts: List[str] = []
@@ -57,7 +84,15 @@ class ClassroomState:
             station = self._stations[station_id]
             old_risk = station.heartbeat.get("risk_level", "safe")
 
-            station.heartbeat = heartbeat
+            # WP-3 v4: merge instead of replace. Pipeline-derived fields
+            # survive unless the new payload explicitly sets them.
+            merged: Dict[str, Any] = dict(station.heartbeat)
+            for key, value in heartbeat.items():
+                merged[key] = value
+            for key in self._PIPELINE_DERIVED_FIELDS:
+                if key not in heartbeat and key in station.heartbeat:
+                    merged[key] = station.heartbeat[key]
+            station.heartbeat = merged
             station.last_seen = now
 
             progress = heartbeat.get("progress", 0.0)

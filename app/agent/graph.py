@@ -41,7 +41,6 @@ from app.agent.nodes import (
     repair_answer_node,
     should_continue_react,
     verify_answer_node,
-    vlm_explain_node,
 )
 from app.core.config import settings
 
@@ -103,7 +102,12 @@ def _compiled_graph():
     graph.add_node("react_reflect", react_reflect_node)
     graph.add_node("verify_answer", verify_answer_node)
     graph.add_node("repair_answer", repair_answer_node)
-    graph.add_node("vlm_explain", vlm_explain_node)
+    # WP-2.1 (2026-05-24): vlm_explain node removed from graph. The VLM
+    # micro-defect feature was not in project scope; its node imported
+    # ``app.core.deps`` which transitively pulled ``RagService`` and
+    # ``KbService`` into ``sys.modules`` AFTER the distill entrypoint's
+    # isolation check, breaking the physical-isolation contract. See
+    # docs/retrieval-contract.md WP-2 v1.1.
     graph.add_node("finalize_answer", finalize_answer_node)
 
     graph.add_edge(START, "classify_error")
@@ -125,11 +129,9 @@ def _compiled_graph():
         {
             "finalize_answer": "finalize_answer",
             "repair_answer": "repair_answer",
-            "vlm_explain": "vlm_explain",
         },
     )
     graph.add_edge("repair_answer", "finalize_answer")
-    graph.add_edge("vlm_explain", "finalize_answer")
     graph.add_edge("finalize_answer", END)
     return graph.compile()
 
@@ -151,9 +153,8 @@ def _run_sequential_graph(initial: DiagnosticState) -> DiagnosticState:
 
     state = _apply_node_update(state, verify_answer_node(state))
     route = _route_after_verification(state)
-    if route == "vlm_explain":
-        state = _apply_node_update(state, vlm_explain_node(state))
-    elif route == "repair_answer":
+    # WP-2.1: vlm_explain branch removed (see compiled-graph version above).
+    if route == "repair_answer":
         state = _apply_node_update(state, repair_answer_node(state))
     state = _apply_node_update(state, finalize_answer_node(state))
     return state
@@ -172,15 +173,17 @@ run_agent_graph = run_diagnostic_graph
 
 
 def _route_after_verification(state: DiagnosticState) -> str:
-    """Three-way route after verification:
+    """Two-way route after verification:
 
     - failed → repair_answer (always wins; we never expose a broken draft)
-    - passed + needs_micro_inspection → vlm_explain (Phase 6 white-box gate)
-    - passed only → finalize_answer
+    - passed → finalize_answer
+
+    WP-2.1 (2026-05-24): the third route ``vlm_explain`` (gated by
+    ``needs_micro_inspection``) was removed when VLM was dropped from
+    project scope. ``VerificationReport.needs_micro_inspection`` field
+    is retained for schema compatibility but never branches the graph.
     """
     report = state.verification_report
     if report is None or not report.passed:
         return "repair_answer"
-    if report.needs_micro_inspection:
-        return "vlm_explain"
     return "finalize_answer"

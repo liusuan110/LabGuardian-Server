@@ -38,11 +38,20 @@ def test_datasheet_tool_returns_fallback_in_normal_mode(monkeypatch) -> None:
 
 def test_datasheet_tool_skips_in_distill_mode_on_miss(monkeypatch) -> None:
     """WP-3 contract: in DISTILL_MODE, a v2 miss returns ``skipped``
-    instead of synthesizing fallback rule evidence."""
+    instead of synthesizing fallback rule evidence.
+
+    WP-3 v4 update: this test now must supply a VALID demo scene_id so
+    the v4-P1 ``distill_no_scene_id`` gate doesn't fire first. LED is
+    out-of-whitelist for UA741 inverter scene, so the whitelist filters
+    the candidate set down to {ua741, passive.cap}, neither of which
+    matches "LED" → v2 miss → v4-P2 miss-symmetry kicks in → skipped."""
     monkeypatch.setattr(settings, "DISTILL_MODE", True)
-    # "LED" doesn't exist in knowledge/datasheets/*.json → v2 will miss.
     result = datasheet_lookup_tool(
-        DatasheetLookupInput(component_type="LED", component_id="D1")
+        DatasheetLookupInput(
+            component_type="LED",
+            component_id="D1",
+            scene_id="exp_ua741_inverting_amplifier",
+        )
     )
     assert result.status == "skipped"
     assert result.payload["provider"] == "distill_fail_closed"
@@ -222,6 +231,156 @@ def test_datasheet_scene_whitelist_excludes_cross_chip_in_all_modes(
             f"surfaced out-of-scope datasheet {forbidden_doc_id!r} "
             f"(hits: {surfaced})"
         )
+
+
+# ---------------------------------------------------------------------------
+# 7. WP-3 v4: classroom heartbeat preserves pipeline-stamped fields (P0)
+# ---------------------------------------------------------------------------
+
+
+def test_classroom_heartbeat_preserves_topology_label() -> None:
+    """WP-3 v4 P0: a StationHeartbeat from the student client does NOT
+    carry topology_label / netlist_v2 (they're server-derived). Prior
+    behavior replaced the entire snapshot every 2s, erasing the WP-1
+    scene context and reintroducing train-deploy mismatch."""
+    from app.services.classroom_state import ClassroomState
+
+    classroom = ClassroomState()
+    # Simulate pipeline writing scene context.
+    classroom.update_station(
+        {
+            "station_id": "S_merge",
+            "topology_label": "inverting_amp_ua741",
+            "netlist_v2": {"components": [{"component_id": "U1"}]},
+            "comparison_report": {"items": []},
+            "risk_level": "safe",
+        }
+    )
+    # Simulate the next 2s heartbeat from the student client — typical
+    # payload only carries live metrics, not pipeline-derived fields.
+    classroom.update_station(
+        {
+            "station_id": "S_merge",
+            "progress": 0.42,
+            "component_count": 4,
+            "risk_level": "warning",
+            "fps": 25.0,
+            # NOTE: deliberately no topology_label / netlist_v2 — that's the
+            # bug case from the audit.
+        }
+    )
+    snapshot = classroom.get_all_stations()["S_merge"]
+    # Pipeline-derived fields MUST survive the heartbeat merge.
+    assert snapshot.get("topology_label") == "inverting_amp_ua741", (
+        f"WP-3 v4 P0 regression: topology_label erased by heartbeat. "
+        f"snapshot keys: {sorted(snapshot.keys())}"
+    )
+    assert snapshot.get("netlist_v2"), "netlist_v2 should also survive"
+    # Live fields from the heartbeat DO update.
+    assert snapshot.get("progress") == 0.42
+    assert snapshot.get("risk_level") == "warning"
+
+
+def test_classroom_heartbeat_explicit_field_still_overrides() -> None:
+    """Merge semantics: if heartbeat explicitly carries a pipeline field
+    (e.g. a re-stamp after manual correction), it overrides."""
+    from app.services.classroom_state import ClassroomState
+
+    classroom = ClassroomState()
+    classroom.update_station(
+        {"station_id": "S_ovr", "topology_label": "rc_first_order"}
+    )
+    classroom.update_station(
+        {"station_id": "S_ovr", "topology_label": "common_emitter"}
+    )
+    snapshot = classroom.get_all_stations()["S_ovr"]
+    assert snapshot["topology_label"] == "common_emitter"
+
+
+# ---------------------------------------------------------------------------
+# 8. WP-3 v4: distill mode rejects empty / unknown scene_id (P1)
+# ---------------------------------------------------------------------------
+
+
+def test_distill_mode_rejects_empty_scene_id(monkeypatch) -> None:
+    """WP-3 v4 P1: DISTILL_MODE + empty scene_id MUST skip — defense
+    against malformed distill samples that would otherwise search the
+    full corpus and pull cross-chip evidence."""
+    monkeypatch.setattr(settings, "DISTILL_MODE", True)
+    result = datasheet_lookup_tool(
+        DatasheetLookupInput(
+            component_type="",
+            component_id="",
+            query="555 timer",
+            scene_id="",  # malformed: distill without scene
+        )
+    )
+    assert result.status == "skipped"
+    assert result.payload["miss_reason"] == "distill_no_scene_id"
+    assert result.payload["hits"] == []
+
+
+def test_distill_mode_rejects_unknown_scene_id(monkeypatch) -> None:
+    """WP-3 v4 P1: DISTILL_MODE + non-empty but not-a-demo scene_id MUST
+    skip. Catches typos like ``exp_first_order_RC`` (case) or stale
+    scene IDs from older fixtures."""
+    monkeypatch.setattr(settings, "DISTILL_MODE", True)
+    result = datasheet_lookup_tool(
+        DatasheetLookupInput(
+            component_type="",
+            component_id="",
+            query="UA741 pin layout",
+            scene_id="not_a_real_scene",
+        )
+    )
+    assert result.status == "skipped"
+    assert result.payload["miss_reason"] == "distill_invalid_scene_id"
+
+
+# ---------------------------------------------------------------------------
+# 9. WP-3 v4: miss path symmetry — scene-anchored miss does NOT fallback (P2)
+# ---------------------------------------------------------------------------
+
+
+def test_scene_anchored_miss_skips_fallback_in_dev_mode(monkeypatch) -> None:
+    """WP-3 v4 P2: even in dev mode (DISTILL_MODE=False), a scene-anchored
+    turn whose v2 lookup misses MUST NOT fall back to LOCAL_DATASHEET_FALLBACKS.
+    Strict train ≡ deploy: distillation never sees fallback evidence in
+    a scene context, so deployment shouldn't either."""
+    monkeypatch.setattr(settings, "DISTILL_MODE", False)
+    # LED is not in any datasheet JSON and is not in any scene's whitelist
+    # → v2 miss guaranteed. With scene_id set, must skip (not fallback).
+    result = datasheet_lookup_tool(
+        DatasheetLookupInput(
+            component_type="LED",
+            component_id="D1",
+            scene_id="exp_ua741_inverting_amplifier",
+        )
+    )
+    assert result.status == "skipped", (
+        "WP-3 v4 P2 regression: scene-anchored v2 miss fell back to "
+        f"LOCAL_DATASHEET_FALLBACKS (provider={result.payload.get('provider')})"
+    )
+    assert result.payload["provider"] == "scene_anchored_no_fallback"
+    assert result.payload["miss_reason"] == "datasheet_v2_miss_scene_anchored_no_fallback"
+
+
+def test_no_scene_miss_still_falls_back_for_usability(monkeypatch) -> None:
+    """When scene_id is empty (admin / no-topo concept_tutor), the legacy
+    LOCAL_DATASHEET_FALLBACKS still fires for safety/usability — generic
+    'how do I wire an LED' questions still get conservative rules. This is
+    the documented escape hatch and does NOT contaminate distillation
+    (distill samples always have valid scene_id by WP-3 v4 P1)."""
+    monkeypatch.setattr(settings, "DISTILL_MODE", False)
+    result = datasheet_lookup_tool(
+        DatasheetLookupInput(
+            component_type="LED",
+            component_id="D1",
+            scene_id="",  # no scene context
+        )
+    )
+    assert result.payload["provider"] == "local_fallback"
+    assert any("限流" in rule for rule in result.payload["safety_rules"])
 
 
 def test_datasheet_no_scene_id_keeps_full_corpus_search() -> None:

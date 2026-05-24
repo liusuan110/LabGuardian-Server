@@ -35,6 +35,22 @@ def _get_datasheet_kb() -> DatasheetKbService:
     return _DATASHEET_KB_SINGLETON
 
 
+def _reset_datasheet_kb_singleton() -> None:
+    """WP-2.1 (2026-05-24): test-only helper.
+
+    Tests that mutate ``settings.DATASHEET_EMBEDDING_*`` to load a different
+    backend (e.g. ``test_wp2_distill_entrypoint.py`` switches to OpenVINO)
+    must reset this singleton in teardown — otherwise subsequent tests
+    that revert to the null backend still see the OV-bound singleton
+    (test-order-dependent failures).
+
+    Production code MUST NOT call this; the singleton lifetime is process
+    lifetime by design.
+    """
+    global _DATASHEET_KB_SINGLETON
+    _DATASHEET_KB_SINGLETON = None
+
+
 class ToolResult(BaseModel):
     tool_name: str
     status: str = "ok"
@@ -299,18 +315,69 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
     # verifier enforces). Falls through to legacy Chroma/PDF retrieval and then
     # to rule-based fallback to preserve existing behavior.
     #
-    # WP-3 v3 (2026-05-24): scene whitelist is now a PRODUCTION contract
-    # (was DISTILL_MODE-only in v2). Whenever scene_id is set, restrict the
-    # candidate set so train ≡ deploy. Empty scene_id keeps the legacy
-    # full-corpus search for concept_tutor questions without topology
-    # context and for admin tools that bypass the agent graph.
+    # WP-3 v3 (2026-05-24): scene whitelist is now a PRODUCTION contract.
+    # Whenever scene_id is set, restrict the candidate set so train ≡ deploy.
+    # Empty scene_id keeps the full-corpus search for concept_tutor questions
+    # without topology context and for admin tools that bypass the agent graph.
+    #
+    # WP-3 v4 (2026-05-24): in DISTILL_MODE, hard-fail on empty / unknown
+    # scene_id. The distillation entrypoint MUST validate scene_id upfront;
+    # this is defense-in-depth so a malformed distill sample can never
+    # silently retrieve cross-chip / out-of-scene evidence.
+    distill_on = bool(getattr(settings, "DISTILL_MODE", False))
+    scene_id_clean = (args.scene_id or "").strip()
     allowed_docs: frozenset[str] | None = None
-    if (args.scene_id or "").strip():
+    if scene_id_clean:
         from app.services.scene_resolver import allowed_datasheets_for_scene
-        allowed_docs = allowed_datasheets_for_scene(args.scene_id)
-        # If scene_id is valid but unknown to the resolver, allowed_docs
-        # is None → no filter applied (caller MUST ensure scene_id is a
-        # known demo scene if filtering is required).
+        allowed_docs = allowed_datasheets_for_scene(scene_id_clean)
+        if allowed_docs is None and distill_on:
+            # WP-3 v4 (P1): scene_id is non-empty but not one of the 6 demos
+            # → distill sample is malformed; refuse to synthesize evidence.
+            return ToolResult(
+                tool_name="datasheet_lookup_tool",
+                status="skipped",
+                summary=(
+                    f"DISTILL_MODE 下 scene_id={scene_id_clean!r} 不在 6 个 demo "
+                    f"场景中；拒绝从全 corpus 取证。"
+                ),
+                payload={
+                    "provider": "distill_fail_closed",
+                    "component_id": args.component_id,
+                    "component_type": args.component_type,
+                    "part_number": args.part_number,
+                    "package_type": args.package_type,
+                    "query": query,
+                    "query_intent": query_intent,
+                    "error_family": args.error_family,
+                    "miss_reason": "distill_invalid_scene_id",
+                    "hits": [],
+                    "rules": [],
+                },
+            )
+    elif distill_on:
+        # WP-3 v4 (P1): empty scene_id in DISTILL_MODE → refuse. The
+        # production agent graph always passes evidence.current_scene_id;
+        # the distill entrypoint must guarantee it's non-empty.
+        return ToolResult(
+            tool_name="datasheet_lookup_tool",
+            status="skipped",
+            summary=(
+                "DISTILL_MODE 下 scene_id 为空；拒绝在无场景上下文中取证。"
+            ),
+            payload={
+                "provider": "distill_fail_closed",
+                "component_id": args.component_id,
+                "component_type": args.component_type,
+                "part_number": args.part_number,
+                "package_type": args.package_type,
+                "query": query,
+                "query_intent": query_intent,
+                "error_family": args.error_family,
+                "miss_reason": "distill_no_scene_id",
+                "hits": [],
+                "rules": [],
+            },
+        )
 
     v2_hits: list[dict[str, Any]] = []
     try:
@@ -352,16 +419,34 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
     # same DATASHEET_EMBEDDING_BACKEND=openvino setup) would never actually
     # produce. Return an explicit skipped result so the agent answers
     # without datasheet evidence in this case.
-    if not v2_hits and getattr(settings, "DISTILL_MODE", False):
+    #
+    # WP-3 v4 (2026-05-24): widened to ALSO skip on miss when scene_id is
+    # set (production main path), regardless of DISTILL_MODE. Symmetric
+    # train ≡ deploy semantics for the miss path: a scene-anchored turn
+    # that misses v2 means evidence is absent in BOTH modes, never replaced
+    # with synthetic fallback rules. When scene_id is empty (admin / no-topo
+    # concept_tutor), the legacy fallback still fires for usability.
+    if not v2_hits and (distill_on or scene_id_clean):
+        reason = (
+            "datasheet_v2_miss_distill_fail_closed"
+            if distill_on
+            else "datasheet_v2_miss_scene_anchored_no_fallback"
+        )
+        summary = (
+            "datasheet 本地 v2 未命中；DISTILL_MODE 下不回落保守规则集，"
+            "返回 skipped 以保持训练↔部署一致。"
+            if distill_on
+            else (
+                f"datasheet 本地 v2 未命中（scene_id={scene_id_clean}）；"
+                "场景锚定路径不回落保守规则集，保 train ≡ deploy。"
+            )
+        )
         return ToolResult(
             tool_name="datasheet_lookup_tool",
             status="skipped",
-            summary=(
-                "datasheet 本地 v2 未命中；DISTILL_MODE 下不回落保守规则集，"
-                "返回 skipped 以保持训练↔部署一致。"
-            ),
+            summary=summary,
             payload={
-                "provider": "distill_fail_closed",
+                "provider": "distill_fail_closed" if distill_on else "scene_anchored_no_fallback",
                 "component_id": args.component_id,
                 "component_type": args.component_type,
                 "part_number": args.part_number,
@@ -369,7 +454,8 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
                 "query": query,
                 "query_intent": query_intent,
                 "error_family": args.error_family,
-                "miss_reason": "datasheet_v2_miss_distill_fail_closed",
+                "miss_reason": reason,
+                "scene_id": scene_id_clean,
                 "hits": [],
                 "rules": [],
             },
