@@ -1,0 +1,22 @@
+{
+  "labguardian_pilot20_alpaca": {
+    "file_name": "pilot20_sft_alpaca.jsonl",
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "response": "output",
+      "system": "system",
+      "history": "history"
+    }
+  },
+  "labguardian_train_alpaca": {
+    "file_name": "train_sft_alpaca.jsonl",
+    "columns": {
+      "prompt": "instruction",
+      "query": "input",
+      "response": "output",
+      "system": "system",
+      "history": "history"
+    }
+  }
+}

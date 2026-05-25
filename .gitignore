@@ -42,7 +42,10 @@ models/
 knowledge/datasheets/embeddings/*.npz
 
 # Datasets — large files kept locally, not tracked in git
-datasets/
+datasets/*
+!datasets/distill/
+datasets/distill/*
+!datasets/distill/dataset_info.json
 
 # Checkpoints — model weights kept locally, not tracked in git
 checkpoints/
