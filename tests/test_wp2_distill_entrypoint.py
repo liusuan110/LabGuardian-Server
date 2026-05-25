@@ -198,6 +198,64 @@ def test_run_sample_processes_diagnostic_with_resolved_scene(distill_env) -> Non
     assert "fault_case_lookup_tool" in tool_names
 
 
+def test_run_sample_evidence_only_returns_context_and_tools(distill_env) -> None:
+    """evidence-only mode freezes retrieval evidence without entering ReAct."""
+    from scripts.distill.run_inference import run_sample
+
+    record = run_sample(
+        {
+            "qid": "wp2_evidence_only",
+            "query": "UA741 反相放大输出固定在 +13V 不变怎么办？",
+            "intent": "diagnostic",
+            "scene_id": "exp_ua741_inverting_amplifier",
+            "station": {
+                "risk_level": "danger",
+                "comparison_report": {
+                    "items": [{"error_code": "FLOATING_PIN", "component_id": "U1"}]
+                },
+            },
+        },
+        top_k=5,
+        evidence_only=True,
+    )
+    assert not record["audit"]["skipped"]
+    assert record["audit"]["evidence_only"] is True
+    ao = record["agent_output"]
+    assert ao["final_answer"] == ""
+    assert ao["react_iterations"] == 0
+    assert ao["react_terminate_reason"] == "evidence_only"
+    assert ao["context_pack"], "context_pack should be exported in evidence-only mode"
+    assert ao["tool_results"], "tool_results should be exported in evidence-only mode"
+
+
+def test_run_sample_recall_strict_filters_unmatched_targets(distill_env) -> None:
+    """recall_strict keeps audit output but skips unmatched samples."""
+    from scripts.distill.run_inference import run_sample
+
+    record = run_sample(
+        {
+            "qid": "wp2_filter_miss",
+            "query": "UA741 反相放大输出固定在 +13V 不变怎么办？",
+            "intent": "diagnostic",
+            "scene_id": "exp_ua741_inverting_amplifier",
+            "target_fault_case_id": "fault_case.does_not_exist",
+            "station": {
+                "risk_level": "danger",
+                "comparison_report": {
+                    "items": [{"error_code": "FLOATING_PIN", "component_id": "U1"}]
+                },
+            },
+        },
+        top_k=5,
+        evidence_only=True,
+        filter_policy="recall_strict",
+    )
+    assert record["audit"]["skipped"] is True
+    assert record["audit"]["skip_reason"] == "filter_policy:recall_strict:no_target_match"
+    assert record["audit"]["filter"]["kept"] is False
+    assert record["agent_output"]["tool_results"], "filtered records still keep evidence for audit"
+
+
 def test_run_sample_skips_invalid_sample_without_calling_graph(distill_env) -> None:
     """Validation catches bad input before any agent work happens."""
     from scripts.distill.run_inference import run_sample
@@ -216,15 +274,13 @@ def test_run_sample_skips_invalid_sample_without_calling_graph(distill_env) -> N
     assert "agent_output" not in record
 
 
-def test_main_cli_smoke(tmp_path: Path) -> None:
+def test_main_cli_smoke(tmp_path: Path, monkeypatch) -> None:
     """End-to-end: --questions in, --output out, mixed valid / invalid.
 
-    Uses subprocess so isolation guardrail runs against a clean process
-    (other tests in the same pytest may have imported RagService)."""
-    import os
-    import subprocess
+    Runs in-process with a patched precheck so the smoke test validates the
+    CLI/output contract without depending on local model artifacts."""
+    import scripts.distill.run_inference as entry
 
-    repo_root = Path(__file__).resolve().parents[1]
     questions = tmp_path / "q.jsonl"
     output = tmp_path / "out.jsonl"
     questions.write_text(
@@ -253,27 +309,23 @@ def test_main_cli_smoke(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    env = {
-        **os.environ,
-        "DISTILL_MODE": "true",
-        "DATASHEET_EMBEDDING_BACKEND": "openvino",
-        "DATASHEET_EMBEDDING_MODEL_DIR": "models/bge-small-zh-v1.5-int8-ov",
-    }
-    result = subprocess.run(
+    monkeypatch.setattr(entry, "_gate_on_precheck", lambda: 0)
+    monkeypatch.setattr(entry, "_verify_isolation", lambda: None)
+    monkeypatch.setattr(settings, "DISTILL_MODE", True)
+    monkeypatch.setattr(settings, "DATASHEET_EMBEDDING_BACKEND", "openvino")
+    monkeypatch.setattr(
+        settings,
+        "DATASHEET_EMBEDDING_MODEL_DIR",
+        "models/bge-small-zh-v1.5-int8-ov",
+    )
+
+    exit_code = entry.main(
         [
-            sys.executable, "-m", "scripts.distill.run_inference",
             "--questions", str(questions),
             "--output", str(output),
-        ],
-        cwd=str(repo_root),
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=120,
+        ]
     )
-    assert result.returncode == 0, (
-        f"distill entrypoint exited non-zero: stderr={result.stderr!r}"
-    )
+    assert exit_code == 0
     records = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines() if line]
     assert len(records) == 2
     # First sample processed, second skipped.
@@ -315,6 +367,54 @@ def test_main_cli_aborts_when_precheck_fails(tmp_path: Path, monkeypatch) -> Non
     # Output must not have been created (or empty).
     if output.exists():
         assert output.read_text(encoding="utf-8").strip() == ""
+
+
+def test_main_cli_aborts_when_exception_rate_exceeds_threshold(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Batch must fail when sample exceptions exceed the configured threshold."""
+    import scripts.distill.run_inference as entry
+
+    questions = tmp_path / "q.jsonl"
+    output = tmp_path / "out.jsonl"
+    questions.write_text(
+        json.dumps(
+            {
+                "qid": "boom",
+                "query": "x",
+                "intent": "concept_tutor",
+                "scene_id": "exp_first_order_rc",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(entry, "_gate_on_precheck", lambda: 0)
+    monkeypatch.setattr(entry, "_verify_isolation", lambda: None)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("forced sample failure")
+
+    monkeypatch.setattr(entry, "run_sample", _boom)
+    exit_code = entry.main(
+        [
+            "--questions",
+            str(questions),
+            "--output",
+            str(output),
+            "--max-error-rate",
+            "0.0",
+        ]
+    )
+    assert exit_code == 1
+    records = [
+        json.loads(line)
+        for line in output.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    assert len(records) == 1
+    assert records[0]["audit"]["skip_reason_category"] == "exception"
+    assert records[0]["audit"]["exception_type"] == "RuntimeError"
 
 
 # ---------------------------------------------------------------------------

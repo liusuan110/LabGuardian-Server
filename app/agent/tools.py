@@ -380,6 +380,7 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
         )
 
     v2_hits: list[dict[str, Any]] = []
+    retrieval_error: dict[str, str] | None = None
     try:
         retrieved = _get_datasheet_kb().search(
             query=query,
@@ -409,8 +410,37 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
                     "query_intent": chunk.query_intent,
                 }
             )
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        retrieval_error = {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        }
         v2_hits = []
+
+    if retrieval_error and (distill_on or scene_id_clean):
+        provider = "distill_fail_closed" if distill_on else "scene_anchored_error"
+        return ToolResult(
+            tool_name="datasheet_lookup_tool",
+            status="error",
+            summary=(
+                "datasheet 本地 v2 检索异常；拒绝将后端错误伪装成正常 miss。"
+            ),
+            payload={
+                "provider": provider,
+                "component_id": args.component_id,
+                "component_type": args.component_type,
+                "part_number": args.part_number,
+                "package_type": args.package_type,
+                "query": query,
+                "query_intent": query_intent,
+                "error_family": args.error_family,
+                "miss_reason": "datasheet_v2_error",
+                "scene_id": scene_id_clean,
+                "hits": [],
+                "rules": [],
+                "retrieval_error": retrieval_error,
+            },
+        )
 
     # WP-3 (2026-05-24): in distillation mode, when local v2 misses we
     # MUST NOT fall back to LOCAL_DATASHEET_FALLBACKS — those hand-coded
@@ -521,7 +551,10 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
 
     return ToolResult(
         tool_name="datasheet_lookup_tool",
-        summary=f"datasheet 未命中 PDF，回退到本地规则：{fallback['component_type']} / {fallback['package']}。",
+            summary=(
+                f"datasheet 未命中 PDF，回退到本地规则：{fallback['component_type']} / "
+                f"{fallback['package']}。"
+            ),
         payload={
             "provider": "local_fallback",
             "component_id": args.component_id,
@@ -540,6 +573,7 @@ def datasheet_lookup_tool(args: DatasheetLookupInput) -> ToolResult:
             "rules": flat_rules[:6],
             "structured_rules": structured_rules[:6],
             "hits": [],
+                "retrieval_error": retrieval_error,
         },
     )
 

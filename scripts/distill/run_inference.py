@@ -90,8 +90,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from app.agent.contracts import AgentIntent  # noqa: E402
+from app.agent.context_pack import build_context_pack  # noqa: E402
 from app.agent.evidence import build_runtime_evidence_from_station  # noqa: E402
 from app.agent.graph import run_diagnostic_graph  # noqa: E402
+from app.agent.tool_runner import run_diagnostic_tools  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.services.error_tag_service import ErrorTagService  # noqa: E402
 from app.services.scene_resolver import (  # noqa: E402
@@ -115,6 +117,7 @@ _SCENE_REQUIRED_INTENTS: frozenset[str] = frozenset(["diagnostic", "mixed"])
 _VALID_INTENTS: frozenset[str] = frozenset(
     ["diagnostic", "concept_tutor", "lab_guidance", "mixed"]
 )
+_VALID_FILTER_POLICIES: frozenset[str] = frozenset(["none", "recall_strict"])
 
 # WP-2 isolation contract: the distillation entrypoint MUST NOT load any
 # of these modules — they are the legacy / cloud / dev-only paths that
@@ -238,12 +241,145 @@ def _synthesize_station(sample: dict) -> dict:
     return base
 
 
+def _collect_target_ids(sample: dict, plural_key: str, singular_key: str) -> set[str]:
+    values: set[str] = set()
+    plural = sample.get(plural_key)
+    if isinstance(plural, list):
+        values.update(str(item).strip() for item in plural if str(item).strip())
+    singular = str(sample.get(singular_key) or "").strip()
+    if singular:
+        values.add(singular)
+    return values
+
+
+def _collect_matched_fault_case_ids(tool_results: list[dict]) -> set[str]:
+    matched: set[str] = set()
+    for result in tool_results:
+        if result.get("tool_name") != "fault_case_lookup_tool":
+            continue
+        payload = result.get("payload") or {}
+        for case in payload.get("fault_cases", []):
+            knowledge_id = str(case.get("knowledge_id") or "").strip()
+            if knowledge_id:
+                matched.add(knowledge_id)
+    return matched
+
+
+def _collect_matched_datasheet_chunk_ids(tool_results: list[dict]) -> set[str]:
+    matched: set[str] = set()
+    for result in tool_results:
+        if result.get("tool_name") != "datasheet_lookup_tool":
+            continue
+        payload = result.get("payload") or {}
+        for hit in payload.get("hits", []):
+            chunk_id = str(hit.get("chunk_id") or "").strip()
+            if chunk_id:
+                matched.add(chunk_id)
+    return matched
+
+
+def _count_tool_errors(tool_results: list[dict]) -> int:
+    return sum(1 for result in tool_results if result.get("status") == "error")
+
+
+def _evaluate_filter_policy(sample: dict, tool_results: list[dict], filter_policy: str) -> dict:
+    if filter_policy == "none":
+        return {
+            "filter_policy": filter_policy,
+            "kept": True,
+            "reason": "disabled",
+            "matched_fault_case_ids": [],
+            "matched_datasheet_chunk_ids": [],
+            "target_fault_case_ids": [],
+            "target_datasheet_chunk_ids": [],
+        }
+
+    target_fault_case_ids = _collect_target_ids(
+        sample,
+        plural_key="target_fault_case_ids",
+        singular_key="target_fault_case_id",
+    )
+    target_datasheet_chunk_ids = _collect_target_ids(
+        sample,
+        plural_key="target_datasheet_chunk_ids",
+        singular_key="target_datasheet_chunk_id",
+    )
+    if not target_fault_case_ids and not target_datasheet_chunk_ids:
+        return {
+            "filter_policy": filter_policy,
+            "kept": True,
+            "reason": "no_targets_declared",
+            "matched_fault_case_ids": [],
+            "matched_datasheet_chunk_ids": [],
+            "target_fault_case_ids": [],
+            "target_datasheet_chunk_ids": [],
+        }
+
+    matched_fault_case_ids = sorted(
+        target_fault_case_ids & _collect_matched_fault_case_ids(tool_results)
+    )
+    matched_datasheet_chunk_ids = sorted(
+        target_datasheet_chunk_ids & _collect_matched_datasheet_chunk_ids(tool_results)
+    )
+    kept = bool(matched_fault_case_ids or matched_datasheet_chunk_ids)
+    reason = (
+        "matched_target_ids"
+        if kept
+        else "no_target_match"
+    )
+    return {
+        "filter_policy": filter_policy,
+        "kept": kept,
+        "reason": reason,
+        "matched_fault_case_ids": matched_fault_case_ids,
+        "matched_datasheet_chunk_ids": matched_datasheet_chunk_ids,
+        "target_fault_case_ids": sorted(target_fault_case_ids),
+        "target_datasheet_chunk_ids": sorted(target_datasheet_chunk_ids),
+    }
+
+
+def _run_evidence_only(sample: dict, *, evidence, query: str, intent: AgentIntent, top_k: int) -> dict:
+    context_pack = build_context_pack(
+        evidence,
+        query=query,
+        user_message=sample.get("user_message", "") or query,
+        intent=intent,
+    )
+    tool_results = [
+        result.model_dump()
+        for result in run_diagnostic_tools(
+            evidence=evidence,
+            context_pack=context_pack,
+            query=query,
+            top_k=top_k,
+        )
+    ]
+    return {
+        "final_answer": "",
+        "draft_answer": "",
+        "context_pack": context_pack.model_dump(),
+        "tool_results": tool_results,
+        "react_iterations": 0,
+        "react_terminate_reason": "evidence_only",
+        "evidence_resolved_scene_id": evidence.current_scene_id,
+        "evidence_error_codes": list(evidence.error_codes),
+        "evidence_error_tags": list(evidence.error_tags),
+        "verification_passed": False,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Per-sample execution
 # ---------------------------------------------------------------------------
 
 
-def run_sample(sample: dict, *, top_k: int = 5) -> dict:
+def run_sample(
+    sample: dict,
+    *,
+    top_k: int = 5,
+    evidence_only: bool = False,
+    filter_policy: str = "none",
+) -> dict:
     """Process one sample. Always returns a record (skipped or processed).
 
     .. warning:: **Internal API** — production distillation MUST go through
@@ -268,6 +404,7 @@ def run_sample(sample: dict, *, top_k: int = 5) -> dict:
                 "run_at_iso": _now_iso(),
                 "skipped": True,
                 "skip_reason": validation.reason,
+                "skip_reason_category": "validation",
             },
         }
 
@@ -279,24 +416,30 @@ def run_sample(sample: dict, *, top_k: int = 5) -> dict:
     )
 
     intent: AgentIntent = sample["intent"]
-    state = run_diagnostic_graph(
-        evidence=evidence,
-        query=sample["query"],
-        user_message=sample.get("user_message", ""),
-        top_k=top_k,
-        intent=intent,
-    )
+    if evidence_only:
+        agent_output = _run_evidence_only(
+            sample,
+            evidence=evidence,
+            query=sample["query"],
+            intent=intent,
+            top_k=top_k,
+        )
+    else:
+        state = run_diagnostic_graph(
+            evidence=evidence,
+            query=sample["query"],
+            user_message=sample.get("user_message", ""),
+            top_k=top_k,
+            intent=intent,
+        )
 
-    context_pack = (
-        state.context_pack.model_dump() if state.context_pack else None
-    )
-    verification_passed = bool(
-        state.verification_report and state.verification_report.passed
-    )
-
-    return {
-        **base_record,
-        "agent_output": {
+        context_pack = (
+            state.context_pack.model_dump() if state.context_pack else None
+        )
+        verification_passed = bool(
+            state.verification_report and state.verification_report.passed
+        )
+        agent_output = {
             "final_answer": state.final_answer,
             "draft_answer": state.draft_answer,
             "context_pack": context_pack,
@@ -307,11 +450,29 @@ def run_sample(sample: dict, *, top_k: int = 5) -> dict:
             "evidence_error_codes": list(evidence.error_codes),
             "evidence_error_tags": list(evidence.error_tags),
             "verification_passed": verification_passed,
-        },
+        }
+
+    tool_results = list(agent_output.get("tool_results") or [])
+    filter_audit = _evaluate_filter_policy(sample, tool_results, filter_policy)
+    skipped = not filter_audit["kept"]
+    skip_reason = ""
+    skip_reason_category = ""
+    if skipped:
+        skip_reason = f"filter_policy:{filter_policy}:{filter_audit['reason']}"
+        skip_reason_category = "filter"
+
+    return {
+        **base_record,
+        "agent_output": agent_output,
         "audit": {
             "distill_mode": bool(getattr(settings, "DISTILL_MODE", False)),
             "run_at_iso": _now_iso(),
-            "skipped": False,
+            "evidence_only": evidence_only,
+            "skipped": skipped,
+            "skip_reason": skip_reason,
+            "skip_reason_category": skip_reason_category,
+            "filter": filter_audit,
+            "tool_error_count": _count_tool_errors(tool_results),
         },
     }
 
@@ -360,6 +521,28 @@ def main(argv: list[str] | None = None) -> int:
         "--top-k", type=int, default=5,
         help="top_k for the agent graph (default: 5)",
     )
+    parser.add_argument(
+        "--evidence-only",
+        action="store_true",
+        help="only build evidence/context_pack and execute tools once; skip ReAct/verify/finalize",
+    )
+    parser.add_argument(
+        "--filter-policy",
+        choices=sorted(_VALID_FILTER_POLICIES),
+        default="none",
+        help="post-run filtering policy for distill samples (default: none)",
+    )
+    parser.add_argument(
+        "--fail-on-exception",
+        action="store_true",
+        help="abort the batch immediately on the first sample exception",
+    )
+    parser.add_argument(
+        "--max-error-rate",
+        type=float,
+        default=0.0,
+        help="abort with exit 1 when sample exception rate exceeds this ratio (0.0-1.0, default: 0.0)",
+    )
     parser.add_argument("--verbose", "-v", action="store_true")
     # WP-2.1 (2026-05-24): ``--skip-precheck`` REMOVED. Earlier audit
     # flagged it as a contract-bypass vector — any operator could ship
@@ -372,6 +555,9 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(name)s: %(message)s",
     )
+    if not 0.0 <= args.max_error_rate <= 1.0:
+        print("--max-error-rate must be within [0.0, 1.0]", file=sys.stderr)
+        return 2
 
     if not args.questions.is_file():
         print(f"--questions does not exist: {args.questions}", file=sys.stderr)
@@ -390,13 +576,22 @@ def main(argv: list[str] | None = None) -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     processed = 0
     skipped = 0
+    exception_count = 0
+    total_seen = 0
+    exit_code = 0
     with args.output.open("w", encoding="utf-8") as out:
         for line_no, sample in iter_jsonl(args.questions):
             if args.limit is not None and processed + skipped >= args.limit:
                 break
             try:
-                record = run_sample(sample, top_k=args.top_k)
+                record = run_sample(
+                    sample,
+                    top_k=args.top_k,
+                    evidence_only=args.evidence_only,
+                    filter_policy=args.filter_policy,
+                )
             except Exception as exc:  # noqa: BLE001
+                exception_count += 1
                 logger.exception("sample %s (line %d) raised", sample.get("qid"), line_no)
                 record = {
                     "qid": sample.get("qid"),
@@ -406,25 +601,43 @@ def main(argv: list[str] | None = None) -> int:
                     "audit": {
                         "distill_mode": bool(getattr(settings, "DISTILL_MODE", False)),
                         "run_at_iso": _now_iso(),
+                        "evidence_only": args.evidence_only,
                         "skipped": True,
                         "skip_reason": f"exception: {type(exc).__name__}: {exc}",
+                        "skip_reason_category": "exception",
+                        "exception_type": type(exc).__name__,
+                        "exception_message": str(exc),
                     },
                 }
             if record.get("audit", {}).get("skipped"):
                 skipped += 1
             else:
                 processed += 1
+            total_seen += 1
             out.write(json.dumps(record, ensure_ascii=False) + "\n")
+            if args.fail_on_exception and exception_count > 0:
+                exit_code = 1
+                break
+
+    if total_seen:
+        error_rate = exception_count / total_seen
+        if error_rate > args.max_error_rate:
+            print(
+                f"sample exception rate {error_rate:.3f} exceeded --max-error-rate={args.max_error_rate:.3f}",
+                file=sys.stderr,
+            )
+            exit_code = 1
 
     logger.info(
-        "done — processed=%d skipped=%d output=%s",
+        "done — processed=%d skipped=%d exceptions=%d output=%s",
         processed,
         skipped,
+        exception_count,
         args.output.relative_to(REPO_ROOT)
         if args.output.is_relative_to(REPO_ROOT)
         else args.output,
     )
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

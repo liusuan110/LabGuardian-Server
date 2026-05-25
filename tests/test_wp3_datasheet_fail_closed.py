@@ -80,6 +80,57 @@ def test_datasheet_tool_still_returns_v2_hits_in_distill_mode(monkeypatch) -> No
     assert result.payload["provider"] in ("local_datasheet_v2", "distill_fail_closed")
 
 
+def test_datasheet_tool_returns_error_in_distill_mode_on_backend_exception(
+    monkeypatch,
+) -> None:
+    """检索后端异常在 DISTILL_MODE 下必须显式暴露，不能伪装成 miss。"""
+    import app.agent.tools as tools_mod
+
+    class _BoomKb:
+        def search(self, **kwargs):
+            raise RuntimeError("broken backend")
+
+    monkeypatch.setattr(settings, "DISTILL_MODE", True)
+    monkeypatch.setattr(tools_mod, "_get_datasheet_kb", lambda: _BoomKb())
+    result = datasheet_lookup_tool(
+        DatasheetLookupInput(
+            component_type="UA741",
+            component_id="U1",
+            query="UA741 pin 4",
+            scene_id="exp_ua741_inverting_amplifier",
+        )
+    )
+    assert result.status == "error"
+    assert result.payload["provider"] == "distill_fail_closed"
+    assert result.payload["miss_reason"] == "datasheet_v2_error"
+    assert result.payload["retrieval_error"]["type"] == "RuntimeError"
+
+
+def test_scene_anchored_backend_error_does_not_fallback_in_normal_mode(
+    monkeypatch,
+) -> None:
+    """有 scene_id 的生产路径遇到后端错误时也不能回落成规则 miss。"""
+    import app.agent.tools as tools_mod
+
+    class _BoomKb:
+        def search(self, **kwargs):
+            raise RuntimeError("broken backend")
+
+    monkeypatch.setattr(settings, "DISTILL_MODE", False)
+    monkeypatch.setattr(tools_mod, "_get_datasheet_kb", lambda: _BoomKb())
+    result = datasheet_lookup_tool(
+        DatasheetLookupInput(
+            component_type="UA741",
+            component_id="U1",
+            query="UA741 pin 4",
+            scene_id="exp_ua741_inverting_amplifier",
+        )
+    )
+    assert result.status == "error"
+    assert result.payload["provider"] == "scene_anchored_error"
+    assert result.payload["miss_reason"] == "datasheet_v2_error"
+
+
 # ---------------------------------------------------------------------------
 # 2. Precheck script: each failure mode detected
 # ---------------------------------------------------------------------------
