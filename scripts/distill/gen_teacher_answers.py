@@ -66,7 +66,10 @@ _SYSTEM_PROMPT = """你是 LabGuardian 蒸馏教师模型。
 
 约束：
 - `answer` 用中文，尽量先结论后步骤。
-- `citations` 只引用 evidence 中真实出现的信息，如 error_code、tool 名称、knowledge_id、chunk_id、scene_id。
+- `citations` 只引用 evidence 中真实出现的信息，如 error_code、tool 名称、knowledge_id、chunk_id、scene_id、ref_id。
+- 只要 `answer` 给出具体原理、诊断、结论或步骤，`citations` 就必须至少包含 1 条可核对引用。
+- 如果找不到可引用证据，`answer` 必须明确以“证据不足”开头，`citations` 留空，不得输出教材式泛化讲解。
+- 禁止使用 frozen evidence 之外的常识来补全答案。
 - 不要输出 markdown 代码块，不要输出 JSON 之外的任何文本。
 """
 
@@ -81,6 +84,14 @@ class TeacherSpec:
     provider: str = "openai_compatible"
     temperature: float = 0.0
     max_tokens: int = 900
+
+
+def _sanitize_base_url(raw: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    text = text.strip("`").strip().strip("'").strip('"').strip()
+    return text.rstrip("/")
 
 
 def _now_iso() -> str:
@@ -99,6 +110,13 @@ def iter_jsonl(path: Path):
                 raise ValueError(f"malformed JSON at {path}:{line_no}: {exc}") from exc
 
 
+def _record_resume_key(payload: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(payload.get("qid") or "").strip(),
+        str(payload.get("teacher_name") or "").strip(),
+    )
+
+
 def _parse_teacher_spec(raw: str) -> TeacherSpec:
     fields: dict[str, str] = {}
     for part in raw.split(","):
@@ -114,7 +132,7 @@ def _parse_teacher_spec(raw: str) -> TeacherSpec:
 
     name = fields.get("name", "")
     model = fields.get("model", "")
-    base_url = fields.get("base_url", "").rstrip("/")
+    base_url = _sanitize_base_url(fields.get("base_url", ""))
     api_key_env = fields.get("api_key_env", "")
     provider = (fields.get("provider") or "openai_compatible").strip().lower()
     if provider != "openai_compatible":
@@ -147,7 +165,7 @@ def _parse_teacher_spec(raw: str) -> TeacherSpec:
 
 def _teacher_from_settings() -> TeacherSpec:
     model = str(getattr(settings, "LLM_MODEL", "") or "").strip()
-    base_url = str(getattr(settings, "LLM_BASE_URL", "") or "").rstrip("/")
+    base_url = _sanitize_base_url(getattr(settings, "LLM_BASE_URL", "") or "")
     api_key = str(getattr(settings, "LLM_API_KEY", "") or "").strip()
     if not model or not base_url or not api_key:
         raise ValueError(
@@ -243,6 +261,146 @@ def _normalize_teacher_json(parsed: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _add_labeled_token(target: set[str], label: str, value: Any) -> None:
+    text = str(value or "").strip()
+    if not text:
+        return
+    target.add(text)
+    target.add(f"{label}={text}")
+
+
+def _collect_allowed_citation_tokens(payload: Any, target: set[str]) -> None:
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key in {
+                "ref_id",
+                "knowledge_id",
+                "chunk_id",
+                "error_code",
+                "scene_id",
+                "tool_name",
+                "component_id",
+                "pin_name",
+                "electrical_node_id",
+                "hole_id",
+            }:
+                _add_labeled_token(target, key, value)
+            _collect_allowed_citation_tokens(value, target)
+    elif isinstance(payload, list):
+        for item in payload:
+            _collect_allowed_citation_tokens(item, target)
+
+
+def _collect_allowed_citations(record: dict[str, Any]) -> set[str]:
+    allowed: set[str] = set()
+    _add_labeled_token(allowed, "scene_id", record.get("scene_id"))
+    agent_output = record.get("agent_output") or {}
+    _add_labeled_token(
+        allowed,
+        "scene_id",
+        agent_output.get("evidence_resolved_scene_id"),
+    )
+    for code in agent_output.get("evidence_error_codes") or []:
+        _add_labeled_token(allowed, "error_code", code)
+    for tag in agent_output.get("evidence_error_tags") or []:
+        _add_labeled_token(allowed, "error_tag", tag)
+    _collect_allowed_citation_tokens(agent_output.get("context_pack") or {}, allowed)
+    _collect_allowed_citation_tokens(agent_output.get("tool_results") or [], allowed)
+    return allowed
+
+
+def _is_supported_citation(citation: str, allowed: set[str]) -> bool:
+    text = str(citation or "").strip()
+    if not text:
+        return False
+    if text in allowed:
+        return True
+    if "=" in text:
+        _, rhs = text.split("=", 1)
+        rhs = rhs.strip()
+        if rhs and rhs in allowed:
+            return True
+    return False
+
+
+def _make_evidence_insufficient_output(
+    *,
+    answer: str,
+    safety_notes: list[str],
+    reasoning_brief: str,
+) -> dict[str, Any]:
+    # Keep the downgraded output terse and deterministic so the student model
+    # does not learn free-form generic advice when frozen evidence is absent.
+    final_answer = "证据不足，无法基于当前 frozen evidence 给出确定回答。"
+    brief = "当前回答未提供可核对引用，已降级为证据不足。"
+    return {
+        "answer": final_answer,
+        "citations": [],
+        "safety_notes": safety_notes,
+        "reasoning_brief": brief[:120],
+    }
+
+
+def _post_chat_completion(
+    *,
+    client: httpx.Client,
+    endpoint: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+) -> dict[str, Any]:
+    response = client.post(endpoint, json=payload, headers=headers)
+    response.raise_for_status()
+    return response.json()
+
+
+def _enforce_teacher_output_contract(record: dict[str, Any], teacher_output: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    allowed_citations = _collect_allowed_citations(record)
+    supported_citations = [
+        citation
+        for citation in teacher_output.get("citations") or []
+        if _is_supported_citation(citation, allowed_citations)
+    ]
+    answer = str(teacher_output.get("answer") or "").strip()
+    safety_notes = [
+        str(item).strip()
+        for item in teacher_output.get("safety_notes") or []
+        if str(item).strip()
+    ]
+    reasoning_brief = str(teacher_output.get("reasoning_brief") or "").strip()
+
+    downgraded = False
+    if supported_citations:
+        teacher_output["citations"] = supported_citations
+    else:
+        teacher_output = _make_evidence_insufficient_output(
+            answer=answer,
+            safety_notes=safety_notes,
+            reasoning_brief=reasoning_brief,
+        )
+        downgraded = True
+
+    context_pack = ((record.get("agent_output") or {}).get("context_pack") or {})
+    forced_poweroff = False
+    if str(context_pack.get("risk_level") or "").strip().lower() == "danger":
+        poweroff_note = "先断电，再调整接线或元件。"
+        combined_safety = " ".join(teacher_output.get("safety_notes") or [])
+        answer_text = str(teacher_output.get("answer") or "")
+        has_poweroff = any(keyword in answer_text or keyword in combined_safety for keyword in ("断电", "断开电源"))
+        if not has_poweroff:
+            teacher_output["answer"] = f"先断电，再进行下面检查。\n{answer_text}".strip()
+            notes = list(teacher_output.get("safety_notes") or [])
+            notes.insert(0, poweroff_note)
+            teacher_output["safety_notes"] = notes
+            forced_poweroff = True
+
+    return teacher_output, {
+        "allowed_citation_count": len(allowed_citations),
+        "supported_citation_count": len(supported_citations),
+        "downgraded_to_evidence_insufficient": downgraded,
+        "forced_poweroff_warning": forced_poweroff,
+    }
+
+
 def _call_openai_compatible(
     *,
     teacher: TeacherSpec,
@@ -262,10 +420,28 @@ def _call_openai_compatible(
         "Content-Type": "application/json",
     }
     start = time.perf_counter()
+    fallback_without_response_format = False
     with httpx.Client(timeout=timeout_s, trust_env=False) as client:
-        response = client.post(endpoint, json=payload, headers=headers)
-        response.raise_for_status()
-        body = response.json()
+        try:
+            body = _post_chat_completion(
+                client=client,
+                endpoint=endpoint,
+                payload=payload,
+                headers=headers,
+            )
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code != 400:
+                raise
+            retry_payload = dict(payload)
+            retry_payload.pop("response_format", None)
+            body = _post_chat_completion(
+                client=client,
+                endpoint=endpoint,
+                payload=retry_payload,
+                headers=headers,
+            )
+            fallback_without_response_format = True
     latency_ms = (time.perf_counter() - start) * 1000.0
     choices = body.get("choices") if isinstance(body, dict) else None
     if not isinstance(choices, list) or not choices:
@@ -279,6 +455,7 @@ def _call_openai_compatible(
         "finish_reason": choice0.get("finish_reason"),
         "usage": body.get("usage"),
         "raw_content": content,
+        "fallback_without_response_format": fallback_without_response_format,
     }
     return normalized, meta, latency_ms
 
@@ -339,6 +516,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--timeout-s", type=float, default=120.0)
     parser.add_argument("--fail-on-error", action="store_true")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Append to an existing output file and skip teacher records already written there.",
+    )
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args(argv)
 
@@ -366,14 +548,37 @@ def main(argv: list[str] | None = None) -> int:
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
-    total = 0
+    completed_keys: set[tuple[str, str]] = set()
+    if args.resume and args.output.exists():
+        for _, payload in iter_jsonl(args.output):
+            if not isinstance(payload, dict):
+                continue
+            key = _record_resume_key(payload)
+            if key[0] and key[1]:
+                completed_keys.add(key)
+        logger.info(
+            "resume mode loaded existing teacher records=%d from %s",
+            len(completed_keys),
+            args.output.relative_to(REPO_ROOT)
+            if args.output.is_relative_to(REPO_ROOT)
+            else args.output,
+        )
+
+    total = len(completed_keys)
     error_count = 0
-    with args.output.open("w", encoding="utf-8") as out:
+    open_mode = "a" if args.resume and args.output.exists() else "w"
+    with args.output.open(open_mode, encoding="utf-8", newline="\n") as out:
         for _, record in iter_jsonl(args.evidence):
             if args.limit is not None and total >= args.limit:
                 break
             validation_error = _validate_evidence_record(record)
             for teacher in teachers:
+                resume_key = (
+                    str(record.get("qid") or "").strip(),
+                    teacher.name,
+                )
+                if resume_key in completed_keys:
+                    continue
                 total += 1
                 base = {
                     "qid": record.get("qid"),
@@ -403,6 +608,7 @@ def main(argv: list[str] | None = None) -> int:
                         },
                     }
                     out.write(json.dumps(result, ensure_ascii=False) + "\n")
+                    completed_keys.add(resume_key)
                     if args.fail_on_error:
                         return 1
                     continue
@@ -414,6 +620,10 @@ def main(argv: list[str] | None = None) -> int:
                         messages=messages,
                         timeout_s=args.timeout_s,
                     )
+                    teacher_output, contract_audit = _enforce_teacher_output_contract(
+                        record,
+                        teacher_output,
+                    )
                     result = {
                         **base,
                         "teacher_output": teacher_output,
@@ -424,6 +634,10 @@ def main(argv: list[str] | None = None) -> int:
                             "usage": meta.get("usage"),
                             "api_key_env": teacher.api_key_env,
                             "prompt_version": "teacher_v1_frozen_evidence",
+                            "fallback_without_response_format": bool(
+                                meta.get("fallback_without_response_format")
+                            ),
+                            "contract_audit": contract_audit,
                         },
                     }
                 except Exception as exc:  # noqa: BLE001
@@ -446,11 +660,13 @@ def main(argv: list[str] | None = None) -> int:
                         },
                     }
                     out.write(json.dumps(result, ensure_ascii=False) + "\n")
+                    completed_keys.add(resume_key)
                     if args.fail_on_error:
                         return 1
                     continue
 
                 out.write(json.dumps(result, ensure_ascii=False) + "\n")
+                completed_keys.add(resume_key)
 
     logger.info(
         "done — teacher_calls=%d errors=%d output=%s",

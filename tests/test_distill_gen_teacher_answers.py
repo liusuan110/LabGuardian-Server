@@ -52,6 +52,16 @@ def test_parse_teacher_spec_reads_api_key_from_env(monkeypatch) -> None:
     assert spec.api_key == "secret-token"
 
 
+def test_parse_teacher_spec_sanitizes_wrapped_base_url(monkeypatch) -> None:
+    from scripts.distill.gen_teacher_answers import _parse_teacher_spec
+
+    monkeypatch.setenv("QWEN_API_KEY", "secret-token")
+    spec = _parse_teacher_spec(
+        'name=qwen,model=Qwen3-32B,base_url= `https://example.invalid/v1` ,api_key_env=QWEN_API_KEY'
+    )
+    assert spec.base_url == "https://example.invalid/v1"
+
+
 def test_build_user_prompt_contains_frozen_evidence() -> None:
     from scripts.distill.gen_teacher_answers import _build_user_prompt
 
@@ -120,3 +130,84 @@ def test_main_writes_teacher_output_jsonl(tmp_path: Path, monkeypatch) -> None:
         "FLOATING_PIN",
         "inv_vee_pin_not_connected",
     ]
+
+
+def test_call_openai_compatible_retries_without_response_format_on_400(monkeypatch) -> None:
+    import httpx
+    import scripts.distill.gen_teacher_answers as entry
+
+    teacher = entry.TeacherSpec(
+        name="qwen",
+        model="Qwen3-32B",
+        base_url="https://example.invalid/v1",
+        api_key_env="QWEN_API_KEY",
+        api_key="secret-token",
+    )
+    calls: list[dict] = []
+
+    class _FakeResponse:
+        def __init__(self, status_code: int, payload: dict):
+            self.status_code = status_code
+            self._payload = payload
+            self.request = httpx.Request("POST", "https://example.invalid/v1/chat/completions")
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                raise httpx.HTTPStatusError(
+                    f"{self.status_code} error",
+                    request=self.request,
+                    response=httpx.Response(self.status_code, request=self.request),
+                )
+
+        def json(self) -> dict:
+            return self._payload
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def post(self, endpoint, json, headers):
+            calls.append(json)
+            if len(calls) == 1:
+                return _FakeResponse(400, {})
+            return _FakeResponse(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json_module.dumps(
+                                    {
+                                        "answer": "证据不足，无法基于当前 frozen evidence 给出确定回答。",
+                                        "citations": [],
+                                        "safety_notes": [],
+                                        "reasoning_brief": "当前回答未提供可核对引用。",
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                },
+            )
+
+    monkeypatch.setattr(entry.httpx, "Client", _FakeClient)
+    json_module = json
+    teacher_output, meta, _ = entry._call_openai_compatible(
+        teacher=teacher,
+        messages=[{"role": "system", "content": "x"}, {"role": "user", "content": "y"}],
+        timeout_s=10.0,
+    )
+    assert len(calls) == 2
+    assert "response_format" in calls[0]
+    assert "response_format" not in calls[1]
+    assert meta["fallback_without_response_format"] is True
+    assert teacher_output["answer"].startswith("证据不足")

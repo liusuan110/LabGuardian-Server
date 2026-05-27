@@ -46,6 +46,7 @@ datasets/*
 !datasets/distill/
 datasets/distill/*
 !datasets/distill/dataset_info.json
+!datasets/distill/train_sft_alpaca.jsonl
 
 # Checkpoints — model weights kept locally, not tracked in git
 checkpoints/
