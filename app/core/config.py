@@ -52,8 +52,16 @@ def _normalize_runtime_device(requested: str | None, default: str = "cpu") -> st
     value = str(requested or default).strip()
     if not value:
         return default
-    if value.lower() == "cpu":
+    low = value.lower()
+    if low == "cpu":
         return "cpu"
+    # OpenVINO 设备直通（板上 DK-2500 用 ultralytics + OpenVINO backend）:
+    #   intel:npu / intel:gpu / npu / gpu
+    if low in ("intel:npu", "intel:gpu", "intel:cpu"):
+        return low
+    if low in ("npu", "gpu"):
+        return f"intel:{low}"
+    # PyTorch CUDA 路径（desktop 训练机）
     try:
         import torch
 
