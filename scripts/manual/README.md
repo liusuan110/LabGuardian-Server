@@ -65,3 +65,16 @@
   - 默认按 `GPU` 设备跑 `diagnostic_agent + MRAG + openvino_genai`
   - 内置 `short_circuit / floating / wrong_hole` 三个教学场景
   - 适合板端联调 LangGraph 白盒诊断和 VLM 解释闭环
+
+## Student LLM deploy prep
+
+- `openvino_export/export_student_openvino.py`
+  - 把 merge 后的 student 模型导出为 `OpenVINO INT4`
+  - 默认源目录 `models/labguardian-student-1p5-merged/`
+  - 默认输出目录 `models/labguardian-student-1p5-int4-ov/`
+  - 默认导出任务是 `text-generation-with-past`，适配 `openvino_genai.LLMPipeline`
+- `llm_eval/compare_train_deploy.py`
+  - 做本地 `train ≡ deploy` 首次硬验证
+  - 同一条 prompt 分别跑 merge 模型和 OpenVINO 模型
+  - 比较前 `N` 个生成 token 的一致率，并输出 JSON 报告
+  - 支持 `--question "..."` + `--context "..."`，可直接用你自己写的问题做对齐
