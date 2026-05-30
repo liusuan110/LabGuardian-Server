@@ -65,3 +65,25 @@ class LLMProvider(ABC):
     def warmup(self) -> None:
         """Optional pre-load hook (no-op for deterministic providers)."""
         return None
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        max_new_tokens: int = 256,
+        temperature: float = 0.2,
+        system: str | None = None,
+    ) -> str:
+        """Free-form text generation (the "mouth").
+
+        Optional capability: the ReAct loop only requires ``plan``/
+        ``reflect``. ``AgentService`` uses ``generate`` to turn an
+        evidence-grounded draft / prompt into fluent natural language.
+        Providers that wrap a real text LLM (``openvino_genai_text``)
+        override this; deterministic/template providers do not support it
+        and raise ``NotImplementedError`` so callers fall back to the
+        rule-based draft.
+        """
+        raise NotImplementedError(
+            f"{self.name} provider does not support generate()"
+        )

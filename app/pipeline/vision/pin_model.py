@@ -88,13 +88,29 @@ class PinRoiDetector:
             return False
 
 
-def _is_valid_model_keypoint(x: float, y: float, score: float | None) -> bool:
+def _is_valid_model_keypoint(
+    x: float, y: float, score: float | None, *, vis_threshold: float = 0.5
+) -> bool:
+    """判定单个 keypoint 是否是"真实存在的端点"。
+
+    YOLOv8-pose 标注约定:
+    - vis=2 / 高 score: 端点真实存在且可见
+    - vis=1 / 中等 score: 标注存在但被遮挡
+    - vis=0 / 低 score (~0.0-0.1): 模型学到的"该槽位不存在"
+
+    对两脚器件 (jumper_wire / resistor / capacitor / led / diode), kpt_shape=[3,3]
+    的第 3 个槽位标注为 vis=0; 模型在 NPU 上的预测 score 通常 0.00-0.15,
+    并可能给出 (x, y) 幻觉位置（不是 (0,0)）。
+
+    历史问题: 旧版只过滤 score <= 0.0, 0.06 这种低 score 幻觉端点会被当成
+    真端点喂进 S2 mapping, 跳线尤其受影响（两脚但模型有第 3 槽预测）。
+    """
     if not np.isfinite(x) or not np.isfinite(y):
         return False
-    if score is not None and (not np.isfinite(score) or score <= 0.0):
-        return False
-    # 当前 pose 训练为全局 kpt_shape=[3,3]。
-    # 对两脚器件，第 3 个点是 padding 槽位，通常会落成 (0, 0, 0)。
+    if score is not None:
+        if not np.isfinite(score) or score < vis_threshold:
+            return False
+    # 老兜底: (0, 0, 0) padding。新阈值已经覆盖，但保留防御性。
     if abs(float(x)) < 1e-6 and abs(float(y)) < 1e-6:
         return False
     return True

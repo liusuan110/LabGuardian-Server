@@ -95,7 +95,22 @@ class DetectedComponent:
     """[x1, y1, x2, y2] 像素坐标。"""
 
     keypoints_xy: Optional[list[list[float]]] = None
-    """引脚关键点 [[x, y], ...]，每个 keypoint 一行。pose 任务才有。"""
+    """引脚关键点 [[x, y], ...]，每个 keypoint 一行。pose 任务才有。
+
+    注意：保留所有 keypoint 槽位（kpt_shape=[3,3] 模型固定 3 个）。
+    要看哪些是"真实存在的端点"，看 ``keypoints_visibility``。
+    """
+
+    keypoints_visibility: Optional[list[float]] = None
+    """每个 keypoint 的可信度 (0-1)，对应 YOLOv8-pose 标注的 visibility 维度。
+
+    标注约定:
+    - 2-pin 类 (jumper_wire / resistor / capacitor / led / diode):
+      [vis_endA, vis_endB, 0.0]  ← 第 3 个是"不存在"槽位
+    - 3-pin 类 (transistor_3pin): [vis_pin1, vis_pin2, vis_pin3]
+
+    下游消费时**必须**按 vis > 0.5 过滤，否则会把"幻觉端点"喂进去。
+    """
 
 
 @dataclass
@@ -314,11 +329,17 @@ class YoloStreamConsumer:
                 conf = float(boxes.conf[i])
                 bbox = boxes.xyxy[i].cpu().numpy().tolist()
                 kpts_xy: Optional[list[list[float]]] = None
+                kpts_vis: Optional[list[float]] = None
                 if kpts is not None and i < len(kpts):
                     try:
                         kpts_xy = kpts.xy[i].cpu().numpy().tolist()
+                        # 每个 keypoint 的 visibility/conf —
+                        # 标注里 vis=0 的槽位（如 2-pin 元件的第 3 个槽）模型会预测低值。
+                        if kpts.conf is not None:
+                            kpts_vis = kpts.conf[i].cpu().numpy().tolist()
                     except (AttributeError, IndexError):
                         kpts_xy = None
+                        kpts_vis = None
                 components.append(
                     DetectedComponent(
                         cls_id=cls_id,
@@ -326,6 +347,7 @@ class YoloStreamConsumer:
                         conf=conf,
                         bbox_xyxy=bbox,
                         keypoints_xy=kpts_xy,
+                        keypoints_visibility=kpts_vis,
                     )
                 )
 
@@ -368,6 +390,11 @@ class YoloStreamConsumer:
                     "keypoints_xy": (
                         [[round(p, 1) for p in pt] for pt in c.keypoints_xy]
                         if c.keypoints_xy
+                        else None
+                    ),
+                    "keypoints_visibility": (
+                        [round(v, 2) for v in c.keypoints_visibility]
+                        if c.keypoints_visibility
                         else None
                     ),
                 }

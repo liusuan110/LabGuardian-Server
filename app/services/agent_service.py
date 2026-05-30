@@ -1079,6 +1079,79 @@ class AgentService:
             model_name = str(getattr(provider, "_model", "") or getattr(provider, "_model_dir", "") or provider_name)
         return provider_name, model_name
 
+    def _chat_text_via_active_llm(
+        self,
+        *,
+        provider_name: str,
+        model_name: str,
+        system: str,
+        prompt: str,
+        num_predict: int,
+        timeout_s: float,
+        temperature: float = 0.2,
+    ) -> str:
+        """One chat-completion against the active text LLM; '' on failure.
+
+        Dispatches by provider so the distilled student model and Ollama
+        share the same prompt-building + post-processing in callers:
+          - ``openvino_genai_text`` → in-process ``LLMPipeline.generate()``
+            (board iGPU; the distilled ``labguardian-student-1p5-int4-ov``)
+          - ``ollama`` → POST ``/api/chat`` (localhost-direct, 2-timeout retry)
+
+        Returns the raw completion text, or ``""`` so the caller falls back
+        to its deterministic template draft. The student model's output is
+        still re-checked by ``verify_draft_answer`` in every caller, so this
+        "mouth" can never inject structural facts that aren't grounded.
+        """
+        if provider_name == "openvino_genai_text":
+            try:
+                provider = get_llm_provider()
+                # Factory may have fallen back to template (model load failed);
+                # only the real provider exposes a working generate().
+                if str(getattr(provider, "name", "")) != "openvino_genai_text":
+                    return ""
+                return str(
+                    provider.generate(
+                        prompt,
+                        system=system,
+                        max_new_tokens=int(num_predict),
+                        temperature=temperature,
+                    )
+                ).strip()
+            except Exception:
+                return ""
+
+        # Default branch: Ollama HTTP /api/chat (unchanged behaviour).
+        endpoint = (
+            f"{getattr(settings, 'AGENT_LLM_OLLAMA_BASE_URL', 'http://127.0.0.1:11434').rstrip('/')}"
+            "/api/chat"
+        )
+        payload: dict[str, Any] = {
+            "model": model_name or getattr(settings, "AGENT_LLM_OLLAMA_MODEL", "qwen3:4b"),
+            "stream": False,
+            "keep_alive": "30m",
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            "options": {"temperature": temperature, "num_predict": int(num_predict)},
+        }
+        body: dict[str, Any] = {}
+        for timeout in (
+            min(max(timeout_s, 20.0), 60.0),
+            min(max(timeout_s * 1.5, 45.0), 120.0),
+        ):
+            try:
+                with httpx.Client(timeout=timeout, trust_env=False) as client:
+                    response = client.post(endpoint, json=payload)
+                    response.raise_for_status()
+                    body = response.json()
+                break
+            except Exception:
+                body = {}
+                continue
+        return str(((body or {}).get("message") or {}).get("content") or "").strip()
+
     def _llm_concept_not_found_answer(
         self,
         *,
@@ -1086,44 +1159,24 @@ class AgentService:
         evidence,
     ) -> tuple[str, str, str]:
         provider_name, model_name = self._actual_llm_usage()
-        if provider_name != "ollama":
+        if provider_name not in ("ollama", "openvino_genai_text"):
             return build_concept_answer(question=question, concept=None, evidence=evidence), "template", "template"
 
-        endpoint = f"{getattr(settings, 'AGENT_LLM_OLLAMA_BASE_URL', 'http://127.0.0.1:11434').rstrip('/')}/api/chat"
         timeout_s = float(getattr(settings, "AGENT_LLM_OLLAMA_TIMEOUT_S", 120.0) or 120.0)
         prompt = _build_concept_not_found_prompt(question=question, evidence=evidence)
-        payload = {
-            "model": model_name or getattr(settings, "AGENT_LLM_OLLAMA_MODEL", "qwen3:4b"),
-            "stream": False,
-            "keep_alive": "30m",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "你是严谨的电路实验助教。优先回答电路、电子元件、实验测量和安全相关问题；"
-                        "遇到无关问题时，简短回应后把用户引导回电路实验。"
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            "options": {
-                "temperature": 0.2,
-                "num_predict": 260,
-            },
-        }
+        system = (
+            "你是严谨的电路实验助教。优先回答电路、电子元件、实验测量和安全相关问题；"
+            "遇到无关问题时，简短回应后把用户引导回电路实验。"
+        )
         try:
-            body: dict[str, Any] = {}
-            for timeout in (min(max(timeout_s, 20.0), 60.0), min(max(timeout_s * 1.5, 45.0), 120.0)):
-                try:
-                    with httpx.Client(timeout=timeout, trust_env=False) as client:
-                        response = client.post(endpoint, json=payload)
-                        response.raise_for_status()
-                        body = response.json()
-                    break
-                except Exception:
-                    body = {}
-                    continue
-            text = str(((body or {}).get("message") or {}).get("content") or "").strip()
+            text = self._chat_text_via_active_llm(
+                provider_name=provider_name,
+                model_name=model_name,
+                system=system,
+                prompt=prompt,
+                num_predict=260,
+                timeout_s=timeout_s,
+            )
             if not text:
                 raise RuntimeError("empty llm response")
             has_follow_up_line = (
@@ -1154,8 +1207,8 @@ class AgentService:
                 text += "\n" + _fallback_follow_up_text(question=question, evidence=evidence)
             if not has_safety_line:
                 text += "\n安全提醒：上电或改线前请先断电，并优先复查电源轨与短路风险。"
-            text += f"\n知识来源：llm_fallback({payload['model']})"
-            return text, "ollama", str(payload["model"])
+            text += f"\n知识来源：llm_fallback({model_name or provider_name})"
+            return text, provider_name, str(model_name or provider_name)
         except Exception:
             # Keep deterministic fallback when local model is unavailable.
             return build_concept_answer(question=question, concept=None, evidence=evidence), "template", "template"
@@ -1171,10 +1224,9 @@ class AgentService:
     ) -> tuple[str, str, str]:
         """Rewrite rigid diagnostic template answer with LLM while preserving evidence facts."""
         provider_name, model_name = self._actual_llm_usage()
-        if provider_name != "ollama":
+        if provider_name not in ("ollama", "openvino_genai_text"):
             return draft_answer, provider_name, model_name
 
-        endpoint = f"{getattr(settings, 'AGENT_LLM_OLLAMA_BASE_URL', 'http://127.0.0.1:11434').rstrip('/')}/api/chat"
         timeout_s = float(getattr(settings, "AGENT_LLM_OLLAMA_TIMEOUT_S", 120.0) or 120.0)
         findings = list(getattr(evidence, "findings", []) or [])
         evidence_refs = list(getattr(evidence, "evidence_refs", []) or [])
@@ -1215,32 +1267,16 @@ class AgentService:
                 "格式约束：必须出现清晰的标题行“建议：”与“追问建议：”，并用 1) 2) 3) 编号。",
             ]
         )
-        payload = {
-            "model": model_name or getattr(settings, "AGENT_LLM_OLLAMA_MODEL", "qwen3:4b"),
-            "stream": False,
-            "keep_alive": "30m",
-            "messages": [
-                {"role": "system", "content": "你是严谨的电路故障诊断助教，严禁编造证据。"},
-                {"role": "user", "content": prompt},
-            ],
-            "options": {
-                "temperature": 0.2,
-                "num_predict": 420,
-            },
-        }
+        system = "你是严谨的电路故障诊断助教，严禁编造证据。"
         try:
-            body: dict[str, Any] = {}
-            for timeout in (min(max(timeout_s, 20.0), 60.0), min(max(timeout_s * 1.5, 45.0), 120.0)):
-                try:
-                    with httpx.Client(timeout=timeout, trust_env=False) as client:
-                        response = client.post(endpoint, json=payload)
-                        response.raise_for_status()
-                        body = response.json()
-                    break
-                except Exception:
-                    body = {}
-                    continue
-            text = str(((body or {}).get("message") or {}).get("content") or "").strip()
+            text = self._chat_text_via_active_llm(
+                provider_name=provider_name,
+                model_name=model_name,
+                system=system,
+                prompt=prompt,
+                num_predict=420,
+                timeout_s=timeout_s,
+            )
             if not text:
                 raise RuntimeError("empty llm response")
             text = ensure_circuit_opening(text, evidence)
@@ -1288,7 +1324,7 @@ class AgentService:
             )
             if not report.passed:
                 return draft_answer, "template", "template"
-            return text, provider_name, str(payload["model"])
+            return text, provider_name, str(model_name or provider_name)
         except Exception:
             return draft_answer, "template", "template"
 
@@ -1316,13 +1352,9 @@ class AgentService:
         Returns (final_text, provider_name, model_name).
         """
         provider_name, model_name = self._actual_llm_usage()
-        if provider_name != "ollama":
+        if provider_name not in ("ollama", "openvino_genai_text"):
             return draft_answer, provider_name, model_name
 
-        endpoint = (
-            f"{getattr(settings, 'AGENT_LLM_OLLAMA_BASE_URL', 'http://127.0.0.1:11434').rstrip('/')}"
-            "/api/chat"
-        )
         timeout_s = float(
             getattr(settings, "AGENT_LLM_OLLAMA_TIMEOUT_S", 120.0) or 120.0
         )
@@ -1378,36 +1410,17 @@ class AgentService:
             ]
         )
 
-        payload: dict[str, Any] = {
-            "model": model_name
-            or getattr(settings, "AGENT_LLM_OLLAMA_MODEL", "qwen3:4b"),
-            "stream": False,
-            "keep_alive": "30m",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "你是严谨的电路实验助教。只能改写表达，"
-                        "不能编造任何技术事实。"
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            "options": {
-                "temperature": 0.3,
-                "num_predict": 360,
-            },
-        }
+        system = "你是严谨的电路实验助教。只能改写表达，不能编造任何技术事实。"
         try:
-            with httpx.Client(
-                timeout=min(max(timeout_s, 20.0), 60.0), trust_env=False
-            ) as client:
-                response = client.post(endpoint, json=payload)
-                response.raise_for_status()
-                body = response.json()
-            text = str(
-                ((body or {}).get("message") or {}).get("content") or ""
-            ).strip()
+            text = self._chat_text_via_active_llm(
+                provider_name=provider_name,
+                model_name=model_name,
+                system=system,
+                prompt=prompt,
+                num_predict=360,
+                timeout_s=timeout_s,
+                temperature=0.3,
+            )
             if not text:
                 raise RuntimeError("empty llm response")
             # Guard: refuse to drop the concept_id citation.
@@ -1418,7 +1431,7 @@ class AgentService:
                 w in text for w in ("断电", "电源", "短路", "接地", "安全")
             ):
                 text = f"{text}\n安全提醒：操作前先断电，复查电源轨与短路风险。"
-            return text, provider_name, str(payload["model"])
+            return text, provider_name, str(model_name or provider_name)
         except Exception as exc:  # noqa: BLE001
             # Polish is best-effort; on any failure surface the template.
             logger = __import__("logging").getLogger(__name__)
