@@ -87,6 +87,17 @@ def classify_intent_smart(
     provider_name = (
         getattr(settings, "AGENT_LLM_PROVIDER", "template") or "template"
     ).strip().lower()
+    # LLM-backed classification is enabled ONLY for ``ollama`` (JSON-mode
+    # HTTP API). The on-board distilled student (``openvino_genai_text``)
+    # deliberately uses the deterministic keyword classifier instead — this
+    # is a measured choice, not an oversight. A board probe
+    # (``scripts/board/probe_intent_student.py``) showed the 1.5B student
+    # adds ~1.5–2.5 s/question on the shared iGPU yet scores *below* the
+    # keyword tables (3/6 vs 4/6 on the probe set): it recognises "mixed"
+    # questions but still mislabels them, and it regressed a context-driven
+    # diagnostic case that keyword routing gets right via the evidence
+    # tiebreak. Keyword routing is faster AND more accurate here, so we keep
+    # it. (``template`` has no LLM either → same keyword path.)
     if provider_name != "ollama":
         return IntentDecision(
             intent=keyword_intent,
