@@ -8,8 +8,9 @@
     "wrong_node_connection"
   ],
   "related_error_codes": [
-    "FLOATING_PIN",
-    "NODE_MISMATCH"
+    "OPEN_CIRCUIT",
+    "WRONG_CONNECTION",
+    "COMPONENT_MISSING"
   ],
   "title": "差分对尾电阻未接 VEE（两管截止）",
   "trigger_conditions": [

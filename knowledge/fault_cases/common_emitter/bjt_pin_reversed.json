@@ -7,7 +7,9 @@
     "polarity_or_orientation_error"
   ],
   "related_error_codes": [
-    "POLARITY_REVERSED"
+    "WRONG_CONNECTION",
+    "OPEN_CIRCUIT",
+    "SHORT_CIRCUIT"
   ],
   "title": "S8050 / 9013 三极管引脚装反",
   "trigger_conditions": [

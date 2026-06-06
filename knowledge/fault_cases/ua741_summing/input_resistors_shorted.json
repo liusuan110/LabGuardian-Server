@@ -8,8 +8,8 @@
     "wrong_topology"
   ],
   "related_error_codes": [
-    "MULTIPLE_INPUTS_SHORTED",
-    "NODE_MISMATCH"
+    "SHORT_CIRCUIT",
+    "EXTRA_CONNECTION"
   ],
   "title": "加法器各路输入未独立分支（共用电阻或直接短接）",
   "trigger_conditions": [

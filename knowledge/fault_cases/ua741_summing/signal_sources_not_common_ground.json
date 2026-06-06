@@ -8,8 +8,9 @@
     "wrong_node_connection"
   ],
   "related_error_codes": [
-    "MULTIPLE_DISCONNECTED_SUBGRAPHS",
-    "FLOATING_PIN"
+    "OPEN_CIRCUIT",
+    "WRONG_CONNECTION",
+    "INCOMPLETE_CIRCUIT"
   ],
   "title": "两路信号源未共地（参考地浮动）",
   "trigger_conditions": [

@@ -8,7 +8,8 @@
     "wrong_power_rail"
   ],
   "related_error_codes": [
-    "FLOATING_PIN",
+    "WRONG_CONNECTION",
+    "OPEN_CIRCUIT",
     "COMPONENT_MISSING"
   ],
   "title": "UA741 pin4 (VEE) 未接负电源",
