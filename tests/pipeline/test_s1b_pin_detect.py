@@ -213,8 +213,10 @@ class TestBoardGeometryPins:
         assert len(pins) == 8
         assert comp["pin_schema_id"] == "ic_dip_ef_bridge"
         assert {pin["source"] for pin in pins} == {"ic_ef_bridge_geometry"}
-        assert sorted(pin["pin_id"] for pin in pins if pin["metadata"]["row_lock"] == "e") == [1, 2, 3, 4]
-        assert sorted(pin["pin_id"] for pin in pins if pin["metadata"]["row_lock"] == "f") == [5, 6, 7, 8]
+        # 默认 notch_direction="left"：pin1 从凹口端下排(f 行)起逆时针编号，
+        # 故 f 行为 1→4、e 行为 8→5（4efe0e65 修正后的物理惯例）。
+        assert sorted(pin["pin_id"] for pin in pins if pin["metadata"]["row_lock"] == "e") == [5, 6, 7, 8]
+        assert sorted(pin["pin_id"] for pin in pins if pin["metadata"]["row_lock"] == "f") == [1, 2, 3, 4]
 
     def test_ic_column_selection_centers_inside_covered_bbox(self):
         from app.pipeline.stages.s1b_pin_detect import _try_board_logic_layout

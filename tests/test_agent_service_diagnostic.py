@@ -177,7 +177,11 @@ def test_diagnostic_agent_mode_works_without_station_state() -> None:
 
     assert status.result is not None
     assert status.result.answer
-    assert status.result.evidence[0].payload["station_id"] == "missing"
+    # 证据链首位现在是 intent 记录，station_id 按 payload 键定位而非硬编码下标
+    station_evidence = next(
+        item for item in status.result.evidence if "station_id" in item.payload
+    )
+    assert station_evidence.payload["station_id"] == "missing"
 
 
 def test_diagnostic_agent_uses_history_for_repeated_error() -> None:
