@@ -12,7 +12,7 @@
     train_demo/pose_components/weights/best_openvino_int8/{best.xml, best.bin}
 
 后续:
-    rsync best_openvino_{fp16,int8}/ bupt@10.133.22.42:~/labguardian/models/yolo_pose/
+    rsync best_openvino_{fp16,int8}/ bupt@<board-ip>:~/labguardian/models/yolo_pose/
 """
 from __future__ import annotations
 

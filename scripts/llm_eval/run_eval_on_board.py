@@ -140,7 +140,7 @@ def main():
     with open(out_md, "w", encoding="utf-8") as f:
         f.write("".join(md))
     print(f"[saved] {out_md}")
-    print(f"\nrun: scp bupt@10.133.22.42:~/llm_eval_report.md ./")
+    print(f"\nrun: scp bupt@<board-ip>:~/llm_eval_report.md ./")
 
 
 if __name__ == "__main__":
