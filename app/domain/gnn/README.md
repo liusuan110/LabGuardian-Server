@@ -1,7 +1,7 @@
 # `app.domain.gnn` · GNN-assisted Graph Comparator
 
 **Status: P5 ✅ + R1..R10 ✅ + R11 Hole-move audit ✅ + P4.1 suggested_targets ✅ — Plan §八 red line MET on every split with 100% rule accuracy. R11 ships three independent fixes for the manual-correction UX bug ("moving a pin doesn't form a new connection"): **B0** netlist_v2 now exports `board_topology.node_to_holes` so frontend can highlight the full 5-hole conducting strip on drag; **B1** `hole_id` is now strictly the source of truth for `electrical_node_id` across 5 pipeline sites (stale upstream values no longer mask manual corrections); **B2** rail defaults moved onto `BoardSchema.default_rail_assignments()` and are echoed back in `board_topology.rail_assignments`. 7 new contract tests + fixed 1 test that was pinning the bug. 554 tests green.**
-Full plan: `~/.claude/plans/labguardian-server-glowing-galaxy.md`.
+Full plan: `docs/plans/labguardian-server-glowing-galaxy.md`.
 
 ## What this module is
 
