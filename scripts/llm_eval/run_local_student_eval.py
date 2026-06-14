@@ -1,4 +1,4 @@
-"""Run local OpenVINO LLM evaluation for a single student model.
+r"""Run local OpenVINO LLM evaluation for a single student model.
 
 This script reuses the shared question bank in ``eval_questions.py`` and
 produces:

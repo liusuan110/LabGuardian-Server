@@ -8,7 +8,8 @@
     "wrong_pin_assignment"
   ],
   "related_error_codes": [
-    "POLARITY_REVERSED"
+    "WRONG_CONNECTION",
+    "OPEN_CIRCUIT"
   ],
   "title": "UA741 pin2 / pin3 输入端调换（正反馈）",
   "trigger_conditions": [

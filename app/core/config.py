@@ -91,6 +91,9 @@ DEFAULT_COMPONENT_MODEL_PATH = _first_existing_path(
 DEFAULT_PIN_MODEL_PATH = _first_existing_path(
     MODEL_ROOT / "pose_components" / "best.pt",
     MODEL_ROOT / "pose_components" / "weights" / "best.pt",
+    # 引脚主模型按 new_component_pins 优先：报告 §3.2 的训练配置与指标
+    # (yolov8n-pose, imgsz=960, batch=8, 100ep) 即出自该 run。
+    TRAIN_DEMO_DIR / "new_component_pins" / "yolov8_component_pose" / "weights" / "best.pt",
     TRAIN_DEMO_DIR / "pose_components" / "weights" / "best.pt",
 )
 

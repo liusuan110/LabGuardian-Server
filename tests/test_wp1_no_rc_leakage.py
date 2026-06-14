@@ -393,14 +393,18 @@ def test_search_fault_cases_recalls_by_error_code() -> None:
     fault_case JSONs (which use domain-specific vocab like
     ``missing_power_connection``)."""
     service = TeachingKbService()
-    # UA741 inverting + FLOATING_PIN should hit ``vee_pin_not_connected``.
+    # UA741 inverting + OPEN_CIRCUIT should hit ``vee_pin_not_connected``.
+    # NOTE: error_codes must be the REAL diff_report vocabulary the production
+    # comparison_report emits (OPEN_CIRCUIT / WRONG_CONNECTION / SHORT_CIRCUIT /
+    # COMPONENT_MISSING / *_NODE_MISMATCH …) — NOT s5/ERC codes like FLOATING_PIN,
+    # which diff_report never produces (verified in scripts/kb/probe_diff_codes.py).
     cases = service.search_fault_cases(
         scene_id="exp_ua741_inverting_amplifier",
         error_tags=[],  # deliberately empty → only error_code matching
-        error_codes=["FLOATING_PIN"],
+        error_codes=["OPEN_CIRCUIT"],
     )
     assert cases, (
-        "WP-1 v3 P1-A: error_code recall failed — UA741 + FLOATING_PIN "
+        "WP-1 v3 P1-A: error_code recall failed — UA741 + OPEN_CIRCUIT "
         "should match vee_pin_not_connected via related_error_codes."
     )
     knowledge_ids = {c.get("knowledge_id") for c in cases}

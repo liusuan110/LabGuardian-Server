@@ -2,7 +2,7 @@
 
 当前阶段：**P0 · Schema**。仅暴露图常量、中间数据结构与 NetworkX → 异构图
 的构建器。模型 / 训练 / 推理在后续阶段实现，参见
-``~/.claude/plans/labguardian-server-glowing-galaxy.md``。
+``docs/plans/labguardian-server-glowing-galaxy.md``。
 
 公开 API：
 

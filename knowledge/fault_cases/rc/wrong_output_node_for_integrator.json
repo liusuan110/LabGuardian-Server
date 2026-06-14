@@ -8,8 +8,9 @@
     "wrong_hole_connection"
   ],
   "related_error_codes": [
-    "NODE_MISMATCH",
-    "HOLE_MISMATCH"
+    "OUTPUT_NODE_MISMATCH",
+    "WRONG_CONNECTION",
+    "OPEN_CIRCUIT"
   ],
   "title": "积分电路输出节点接错",
   "trigger_conditions": [

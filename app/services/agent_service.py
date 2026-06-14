@@ -730,6 +730,18 @@ class AgentService:
                     )
                 )
 
+        # 历史播报与答案路径解耦：LLM 改写分支会自行追加“历史对比”，但确定性
+        # 路径（datasheet 渲染 / 模板回退）会绕过它。verifier 要求历史结论必须
+        # 保留，故在最终出口统一兜底追加一次。
+        if intent in ("diagnostic", "mixed"):
+            _history_summary = str(
+                getattr(evidence_contract, "history_summary", "")
+                or getattr(context_pack, "history_summary", "")
+                or ""
+            ).strip()
+            if _history_summary and _history_summary not in rewritten_answer:
+                rewritten_answer = f"{rewritten_answer}\n历史对比：{_history_summary}。"
+
         result = AngntJobResult(
             job_id=job_id,
             station_id=request.station_id,
