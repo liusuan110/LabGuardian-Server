@@ -132,10 +132,14 @@ def _extract_net_roles(netlist: dict[str, Any]) -> dict[str, set[str]]:
             normalized = str(label or "").upper()
             if normalized in {POWER_ROLE_VCC, POWER_ROLE_GND}:
                 current.add(normalized)
-        for item in list(net.get("member_node_ids") or []) + list(net.get("member_hole_ids") or []):
-            inferred = _infer_power_role(str(item))
-            if inferred:
-                current.add(inferred)
+        # 孔位前缀启发式(LP/RP→VCC、LN/RN→GND)只在没有任何权威电源角色时兜底。
+        # 否则它会与 rail_assignments 设定的 power_role 冲突(如 RP 被配置为 GND,
+        # 前缀却推成 VCC),使同一网络既 VCC 又 GND,造成假 POWER_GND_SHORT。
+        if not current:
+            for item in list(net.get("member_node_ids") or []) + list(net.get("member_hole_ids") or []):
+                inferred = _infer_power_role(str(item))
+                if inferred:
+                    current.add(inferred)
         roles[net_id] = current
     return roles
 

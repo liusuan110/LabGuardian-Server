@@ -55,6 +55,8 @@ _GNN_REASON_MODEL_FAILED = "model_failed"                  # advisor.advise cras
 # opinion. Prevents the v3-era "GNN suspects 9/9 edges with p<0.001"
 # pseudo-alarm from reaching the screen.
 _GNN_REASON_OOD_DISAGREEMENT = "ood_disagreement_too_broad"
+# GNN 路径整体弃用:项目决定逻辑比对只走 DSL 确定性比对,不再附加任何 GNN advisory。
+_GNN_REASON_DEPRECATED = "deprecated_dsl_only"
 # (`payload_missing` intentionally not emitted — the caller is signalling "I
 # don't want GNN this time" by withholding ref_payload / cur_netlist_v2.)
 
@@ -366,6 +368,12 @@ def _maybe_attach_gnn_advice(
         - The added ``gnn`` field is purely additive — existing items /
           mappings / summary keys are untouched.
     """
+
+    # GNN 路径已弃用(逻辑比对只用 DSL 确定性比对)。直接 no-op:不构建 advisor、
+    # 不附加 edge_predictions / graph_similarity,避免误导性的相似度噪声进入报告。
+    # rule path(确定性比对)是唯一权威判定。
+    _set_gnn_disabled_reason(result, _GNN_REASON_DEPRECATED)
+    return result
 
     if ref_payload is None or cur_netlist_v2 is None:
         # Caller is intentional (debug script, fast-path bypass). Do

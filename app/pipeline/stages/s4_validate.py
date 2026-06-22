@@ -19,7 +19,7 @@ from app.domain.reference_formats import (
     get_reference_format,
     unsupported_reference_format_message,
 )
-from app.domain.risk import classify_risk
+from app.domain.risk import classify_risk, RiskLevel
 
 logger = logging.getLogger(__name__)
 
@@ -264,6 +264,13 @@ def _logical_s4_response(
     started_at: float,
 ) -> Dict[str, Any]:
     risk_level, risk_reasons = classify_risk(diagnostics)
+    # 确定性比对已判 is_correct=False(电路与参考不一致)时,即便诊断文案未命中
+    # risk.py 的危险/警告关键词,也不应判 safe —— 至少 WARNING,避免连接/角色不
+    # 匹配这类错误被纯关键词匹配机制掩盖(此前 risk_level=safe 掩盖真实故障的根因)。
+    if not is_correct and risk_level == RiskLevel.SAFE:
+        risk_level = RiskLevel.WARNING
+        if not risk_reasons:
+            risk_reasons = [d for d in diagnostics if d]
     return {
         "is_correct": is_correct,
         "diagnosis": diagnosis,

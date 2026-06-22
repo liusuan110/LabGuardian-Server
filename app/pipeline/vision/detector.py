@@ -157,7 +157,39 @@ class ComponentDetector:
             elif hasattr(r, "boxes") and r.boxes is not None:
                 detections.extend(self._parse_hbb(r))
 
+        detections = self._dedup_overlapping_ic(detections)
         return detections
+
+    @staticmethod
+    def _dedup_overlapping_ic(
+        detections: List[Detection], iou_thr: float = 0.55
+    ) -> List[Detection]:
+        """同一物理 IC 常被同时分成 ``ic_8`` 与 ``ic_14`` 两个类别,ultralytics 的
+        类内 NMS 不跨类合并,导致同一位置出现两个 IC 框(幽灵 IC),下游误报
+        COMPONENT_EXTRA 并扰乱 DIP 引脚派生。这里对所有 IC 类框做一次**类无关**
+        去重:高 IoU 重叠的只保留最高置信度的一个;非 IC 框不受影响(避免误伤
+        面包板上正常重叠的不同元件)。"""
+
+        def _is_ic(d: Detection) -> bool:
+            return str(d.class_name).lower().lstrip("_").startswith("ic")
+
+        def _iou(a: Detection, b: Detection) -> float:
+            ax1, ay1, ax2, ay2 = a.bbox
+            bx1, by1, bx2, by2 = b.bbox
+            ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+            ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+            inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+            ua = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter
+            return inter / ua if ua > 0 else 0.0
+
+        ic_dets = sorted(
+            (d for d in detections if _is_ic(d)), key=lambda d: -d.confidence
+        )
+        kept_ic: List[Detection] = []
+        for d in ic_dets:
+            if all(_iou(d, k) < iou_thr for k in kept_ic):
+                kept_ic.append(d)
+        return [d for d in detections if not _is_ic(d)] + kept_ic
 
     def _parse_hbb(self, result) -> List[Detection]:
         dets = []
