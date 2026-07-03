@@ -38,6 +38,9 @@ class StreamConfig:
     全部字段都有合理默认。覆盖时按 env 注入更稳，避免硬编码。
     """
 
+    view_id: str = "top"
+    """逻辑视角 ID，例如 ``top`` / ``left_front`` / ``right_front``。"""
+
     device_index: int = 0
     """`/dev/videoN` 的 N。板上 `/dev/video0` 主流 / `/dev/video1` 通常是 metadata。"""
 
@@ -66,6 +69,9 @@ class StreamConfig:
 
     max_keyframes_on_disk: int = 50
     """超过这个数量后自动清理最旧的，避免 /tmp 写爆。"""
+
+    presence_diff_threshold: float = 4.0
+    """相对启动背景帧的差异阈值，用于粗略判断'有物体/有板子进入画面'。"""
 
 
 @dataclass
@@ -123,6 +129,11 @@ class StreamRunner:
         self._frame_count: int = 0
         self._keyframe_count: int = 0
         self._error: Optional[str] = None
+        self._latest_frame_ts: Optional[float] = None
+        self._latest_diff_score: float = 0.0
+        self._latest_presence_score: float = 0.0
+        self._presence_detected: bool = False
+        self._background_frame: Optional[Any] = None
 
         self.config.keyframe_dir.mkdir(parents=True, exist_ok=True)
 
@@ -140,7 +151,8 @@ class StreamRunner:
         )
         self._thread.start()
         logger.info(
-            "StreamRunner started: device=%s fps=%s res=%s",
+            "StreamRunner started: view=%s device=%s fps=%s res=%s",
+            self.config.view_id,
             self.config.device_index,
             self.config.fps_target,
             self.config.resolution,
@@ -166,10 +178,16 @@ class StreamRunner:
         """运行时统计，供 health endpoint / 前端展示 NPU busy 指示灯。"""
         return {
             "running": self._thread is not None and self._thread.is_alive(),
+            "view_id": self.config.view_id,
             "frames_total": self._frame_count,
             "keyframes_total": self._keyframe_count,
             "device_index": self.config.device_index,
             "fps_target": self.config.fps_target,
+            "latest_frame_ts": self._latest_frame_ts,
+            "latest_diff_score": round(self._latest_diff_score, 4),
+            "latest_presence_score": round(self._latest_presence_score, 4),
+            "presence_detected": self._presence_detected,
+            "presence_diff_threshold": self.config.presence_diff_threshold,
             "latest_keyframe_path": (
                 str(self._latest_keyframe.path) if self._latest_keyframe else None
             ),
@@ -213,7 +231,8 @@ class StreamRunner:
         actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         actual_fps = cap.get(cv2.CAP_PROP_FPS)
         logger.info(
-            "USB camera ready: actual_res=%dx%d actual_fps=%.1f",
+            "USB camera ready: view=%s actual_res=%dx%d actual_fps=%.1f",
+            self.config.view_id,
             actual_w,
             actual_h,
             actual_fps,
@@ -234,6 +253,13 @@ class StreamRunner:
                 now = time.time()
                 reason: Optional[str] = None
                 diff_score: float = 0.0
+                presence_score: float = 0.0
+
+                if self._background_frame is None:
+                    self._background_frame = frame.copy()
+                else:
+                    bg_diff = cv2.absdiff(self._background_frame, frame)
+                    presence_score = float(bg_diff.mean())
 
                 # 帧差判定（前后帧整体平均亮度差）
                 if prev_frame is not None:
@@ -251,6 +277,13 @@ class StreamRunner:
                     elapsed_since_last = now - self._last_keyframe_time
                     if elapsed_since_last >= self.config.max_keyframe_interval_s:
                         reason = "timeout"
+
+                self._latest_frame_ts = now
+                self._latest_diff_score = diff_score
+                self._latest_presence_score = presence_score
+                self._presence_detected = (
+                    presence_score >= self.config.presence_diff_threshold
+                )
 
                 if reason is not None:
                     self._save_keyframe(
