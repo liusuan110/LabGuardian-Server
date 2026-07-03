@@ -2,8 +2,8 @@
 
 设计要点:
 
-1. **默认 off**: lifespan 不自动启 stream — 前端显式 ``POST /stream/start`` 才启。
-   理由：(a) 板上 USB camera 可能未插；(b) NPU 持续推理会增 +4.1W 功耗，不演示时关掉。
+1. **端点默认幂等**: ``POST /stream/start`` 仍可手动触发；部署时可由 app lifespan
+   在启动阶段自动调用一次，统一复用同一套启动逻辑。
 2. **幂等**: 重复 ``/start`` 返回当前 singleton；``/stop`` 不在跑也返回 200。
 3. **不阻塞**: ``/start`` 返回后 model compile 仍在后台跑，前端轮询 ``/status``
    看 ``yolo.model_loaded=true`` 才能拿真检测。
@@ -112,7 +112,7 @@ class StreamStartRequest(BaseModel):
         default=None, ge=0.0, description="两侧摄像头相对背景的存在阈值"
     )
     side_motion_threshold: Optional[float] = Field(
-        default=None, ge=0.0, description="两侧摄像头静止判定的最大运动分数"
+        default=None, ge=0.0, description="两侧摄像头静止判定的最大运动分数（默认 3.0）"
     )
     yolo_device: Optional[str] = Field(
         default=None,
@@ -486,6 +486,23 @@ def _resolve_requested_device_index(
         status_code=400,
         detail=f"missing camera target for {view_id}: provide device_index or usb hint",
     )
+
+
+def start_stream_on_app_startup() -> StreamStartResponse:
+    """项目启动时自动拉起摄像头链路。
+
+    默认行为:
+    - 先启动左右侧摄门控；
+    - 两侧稳定后再启动顶视主摄 + YOLO + StabilityDetector。
+    """
+
+    payload = StreamStartRequest(
+        enable_side_gate=True,
+        enable_yolo=True,
+        enable_stability_trigger=True,
+    )
+    logger.info("Auto-starting stream during app startup")
+    return start_stream(payload)
 
 
 @router.post("/stop", summary="停止视频流 + 释放摄像头与 NPU")

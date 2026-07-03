@@ -30,8 +30,8 @@ class SideGateConfig:
     poll_interval_s: float = 0.5
     """轮询周期。"""
 
-    max_motion_score: float = 0.5
-    """允许的最大运动分数，直接复用 StreamRunner 的 diff_score 语义。"""
+    max_motion_score: float = 3.0
+    """允许的最大运动分数，按板上侧摄实测噪声放宽到 3.0。"""
 
     min_presence_score: float = 4.0
     """相对背景帧的最小存在分数，避免空画面误触发。"""

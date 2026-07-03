@@ -6,6 +6,7 @@ LabGuardian Server — FastAPI 入口
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
@@ -29,6 +30,8 @@ from app.schemas.version import VersionInfoResponse
 from app.services.telemetry import get_telemetry_service
 from app.services.version_service import VersionService
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -37,9 +40,17 @@ async def lifespan(app: FastAPI):
     telemetry = get_telemetry_service()
     await telemetry.start()
     try:
+        try:
+            stream.start_stream_on_app_startup()
+        except Exception as exc:
+            logger.exception("Auto-start stream failed during app startup: %s", exc)
         yield
     finally:
         # shutdown
+        try:
+            stream.stop_stream()
+        except Exception as exc:
+            logger.exception("Stopping stream during app shutdown failed: %s", exc)
         await telemetry.stop()
 
 
