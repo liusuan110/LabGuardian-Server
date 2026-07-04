@@ -119,9 +119,10 @@ def test_sample_validation_accepts_well_formed(sample: dict) -> None:
 
 
 def test_synthesize_station_stamps_topology_label_for_known_scene() -> None:
-    """The entrypoint short-circuits the GNN-A pipeline by deriving
-    topology_label from the sample's explicit scene_id. This lets
-    scene_resolver resolve the scene without needing a real netlist."""
+    """The entrypoint derives topology_label from explicit scene_id.
+
+    This lets scene_resolver resolve the scene without needing a real netlist.
+    """
     from scripts.distill.run_inference import _synthesize_station
 
     station = _synthesize_station(

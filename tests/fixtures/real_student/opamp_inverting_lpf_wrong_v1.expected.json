@@ -6,18 +6,7 @@
   "injected_error": "学生把反馈电容 C1 的一端接到了 op-amp 同相输入 (V_P)，而非反相输入 (INV)。结果是 C 与 Rp 形成同相端 RC，反相节点丢了高频反馈 → 电路会自激或畸变。",
   "rule_verdict_expected": {
     "logic_correct": false,
-    "comment": "fixture 注入了 1-2 处错接，规则路径应能识别为 CRITICAL_*  级别不匹配。 如规则路径未捕获（语义未覆盖），GNN gate 必须独立 flag —— 这是该 fixture 的核心价值。"
-  },
-  "gnn_verdict_expected": {
-    "all_observed_edges_correct": false,
-    "n_observed_edges": 19,
-    "p_correct_threshold": 0.5,
-    "suspicious_edges_expected": 1,
-    "wire_edge_count": 6,
-    "ic_edge_count": 5,
-    "resistor_edge_count": 6,
-    "capacitor_edge_count": 2,
-    "comment": "Stage 4 GNN gate (positive-detection)：v5 应在 suspicious_edges 列表中 每条边给出 p_correct < 0.5（最低门槛）或 < 0.3（target）。 其余 observed 边应维持 p > 0.5（防止 collateral OOD）。"
+    "comment": "fixture 注入了 1-2 处错接，规则路径应能识别为 CRITICAL_*  级别不匹配。"
   },
   "stage4_gate": {
     "suspicious_edges_expected": 1,

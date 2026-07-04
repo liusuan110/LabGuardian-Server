@@ -4,7 +4,7 @@ The vision pipeline can detect that a component is an ``IC`` and infer its
 package, but it generally cannot know whether the chip is UA741, LM358, NE555,
 etc. When the user has selected a reference experiment, that reference is the
 authoritative source for the expected IC subtype. Fill missing current-side
-``part_subtype`` values from it before topology/GNN conversion.
+``part_subtype`` values from it before topology conversion.
 """
 
 from __future__ import annotations

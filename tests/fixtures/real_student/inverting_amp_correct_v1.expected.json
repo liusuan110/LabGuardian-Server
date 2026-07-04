@@ -5,16 +5,7 @@
   "topology": "UA741 inverting amplifier · textbook canon (R_in + R_f + R_p bias-compensation), dual supply via pin4/pin7, output via 3 physical jumper wires (W1/W2/W3) bridging same-net rails",
   "rule_verdict_expected": {
     "logic_correct": false,
-    "comment": "**REF-MISMATCH** — 当前 test_opamp_inverting_v1.json ref 是**单电源** (pin4 直接接 GND)，但真实学生板用的是**双电源** (cur 有 3 个 power net: VCC=NET_001 + VEE=NET_000 + GND=NET_004)。规则路径因此判 logic_correct=False。**follow-up**: 升级 ref 为双电源版 (新增 test_opamp_inverting_dual_supply_v1.json) 或 modify 现有 fixture，可让规则路径 pass。**不影响 Stage 4 GNN gate** — GNN 在该样本所有 17 条边上的评分独立于规则结论。"
-  },
-  "gnn_verdict_expected": {
-    "all_observed_edges_correct": true,
-    "n_observed_edges": 17,
-    "p_correct_threshold": 0.5,
-    "wire_edge_count": 6,
-    "ic_edge_count": 5,
-    "resistor_edge_count": 6,
-    "comment": "Every observed (port, net) edge in this netlist is part of the correct topology. After Stage 4 retrain (v4), GNN must score every observed edge with p_correct > 0.5 (ideally > 0.7). On v3 ckpt 7/17 edges fail (all 6 wires + IC1.pin4 V−)."
+    "comment": "**REF-MISMATCH** — 当前 test_opamp_inverting_v1.json ref 是**单电源** (pin4 直接接 GND)，但真实学生板用的是**双电源** (cur 有 3 个 power net: VCC=NET_001 + VEE=NET_000 + GND=NET_004)。规则路径因此判 logic_correct=False。**follow-up**: 升级 ref 为双电源版 (新增 test_opamp_inverting_dual_supply_v1.json) 或 modify 现有 fixture，可让规则路径 pass。"
   },
   "stage4_gate": {
     "min_p_correct_all_edges": 0.5,
@@ -23,12 +14,40 @@
     "suspicious_edges_expected": 0
   },
   "baseline_v3_observed_failures": [
-    {"edge": "cur_port:W2.pin1 → cur_net:NET_001", "p_correct": 0.0000, "note": "wire on VCC rail"},
-    {"edge": "cur_port:W2.pin2 → cur_net:NET_001", "p_correct": 0.0000, "note": "wire on VCC rail"},
-    {"edge": "cur_port:W3.pin1 → cur_net:NET_000", "p_correct": 0.0001, "note": "wire on VEE rail"},
-    {"edge": "cur_port:W3.pin2 → cur_net:NET_000", "p_correct": 0.0005, "note": "wire on VEE rail"},
-    {"edge": "cur_port:W1.pin1 → cur_net:NET_007", "p_correct": 0.0192, "note": "wire on VOUT rail"},
-    {"edge": "cur_port:W1.pin2 → cur_net:NET_007", "p_correct": 0.0009, "note": "wire on VOUT rail"},
-    {"edge": "cur_port:IC1.pin4 → cur_net:NET_000", "p_correct": 0.1831, "note": "V− pin near W3 OOD noise → collateral damage"}
+    {
+      "edge": "cur_port:W2.pin1 → cur_net:NET_001",
+      "p_correct": 0.0,
+      "note": "wire on VCC rail"
+    },
+    {
+      "edge": "cur_port:W2.pin2 → cur_net:NET_001",
+      "p_correct": 0.0,
+      "note": "wire on VCC rail"
+    },
+    {
+      "edge": "cur_port:W3.pin1 → cur_net:NET_000",
+      "p_correct": 0.0001,
+      "note": "wire on VEE rail"
+    },
+    {
+      "edge": "cur_port:W3.pin2 → cur_net:NET_000",
+      "p_correct": 0.0005,
+      "note": "wire on VEE rail"
+    },
+    {
+      "edge": "cur_port:W1.pin1 → cur_net:NET_007",
+      "p_correct": 0.0192,
+      "note": "wire on VOUT rail"
+    },
+    {
+      "edge": "cur_port:W1.pin2 → cur_net:NET_007",
+      "p_correct": 0.0009,
+      "note": "wire on VOUT rail"
+    },
+    {
+      "edge": "cur_port:IC1.pin4 → cur_net:NET_000",
+      "p_correct": 0.1831,
+      "note": "V− pin near W3 OOD noise → collateral damage"
+    }
   ]
 }

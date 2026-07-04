@@ -14,8 +14,8 @@ non-empty match:
 
   1. ``station["scene_id"]`` — explicit override set by upstream
      (e.g. teacher tool, classroom-side manual scene selection).
-  2. ``station["topology_label"]`` — set by the topology classifier
-     pipeline (see ``TopologyClassifierService.suggest``).
+  2. ``station["topology_label"]`` — explicit topology hint set by a
+     deterministic pipeline stage or operator input.
   3. ``comparison_report["topology_label"]`` — same value carried in
      validator output.
 
@@ -26,11 +26,9 @@ scene_id (that is exactly the bug WP-1 is fixing).
 
 ## Fail-open by design
 
-The resolver does not call the GNN classifier inline. Inline inference
-would (a) add latency to every agent turn and (b) silently mask
-upstream wiring bugs. Pipeline is responsible for stamping
-``topology_label`` into station when classification is desired; this
-resolver only consumes what's already there.
+The resolver does not run model inference inline. Pipeline code or operator
+input is responsible for stamping ``topology_label`` into station when a
+scene hint is available; this resolver only consumes what's already there.
 """
 
 from __future__ import annotations
@@ -39,7 +37,6 @@ from typing import Any, Final
 
 
 # 6 demo scenes — keep in sync with knowledge/teaching_scenes/*.json
-# and app/domain/topology/labels.py::TOPOLOGY_LABELS.
 TOPOLOGY_LABEL_TO_SCENE_ID: Final[dict[str, str]] = {
     "rc_first_order": "exp_first_order_rc",
     "common_emitter": "exp_common_emitter_amplifier",

@@ -335,56 +335,17 @@ def test_react_observe_ignores_planner_scene_id_override() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_pipeline_stamps_topology_label_into_station(monkeypatch) -> None:
-    """WP-1 v3 P0: pipeline_service.sync_result_to_classroom MUST call the
-    GNN-A classifier and write ``topology_label`` into the station. Without
-    this wiring the entire WP-1 contract is hollow — scene_resolver never
-    gets the topology hint, current_scene_id always stays empty."""
+def test_pipeline_topology_resolver_is_disabled() -> None:
+    """The demo path no longer runs an automatic topology classifier.
+
+    Scene hints may still be supplied explicitly, but pipeline sync leaves
+    ``topology_label`` blank unless another deterministic stage provides it.
+    """
     from app.services import pipeline_service as ps_mod
 
-    captured: dict[str, str] = {}
-
-    class _StubConsensus:
-        recommended_label = "common_emitter"
-        confidence_band = "high"
-
-    class _StubSuggestion:
-        enabled = True
-        consensus = _StubConsensus()
-
-    def _fake_suggest(netlist_v2):
-        captured["netlist"] = "called"
-        return _StubSuggestion()
-
-    monkeypatch.setattr(
-        "app.services.topology_classifier_service.suggest_from_netlist_v2",
-        _fake_suggest,
-    )
-
-    label = ps_mod._resolve_topology_label_from_netlist(
+    assert ps_mod._resolve_topology_label_from_netlist(
         {"components": [{"component_id": "Q1", "pins": []}]}
-    )
-    assert label == "common_emitter"
-    assert captured.get("netlist") == "called"
-
-
-def test_pipeline_topology_resolver_returns_empty_on_unknown(monkeypatch) -> None:
-    """``unknown`` / low-confidence MUST return '' so resolver fails open."""
-    from app.services import pipeline_service as ps_mod
-
-    class _LowConsensus:
-        recommended_label = "common_emitter"
-        confidence_band = "low"
-
-    class _LowSuggestion:
-        enabled = True
-        consensus = _LowConsensus()
-
-    monkeypatch.setattr(
-        "app.services.topology_classifier_service.suggest_from_netlist_v2",
-        lambda netlist_v2: _LowSuggestion(),
-    )
-    assert ps_mod._resolve_topology_label_from_netlist({"x": 1}) == ""
+    ) == ""
 
 
 def test_search_fault_cases_recalls_by_error_code() -> None:

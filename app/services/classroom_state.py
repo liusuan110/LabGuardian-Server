@@ -51,7 +51,7 @@ class ClassroomState:
     # 2s heartbeat would nuke the WP-1 / WP-3 contract.
     _PIPELINE_DERIVED_FIELDS = frozenset(
         [
-            "topology_label",          # WP-1 v3: GNN-A scene resolver source
+            "topology_label",          # optional scene resolver source; currently blank in demo mode
             "scene_id",                # WP-1: explicit scene override
             "netlist_v2",              # pipeline S3 output
             "comparison_report",       # pipeline S4 output

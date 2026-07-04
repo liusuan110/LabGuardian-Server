@@ -138,7 +138,7 @@ class StreamStartRequest(BaseModel):
     reference_id: Optional[str] = Field(
         default=None,
         description=(
-            "学生手动覆盖 scene。None = GNN-A 自动分类（推荐）"
+            "学生手动覆盖 scene。None = 不覆盖"
         ),
     )
 

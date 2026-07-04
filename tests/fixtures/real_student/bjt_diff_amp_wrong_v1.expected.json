@@ -6,19 +6,7 @@
   "injected_error": "学生把 VT1 和 VT2 的基极接到了对调的输入端：VT1.base 接到了 UI2（应为 UI1），VT2.base 接到了 UI1（应为 UI2）。这是差分对常见错接，电路实测会输出反相结果。",
   "rule_verdict_expected": {
     "logic_correct": false,
-    "comment": "fixture 注入了 1-2 处错接，规则路径应能识别为 CRITICAL_*  级别不匹配。 如规则路径未捕获（语义未覆盖），GNN gate 必须独立 flag —— 这是该 fixture 的核心价值。"
-  },
-  "gnn_verdict_expected": {
-    "all_observed_edges_correct": false,
-    "n_observed_edges": 26,
-    "p_correct_threshold": 0.5,
-    "suspicious_edges_expected": 2,
-    "wire_edge_count": 4,
-    "ic_edge_count": 0,
-    "resistor_edge_count": 10,
-    "transistor_edge_count": 9,
-    "potentiometer_edge_count": 3,
-    "comment": "Stage 4 GNN gate (positive-detection)：v5 应在 suspicious_edges 列表中 每条边给出 p_correct < 0.5（最低门槛）或 < 0.3（target）。 其余 observed 边应维持 p > 0.5（防止 collateral OOD）。"
+    "comment": "fixture 注入了 1-2 处错接，规则路径应能识别为 CRITICAL_*  级别不匹配。"
   },
   "stage4_gate": {
     "suspicious_edges_expected": 2,

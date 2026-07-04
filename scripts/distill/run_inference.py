@@ -106,7 +106,7 @@ logger = logging.getLogger("scripts.distill.run_inference")
 
 # Reverse lookup: scene_id → topology_label (so the entrypoint can stamp
 # topology_label into the synthesized station, letting scene_resolver
-# resolve the scene without requiring the GNN classifier).
+# resolve the scene without requiring an automatic classifier).
 _SCENE_ID_TO_TOPOLOGY_LABEL = {
     scene_id: topology_label
     for topology_label, scene_id in TOPOLOGY_LABEL_TO_SCENE_ID.items()
@@ -221,11 +221,9 @@ def _validate_sample(sample: dict) -> SampleValidation:
 def _synthesize_station(sample: dict) -> dict:
     """Build a minimal classroom station dict from a distill sample.
 
-    The pipeline normally stamps ``topology_label`` from the GNN-A
-    classifier; the distill entrypoint short-circuits that by setting
-    ``topology_label`` from the sample's explicit ``scene_id``. This
-    lets ``scene_resolver`` resolve the scene without needing a real
-    netlist_v2 / classifier inference per sample.
+    The distill entrypoint sets ``topology_label`` from the sample's explicit
+    ``scene_id``. This lets ``scene_resolver`` resolve the scene without
+    needing a real netlist_v2 per sample.
     """
     base = dict(sample.get("station") or {})
     base.setdefault("station_id", sample.get("station_id") or f"S_distill_{sample.get('qid', 'x')}")

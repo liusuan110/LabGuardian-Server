@@ -11,7 +11,7 @@
         ↓ on_stable 触发
     pipeline_service.run_sync(PipelineRequest, classroom, guidance_service)
         ↓ 内部自动
-    sync_result_to_classroom() → classroom.update_station(topology_label=...)
+    sync_result_to_classroom() → classroom.update_station(topology_label="")
         ↓ 后续学生提问时
     agent.build_context_pack → scene_resolver(station) → 自动选 scene_id → evidence
 
@@ -93,7 +93,7 @@ class StabilityConfig:
     """触发 pipeline 时用的 station_id。一台演示机一个固定 ID 即可。"""
 
     reference_id: Optional[str] = None
-    """学生手动覆盖 scene。None = GNN-A 自动分类。"""
+    """学生手动覆盖 scene。None = 不覆盖。"""
 
     trigger_imgsz: int = 640
     """触发 pipeline 用的 imgsz。必须与 YOLO 模型 export 时一致（板上 merged_det_v2 = 640）。"""
@@ -369,7 +369,7 @@ def make_pipeline_trigger(
     """工厂：返回一个 trigger 函数，把 keyframe 喂给现有 pipeline。
 
     复用 ``pipeline_service.run_sync`` 的副作用——它会自动:
-    - 跑 GNN-A 拓扑分类 → 写 ``topology_label`` 到 station
+    - 跑 pipeline → 写空 ``topology_label`` 到 station（不启用实验分类器）
     - 写 ``netlist_v2`` / ``components`` / ``diagnostics`` 到 station
     - 后续 agent.build_context_pack 经 scene_resolver 自动选 scene_id
 

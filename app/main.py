@@ -23,7 +23,6 @@ from app.api.v1 import (
     references,
     stream,
     telemetry_ws,
-    topology,
     websocket,
 )
 from app.schemas.version import VersionInfoResponse
@@ -84,7 +83,6 @@ app.include_router(pipeline.router, prefix=settings.API_V1_PREFIX)
 app.include_router(references.router, prefix=settings.API_V1_PREFIX)
 app.include_router(angnt.router, prefix=settings.API_V1_PREFIX)
 app.include_router(kb.router, prefix=settings.API_V1_PREFIX)
-app.include_router(topology.router, prefix=settings.API_V1_PREFIX)
 app.include_router(stream.router, prefix=settings.API_V1_PREFIX)
 app.include_router(websocket.router)
 app.include_router(telemetry_ws.router)

@@ -28,7 +28,7 @@ def _item(error_code: str, error_family: str, severity: str, message: str, *, ex
 
 
 def _default_title(error_code: str) -> str:
-    return {"PIN_ROLE_MISMATCH": "功能引脚错误", "SHORT_CIRCUIT": "短路", "ROLE_LABEL_MISMATCH": "端口标签错误", "UNSUPPORTED_REFERENCE_FORMAT": "不支持的参考格式", "REFERENCE_NOT_SET": "未设置参考电路", "COMPONENT_MISSING": "缺元件", "COMPONENT_EXTRA": "多余元件", "OPEN_CIRCUIT": "断路", "WRONG_CONNECTION": "错接", "EXTRA_CONNECTION": "多余连接", "INCOMPLETE_CIRCUIT": "电路未完成", "ROLE_MISMATCH": "网络角色错误", "INPUT_NODE_MISMATCH": "输入节点错误", "OUTPUT_NODE_MISMATCH": "输出节点错误", "POWER_NODE_MISMATCH": "电源节点错误", "GROUND_NODE_MISMATCH": "地节点错误", "WARN_GNN_DISAGREES_WITH_RULE": "GNN 与规则结果不一致（仅提醒）", "CRITICAL_EXTRA_CONNECTION": "关键网络上多余连接"}.get(error_code, "电路异常")
+    return {"PIN_ROLE_MISMATCH": "功能引脚错误", "SHORT_CIRCUIT": "短路", "ROLE_LABEL_MISMATCH": "端口标签错误", "UNSUPPORTED_REFERENCE_FORMAT": "不支持的参考格式", "REFERENCE_NOT_SET": "未设置参考电路", "COMPONENT_MISSING": "缺元件", "COMPONENT_EXTRA": "多余元件", "OPEN_CIRCUIT": "断路", "WRONG_CONNECTION": "错接", "EXTRA_CONNECTION": "多余连接", "INCOMPLETE_CIRCUIT": "电路未完成", "ROLE_MISMATCH": "网络角色错误", "INPUT_NODE_MISMATCH": "输入节点错误", "OUTPUT_NODE_MISMATCH": "输出节点错误", "POWER_NODE_MISMATCH": "电源节点错误", "GROUND_NODE_MISMATCH": "地节点错误", "CRITICAL_EXTRA_CONNECTION": "关键网络上多余连接"}.get(error_code, "电路异常")
 
 
 def _detailed_item(*, error_code: str, error_family: str, severity: str, message: str, expected: Any, actual: Any, component_ref: dict[str, Any] | None, component_actual: dict[str, Any] | None, evidence_refs: list[dict[str, Any]], suggested_action: str, title: str = "") -> dict[str, Any]:

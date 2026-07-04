@@ -38,11 +38,15 @@ def test_scene_ids_align_with_display_names() -> None:
 
 
 def test_topology_labels_match_canonical_set() -> None:
-    """The 6 mapped topology labels are the non-``unknown`` GNN-A labels."""
-    from app.domain.topology.labels import TOPOLOGY_LABELS
-
-    real_topology_labels = {label for label in TOPOLOGY_LABELS if label != "unknown"}
-    assert set(TOPOLOGY_LABEL_TO_SCENE_ID.keys()) == real_topology_labels
+    """The 6 mapped topology labels are the canonical classroom scene hints."""
+    assert set(TOPOLOGY_LABEL_TO_SCENE_ID.keys()) == {
+        "rc_first_order",
+        "common_emitter",
+        "differential_pair",
+        "inverting_amp_ua741",
+        "summing_amp_ua741",
+        "integrator_ua741",
+    }
 
 
 # ---------------------------------------------------------------------------

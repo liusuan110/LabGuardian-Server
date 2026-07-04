@@ -5,10 +5,8 @@ Pipeline 应用服务
 - 同步/异步 pipeline 调用编排
 - 统一结果组装
 - 同步课堂态与缩略图缓存
-- WP-1 (2026-05-24): 在同步课堂态时调用 GNN-A 拓扑分类器，把
-  ``topology_label`` 写入 station，让 ``scene_resolver`` 在 agent
-  侧能解析出场景。没有这一步，scene_resolver 永远拿不到 topology
-  hint，``current_scene_id`` 永远为空 — 整个 WP-1 contract 形同虚设。
+- Demo mode: 不启用实验拓扑分类器；课堂态仍保留 ``topology_label`` 字段，
+  但当前固定为空，避免错误场景注入。
 """
 
 from __future__ import annotations
@@ -47,50 +45,13 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_topology_label_from_netlist(netlist_v2: dict[str, Any]) -> str:
-    """Run GNN-A classifier and return a topology label, or '' on miss.
+    """Return the optional scene topology label for classroom state.
 
-    WP-1 (2026-05-24): pipeline stamps the resolved label into station
-    so the agent-side scene_resolver can pick it up. ``''`` means
-    "classifier could not commit" — scene_resolver will treat it as
-    "no topology context" and skip fault_case retrieval, which is the
-    correct fail-open behavior (never silently default to RC).
-
-    Implementation notes:
-        - Returns ``''`` for the open-set ``unknown`` label, missing
-          checkpoint, or any inference exception. Pipeline must never
-          fail because of classifier issues.
-        - Uses the consensus label (GNN ∧ template) when the band is
-          ``high`` or ``medium``; otherwise returns ``''``.
+    Automatic topology-classifier code has been removed. S3 netlist topology still
+    runs normally; this function only preserves API compatibility for callers
+    that expect a ``topology_label`` key.
     """
-    if not netlist_v2:
-        return ""
-    try:
-        from app.services.topology_classifier_service import suggest_from_netlist_v2
-        from app.domain.topology.labels import DEFAULT_UNKNOWN_LABEL
-    except Exception as exc:  # pragma: no cover
-        logger.debug("topology_classifier import failed: %s", exc)
-        return ""
-
-    try:
-        suggestion = suggest_from_netlist_v2(netlist_v2)
-    except Exception as exc:  # pragma: no cover
-        logger.warning("topology_suggest_failed err=%s", type(exc).__name__)
-        return ""
-
-    if not suggestion.enabled:
-        return ""
-    consensus = suggestion.consensus
-    if consensus is None:
-        return ""
-    label = consensus.recommended_label or ""
-    if not label or label == DEFAULT_UNKNOWN_LABEL:
-        return ""
-    if consensus.confidence_band not in ("high", "medium"):
-        # Low confidence / disagreement → don't stamp a guess. The agent
-        # will skip fault_case retrieval, which is safer than wrong-scene
-        # injection.
-        return ""
-    return label
+    return ""
 
 
 class PipelineService:
@@ -124,7 +85,7 @@ class PipelineService:
 
         thumbnail_b64 = request.images_b64[0] if request.images_b64 else ""
         netlist_v2 = s3.get("netlist_v2", {})
-        # WP-1: stamp GNN-A topology_label so scene_resolver can pick it up.
+        # Keep topology_label empty for agent-scene compatibility.
         topology_label = _resolve_topology_label_from_netlist(netlist_v2)
         classroom.update_station(
             {
@@ -165,7 +126,7 @@ class PipelineService:
         previous = classroom.get_all_stations().get(request.station_id, {})
 
         netlist_v2 = s3.get("netlist_v2", {})
-        # WP-1: re-stamp topology_label after manual correction (the topology
+        # Keep topology_label empty after manual correction (the topology
         # may have changed when the student fixed wiring).
         topology_label = _resolve_topology_label_from_netlist(netlist_v2)
         classroom.update_station(
