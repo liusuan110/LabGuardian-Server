@@ -93,8 +93,6 @@ def _generate_detailed_items(ref_graph: nx.Graph, cur_graph: nx.Graph, ref_paylo
         items.append(_detailed_item(error_code="COMPONENT_EXTRA", error_family="extra_component", severity=severity, message=f"当前电路包含多余的元件 {cur_id}（{cur_comp.get('component_type')}）。", expected=None, actual={"component_id": cur_id, "type": cur_comp.get("component_type")}, component_ref=None, component_actual={"component_id": cur_id, "type": cur_comp.get("component_type")}, evidence_refs=[{"type": "component", "component_id": cur_id}], suggested_action=f"请移除多余的元件 {cur_id}（{cur_comp.get('component_type')}）或确认是否需要它。"))
     items.extend(_wrong_connection_items(ref_payload, cur_netlist_v2, comp_map, net_map, ref_comp_by_id, cur_comp_by_id, cur_net_by_id))
     items.extend(_role_mismatch_items(ref_payload, ref_graph, cur_graph, ref_net_roles, ref_net_labels, net_map, cur_net_by_id, cur_netlist_v2))
-    if not _is_topology_equivalent_match(match_type):
-        items.extend(_open_circuit_items(ref_payload, cur_netlist_v2, comp_map, cur_net_by_id))
     items.extend(_short_circuit_items(ref_net_roles, ref_net_labels, net_map, cur_net_by_id))
     if not _is_topology_equivalent_match(match_type):
         items.extend(_pin_level_short_circuit_items(ref_payload, cur_netlist_v2, comp_map, cur_net_by_id))
@@ -427,8 +425,6 @@ def _missing_items(reference_graph: nx.Graph, current_graph: nx.Graph) -> list[d
         missing = ref_counts[ctype] - cur_counts[ctype]
         if missing > 0:
             items.append(_item("COMPONENT_MISSING", "missing_component", "error", f"参考电路需要 {ref_counts[ctype]} 个 {ctype}，当前电路未匹配到 {missing} 个。", expected={"component_type": ctype, "count": ref_counts[ctype]}, actual={"component_type": ctype, "count": cur_counts[ctype]}, suggested_action=f"请检查是否漏接 {ctype}。"))
-    if current_graph.number_of_edges() < reference_graph.number_of_edges():
-        items.append(_item("OPEN_CIRCUIT", "open_circuit", "error", "参考电路存在当前未完成的逻辑连接，可能有断路。", expected={"edge_count": reference_graph.number_of_edges()}, actual={"edge_count": current_graph.number_of_edges()}, suggested_action="请检查相关元件引脚是否接到同一个电气节点。"))
     return items
 
 
@@ -586,8 +582,6 @@ def _difference_items(reference_graph: nx.Graph, current_graph: nx.Graph) -> lis
     items = _missing_items(reference_graph, current_graph) + _extra_items(reference_graph, current_graph)
     ref_net_count = _net_count(reference_graph)
     cur_net_count = _net_count(current_graph)
-    if cur_net_count > ref_net_count:
-        items.append(_item("OPEN_CIRCUIT", "open_circuit", "error", "当前电路的电气网络比参考电路更多，可能存在应相连但未相连的断点。", expected={"net_count": ref_net_count}, actual={"net_count": cur_net_count}, suggested_action="请检查应共用节点的元件引脚是否断开。"))
     if cur_net_count < ref_net_count:
         items.append(_item("EXTRA_CONNECTION", "extra_connection", "error", "当前电路的电气网络比参考电路更少，可能存在额外短接。", expected={"net_count": ref_net_count}, actual={"net_count": cur_net_count}, suggested_action="请检查是否把不应相连的节点接在一起。"))
     items.append(_item("WRONG_CONNECTION", "wiring_mismatch", "error", "检测到元件连接关系与参考电路不一致，可能存在错接。", expected={"edge_signatures": _edge_signatures(reference_graph)}, actual={"edge_signatures": _edge_signatures(current_graph)}, suggested_action="请检查相关元件是否连接到正确的电气节点。"))
