@@ -201,11 +201,31 @@ def _run_logical_reference_validate(
     comparison_report = dict(result.get("report", {}))
     report_items = list(comparison_report.get("items", []))
     diagnostics = [str(item.get("message")) for item in report_items if item.get("message")]
+    logical_is_correct = bool(result.get("logic_correct", False))
     if not diagnostics:
-        diagnostics = [str(result.get("message") or "电路逻辑连接与参考电路一致")]
+        # If all diff-report items have been filtered out, do not keep the
+        # fallback graph-edit summary as a visible "logic mismatch" error.
+        # Treat S4 logical compare as clean and let any remaining S5 semantic
+        # findings surface separately.
+        logical_is_correct = True
+        diagnostics = ["电路逻辑连接与参考电路一致"]
+        comparison_report = {
+            **comparison_report,
+            "summary": {
+                **dict(comparison_report.get("summary", {})),
+                "logic_correct": True,
+                "total_item_count": 0,
+            },
+            "items": [],
+            "topology_errors": [],
+            "node_errors": [],
+            "hole_errors": [],
+            "component_errors": [],
+            "polarity_errors": [],
+        }
 
     return _logical_s4_response(
-        is_correct=bool(result.get("logic_correct", False)),
+        is_correct=logical_is_correct,
         diagnosis="\n".join(diagnostics),
         diagnostics=diagnostics,
         comparison_report=comparison_report,

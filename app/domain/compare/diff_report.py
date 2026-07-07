@@ -101,25 +101,6 @@ def _generate_detailed_items(ref_graph: nx.Graph, cur_graph: nx.Graph, ref_paylo
     if _net_count(cur_graph) < _net_count(ref_graph):
         all_cur_nets = sorted(n.get("electrical_net_id") for n in cur_netlist_v2.get("nets", []) if n.get("electrical_net_id"))
         items.append(_detailed_item(error_code="EXTRA_CONNECTION", error_family="extra_connection", severity="warning", message=f"当前电路的电气网络数（{_net_count(cur_graph)}）少于参考电路（{_net_count(ref_graph)}），可能存在不应有的短接。", expected={"net_count": _net_count(ref_graph), "separate_nets": sorted(ref_net_roles)}, actual={"net_count": _net_count(cur_graph), "merged_nets": all_cur_nets}, component_ref=None, component_actual=None, evidence_refs=[], suggested_action="请检查是否有不应相连的节点被错误地连接到了一起。"))
-    if (
-        match_type == "graph_edit_distance_or_fallback"
-        and items
-        and not any(item.get("error_code") == "WRONG_CONNECTION" for item in items)
-    ):
-        items.append(
-            _detailed_item(
-                error_code="WRONG_CONNECTION",
-                error_family="wiring_mismatch",
-                severity="error",
-                message="检测到元件连接关系与参考电路不一致，可能存在错接。",
-                expected={"edge_signatures": _edge_signatures(ref_graph)},
-                actual={"edge_signatures": _edge_signatures(cur_graph)},
-                component_ref=None,
-                component_actual=None,
-                evidence_refs=[],
-                suggested_action="请检查相关元件是否连接到正确的电气节点。",
-            )
-        )
     return _dedupe_detailed_items(items)
 
 
@@ -168,7 +149,10 @@ def _wrong_connection_items(ref_payload: dict[str, Any], cur_netlist_v2: dict[st
                 actual_pin_role = normalize_pin_role(ctype, cur_pin)
                 error_code = "PIN_ROLE_MISMATCH" if ctype in STRICT_PIN_ROLE_TYPES and actual_pin_role != ref_pin_role else "WRONG_CONNECTION"
                 desc = _current_net_descriptor(cur_net, cur_net_by_id)
-                items.append(_detailed_item(error_code=error_code, error_family="wiring_mismatch", severity="error", message=f"{ref_id}.{pin.get('pin')} 应连接到参考网络 {pin.get('net')}，但当前实际连接到 {desc['canonical_name']}。", expected={"ref_pin": f"{ref_id}.{pin.get('pin')}", "pin_role": ref_pin_role, "expected_net": pin.get("net")}, actual={"actual_component_id": cur_id, "actual_pin": cur_pin.get("pin_name"), "pin_role": actual_pin_role, "actual_net": desc, "expected_current_net": _current_net_descriptor(mapped_cur_net, cur_net_by_id), "hole_id": cur_pin.get("hole_id")}, component_ref={"ref_id": ref_id, "type": ref_comp.get("type")}, component_actual={"component_id": cur_id, "type": cur_comp.get("component_type")}, evidence_refs=[{"type": "component", "component_id": cur_id}, {"type": "net", "electrical_net_id": cur_net, "canonical_name": desc["canonical_name"]}], suggested_action=f"请将 {cur_id}.{pin.get('pin')} 从 {desc['canonical_name']} 改接到与 {pin.get('net')} 对应的网络。"))
+                expected_desc = _current_net_descriptor(mapped_cur_net, cur_net_by_id)
+                if _same_visible_net(desc, expected_desc):
+                    continue
+                items.append(_detailed_item(error_code=error_code, error_family="wiring_mismatch", severity="error", message=f"{ref_id}.{pin.get('pin')} 应连接到参考网络 {pin.get('net')}，但当前实际连接到 {desc['canonical_name']}。", expected={"ref_pin": f"{ref_id}.{pin.get('pin')}", "pin_role": ref_pin_role, "expected_net": pin.get("net")}, actual={"actual_component_id": cur_id, "actual_pin": cur_pin.get("pin_name"), "pin_role": actual_pin_role, "actual_net": desc, "expected_current_net": expected_desc, "hole_id": cur_pin.get("hole_id")}, component_ref={"ref_id": ref_id, "type": ref_comp.get("type")}, component_actual={"component_id": cur_id, "type": cur_comp.get("component_type")}, evidence_refs=[{"type": "component", "component_id": cur_id}, {"type": "net", "electrical_net_id": cur_net, "canonical_name": desc["canonical_name"]}], suggested_action=f"请将 {cur_id}.{pin.get('pin')} 从 {desc['canonical_name']} 改接到与 {pin.get('net')} 对应的网络。"))
     return items
 
 
@@ -584,7 +568,6 @@ def _difference_items(reference_graph: nx.Graph, current_graph: nx.Graph) -> lis
     cur_net_count = _net_count(current_graph)
     if cur_net_count < ref_net_count:
         items.append(_item("EXTRA_CONNECTION", "extra_connection", "error", "当前电路的电气网络比参考电路更少，可能存在额外短接。", expected={"net_count": ref_net_count}, actual={"net_count": cur_net_count}, suggested_action="请检查是否把不应相连的节点接在一起。"))
-    items.append(_item("WRONG_CONNECTION", "wiring_mismatch", "error", "检测到元件连接关系与参考电路不一致，可能存在错接。", expected={"edge_signatures": _edge_signatures(reference_graph)}, actual={"edge_signatures": _edge_signatures(current_graph)}, suggested_action="请检查相关元件是否连接到正确的电气节点。"))
     return _dedupe_items(items)
 
 
@@ -662,6 +645,16 @@ def _current_net_descriptor(net_id: Any, cur_net_by_id: dict[str, dict[str, Any]
     if canonical and canonical not in aliases:
         aliases.insert(0, canonical)
     return {"source_id": source_id, "canonical_name": canonical, "role": normalize_net_role(net.get("role") or net.get("manual_role") or canonical), "role_label": normalize_role_label(net.get("role_label") or net.get("power_role") or canonical), "aliases": list(dict.fromkeys(aliases)), "merged_source_ids": list(net.get("merged_source_ids", []) or [])}
+
+
+def _same_visible_net(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    left_name = normalize_role_label(left.get("canonical_name"))
+    right_name = normalize_role_label(right.get("canonical_name"))
+    if not left_name or not right_name:
+        return False
+    if left_name.startswith("NET_") or right_name.startswith("NET_"):
+        return False
+    return left_name == right_name
 
 
 def _dedupe_detailed_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
