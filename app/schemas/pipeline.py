@@ -68,8 +68,8 @@ class PipelineRequest(BaseModel):
         default=None,
         description=(
             "面包板电源轨道指定, 如 "
-            '{"top_plus": "VCC", "top_minus": "VEE", '
-            '"bot_plus": "GND", "bot_minus": "GND"}'
+            '{"top_plus": "VCC", "top_minus": "VCC", '
+            '"bot_plus": "GND", "bot_minus": "VEE"}'
         ),
     )
     port_annotations: list[PortAnnotation] = Field(default_factory=list)

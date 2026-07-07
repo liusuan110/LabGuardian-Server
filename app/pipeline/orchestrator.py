@@ -191,9 +191,9 @@ def run_pipeline(
     # 默认电源轨道: op-amp 友好三电位配置；学生端可覆盖。
     effective_rails = {
         "top_plus": "VCC",
-        "top_minus": "VEE",
+        "top_minus": "VCC",
         "bot_plus": "GND",
-        "bot_minus": "GND",
+        "bot_minus": "VEE",
     }
     if rail_assignments:
         effective_rails.update(rail_assignments)

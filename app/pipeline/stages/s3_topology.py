@@ -35,8 +35,8 @@ def run_topology(
     Args:
         components: S2 映射后的元件列表
         rail_assignments: 电源轨道指定, 如
-            {"top_plus": "VCC", "top_minus": "VEE",
-             "bot_plus": "GND", "bot_minus": "GND"}
+            {"top_plus": "VCC", "top_minus": "VCC",
+             "bot_plus": "GND", "bot_minus": "VEE"}
 
     Returns:
         {

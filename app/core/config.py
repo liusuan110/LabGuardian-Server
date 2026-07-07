@@ -130,9 +130,9 @@ class Settings(BaseSettings):
     )
     # 当前视觉主路径使用 YOLO-Detect。OBB 仅保留兼容位，不参与默认主流程。
     YOLO_OBB_MODEL_PATH: str | None = None
-    YOLO_CONF_THRESHOLD: float = 0.25
+    YOLO_CONF_THRESHOLD: float = 0.2
     YOLO_IOU_THRESHOLD: float = 0.5
-    YOLO_IMGSZ: int = 960
+    YOLO_IMGSZ: int = 640
     YOLO_DEVICE: str = "cpu"
     # 当前 pin 主路径使用 full-image YOLO-Pose。
     PIN_MODEL_PATH: str | None = DEFAULT_PIN_MODEL_PATH

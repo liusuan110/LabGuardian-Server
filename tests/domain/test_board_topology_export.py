@@ -169,9 +169,9 @@ def test_b2_default_rail_assignments_on_schema():
     defaults = schema.default_rail_assignments()
     assert defaults == {
         "top_plus": "VCC",
-        "top_minus": "VEE",
+        "top_minus": "VCC",
         "bot_plus": "GND",
-        "bot_minus": "GND",
+        "bot_minus": "VEE",
     }
     # Defensive: returned dict must be a copy so caller mutation doesn't
     # leak into the schema's permanent state

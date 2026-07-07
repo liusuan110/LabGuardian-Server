@@ -46,9 +46,9 @@ _DEFAULT_RAIL_ASSIGNMENTS: Dict[str, str] = {
     # for the dual-supply lab kit). Callers can override via the
     # ``rail_assignments=`` kwarg on ``run_topology``.
     "top_plus": "VCC",
-    "top_minus": "VEE",
+    "top_minus": "VCC",
     "bot_plus": "GND",
-    "bot_minus": "GND",
+    "bot_minus": "VEE",
 }
 
 
