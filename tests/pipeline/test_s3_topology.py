@@ -289,8 +289,8 @@ class TestS3Topology:
         assert result["component_count"] == 1
         # 应该不影响基本功能
 
-    def test_default_top_minus_rail_exports_vee(self):
-        """默认 op-amp 轨道配置应保留 VEE 负电源，而不是折叠成 GND。"""
+    def test_default_top_minus_rail_exports_vcc(self):
+        """当前比赛板默认配置将上方两条轨道都标为 VCC。"""
         from app.pipeline.stages.s3_topology import run_topology
 
         components = [
@@ -301,13 +301,13 @@ class TestS3Topology:
         ]
 
         result = run_topology(components=components)
-        vee_net = next(
+        top_minus_net = next(
             net
             for net in result["netlist_v2"]["nets"]
             if "TRACK_LN_SEG1" in net.get("member_node_ids", [])
         )
 
-        assert vee_net["power_role"] == "VEE"
+        assert top_minus_net["power_role"] == "VCC"
 
     def test_ic_singleton_package_pins_export_as_floating(self):
         """未接任何元件的 IC package 行不应自动生成普通 signal net。"""

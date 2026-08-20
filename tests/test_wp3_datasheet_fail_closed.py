@@ -202,6 +202,7 @@ def test_precheck_fails_when_npz_missing_for_a_document(monkeypatch, tmp_path) -
     )
 
 
+@pytest.mark.openvino_runtime
 def test_precheck_passes_with_full_distill_setup(monkeypatch) -> None:
     """Sanity: with everything wired up properly, precheck returns no
     failures. Matches the smoke-test command-line invocation."""
@@ -487,6 +488,7 @@ def test_precheck_fails_when_model_dir_exists_but_files_garbage(
     )
 
 
+@pytest.mark.openvino_runtime
 def test_precheck_active_backend_passes_with_real_model(monkeypatch) -> None:
     """Sanity: with the real OV INT8 model, the active-backend probe passes."""
     monkeypatch.setattr(settings, "DISTILL_MODE", True)

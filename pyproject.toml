@@ -92,3 +92,9 @@ select = ["E", "F", "I", "UP"]
 python_version = "3.11"
 strict = false
 warn_return_any = true
+
+[tool.pytest.ini_options]
+addopts = "-m 'not openvino_runtime'"
+markers = [
+    "openvino_runtime: requires the real OpenVINO IR model and a compatible target runtime",
+]

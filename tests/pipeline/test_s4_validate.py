@@ -44,7 +44,7 @@ class TestS4Validation:
         assert "diagnosis" in result
         # 即使无参考，也应该有诊断
         assert "risk_level" in result
-        assert result["risk_level"] in ("low", "medium", "high", "unknown", "safe")
+        assert result["risk_level"] in ("safe", "warning", "danger", "unknown")
         assert "duration_ms" in result
 
     def test_t7_2_led_without_resistor(self):
@@ -191,7 +191,7 @@ class TestS4Validation:
 
         assert "risk_level" in result
         assert "diagnosis" in result
-        assert result["risk_level"] in ("low", "medium", "high", "unknown", "safe", "")
+        assert result["risk_level"] in ("safe", "warning", "danger", "unknown", "")
 
     def test_t7_6_validation_result_schema(self):
         """验证 S4 输出 schema 完整性"""

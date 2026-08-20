@@ -232,7 +232,12 @@ class TestEndToEndS4Validate:
         assert result["is_correct"] is False
         report = result.get("comparison_report", {})
         items = report.get("items", [])
-        assert any(i["error_code"] == "WRONG_CONNECTION" for i in items)
+        # The generic WRONG_CONNECTION fallback was removed. This concrete
+        # parallel-wiring case is reported with actionable specific codes.
+        assert any(
+            i["error_code"] in {"POWER_NODE_MISMATCH", "EXTRA_CONNECTION"}
+            for i in items
+        )
 
     def test_no_hole_mismatch_in_logical_comparison(self) -> None:
         svc = ReferenceService(reference_dir=FIXTURE_DIR)

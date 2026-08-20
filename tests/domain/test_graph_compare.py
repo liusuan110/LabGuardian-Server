@@ -108,7 +108,9 @@ class TestCompareLogicalGraphs:
         assert result["logic_correct"] is False
         assert result["details"]["match_type"] == "graph_edit_distance_or_fallback"
         items = result["report"]["items"]
-        assert any(i["error_code"] == "WRONG_CONNECTION" for i in items)
+        # Generic WRONG_CONNECTION noise is intentionally suppressed. The
+        # structural signal remains the smaller current-net count.
+        assert any(i["error_code"] == "EXTRA_CONNECTION" for i in items)
 
     def test_no_hole_mismatch(self) -> None:
         result = compare_logical_graphs(_build_ref(), _build_cur_match())
@@ -293,8 +295,10 @@ class TestCompareLogicalGraphs:
 
         result = compare_logical_graphs(g_ref, g_cur)
         assert result["logic_correct"] is False
-        items = result["report"]["items"]
-        assert any(i["error_family"] in {"wiring_mismatch", "open_circuit", "extra_connection"} for i in items)
+        # Graph-only comparison has no structured netlist payload from which
+        # to build a precise user-facing item; do not reintroduce a generic
+        # fallback warning just to populate the report.
+        assert not result["report"]["items"]
 
     def test_ic_pin_role_checked(self) -> None:
         """多引脚 IC 元件 pin 角色不可互换。"""
@@ -319,8 +323,10 @@ class TestCompareLogicalGraphs:
 
         result = compare_logical_graphs(g_ref, g_cur)
         assert result["logic_correct"] is False
-        items = result["report"]["items"]
-        assert any(i["error_family"] == "wiring_mismatch" for i in items)
+        # Pin-role mismatch details are produced by the structured
+        # reference/netlist path. This graph-only call still rejects the
+        # topology without emitting the removed generic fallback item.
+        assert not result["report"]["items"]
 
     def test_unlabeled_port_roles_are_inferred(self) -> None:
         from app.domain.logical_reference import current_netlist_v2_to_graph, logical_reference_to_graph

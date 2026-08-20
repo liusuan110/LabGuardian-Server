@@ -124,7 +124,7 @@
     "top_plus": "VCC",
     "top_minus": "VCC",
     "bot_plus": "GND",
-    "bot_minus": "GND"
+    "bot_minus": "VEE"
   },
   "port_annotations": [
     {

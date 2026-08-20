@@ -2,6 +2,9 @@
 
 LabGuardian 的服务器端负责把视觉识别结果转换成可验证、可解释、可审计的电路诊断结果。
 
+> 新成员请先阅读 [HANDOFF.md](HANDOFF.md)，再按 [docs/README.md](docs/README.md)
+> 进入具体设计文档。交接指南区分了 Git 内代码与需要单独交付的模型、数据和板端环境。
+
 当前主线已经从早期 demo 形态迁移到新的结构化网表链路：
 
 - `component_id + pin_name + hole_id -> electrical_node_id -> electrical_net_id -> netlist_v2`
@@ -398,18 +401,24 @@ tests/
 ## 快速开始
 
 ```bash
-# 1. 安装依赖
-pip install -e ".[dev]"
+# 1. 创建锁定的开发环境（推荐）
+uv sync --locked --extra dev
 
-# 2. 启动 Redis
+# 2. 复制本机配置；不要提交 .env
+cp .env.example .env
+
+# 3. 启动 Redis
 docker compose up -d redis
 
-# 3. 启动 Celery Worker
-celery -A app.core.celery_app:celery_app worker -Q pipeline -c 1 --loglevel=info
+# 4. 启动 Celery Worker（异步接口需要）
+uv run celery -A app.core.celery_app:celery_app worker -Q pipeline -c 1 --loglevel=info
 
-# 4. 启动 FastAPI
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# 5. 启动 FastAPI
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+若未安装 `uv`，可使用 Python 3.11 和 `pip install -e ".[dev]"`，但该路径不会使用
+`uv.lock` 固定的依赖版本。
 
 ## 常用验证命令
 
@@ -426,8 +435,11 @@ python3 -m pytest tests/domain/dsl tests/domain/test_reference_service.py -q
 # pipeline 合同与阶段级回归
 python3 -m pytest tests/pipeline
 
-# 全量自动测试
-python3 -m pytest
+# 默认自动测试（不包含必须加载真实 OpenVINO 模型的环境测试）
+uv run pytest
+
+# 在目标 OpenVINO 环境上额外执行
+uv run pytest -m openvino_runtime
 ```
 
 ## 团队协作约定

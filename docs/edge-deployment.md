@@ -34,10 +34,11 @@ pin detector:
 
 ## Runtime Defaults
 
-当前统一默认推理尺寸：
+当前默认尺寸分两层：服务配置的基础值为 640，而同步 pipeline 请求仍以 960
+作为高分辨率演示默认值：
 
 ```text
-YOLO_IMGSZ=960
+YOLO_IMGSZ=640
 PIPELINE_HIGH_RES_IMGSZ=960
 PipelineRequest.imgsz=960
 ```

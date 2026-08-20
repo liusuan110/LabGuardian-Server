@@ -202,4 +202,4 @@ def test_b2_run_topology_echoes_effective_rails_into_board_topology():
     # Caller override is respected
     assert rails["top_plus"] == "V_BIAS"
     # Defaults still in effect for the keys the caller didn't pass
-    assert rails["bot_minus"] == "GND"
+    assert rails["bot_minus"] == "VEE"
